@@ -64,15 +64,21 @@
 # it carries the AGENTS.md authoring bar (widely useful knowledge only, pointers
 # over copied detail) and defers self-governance recognition and insertion to
 # fm-ensure-agents-md.sh's contract.
-# Every scaffold also inlines a "Captain's standing orders" section when the
-# active home's data/captain-shared.md has a non-blank body strictly between
-# the literal lines "<!-- FM_STANDING_ORDERS_BEGIN -->" and
-# "<!-- FM_STANDING_ORDERS_END -->": absent file, absent markers, an
-# unterminated marker, or a blank body are all a complete no-op, producing a
-# brief byte-identical to one scaffolded with no standing orders at all.
-# It lands right after the Task or Charter section and before the Herdr
-# section (Charter's Routing-scope section on a secondmate charter, which has
-# no Herdr section), so it is read early rather than buried under Setup.
+# Ship and scout briefs also inline a "Captain's standing orders" section when
+# the active home's data/captain-shared.md has a non-blank body strictly
+# between the literal lines "<!-- FM_STANDING_ORDERS_BEGIN -->" and
+# "<!-- FM_STANDING_ORDERS_END -->", each tolerating trailing whitespace and a
+# CRLF line ending. An absent file, absent markers, or a blank body are all a
+# complete no-op, producing a brief byte-identical to one scaffolded with no
+# standing orders at all. A BEGIN with no matching END is malformed input
+# rather than an opt-out: the scaffold fails loudly and writes no brief, so a
+# hand-edit typo can never silently drop the orders from every brief.
+# The section lands right after the Task section and before the Herdr section,
+# so it is read early rather than buried under Setup.
+# A secondmate charter carries no such section: a charter is written once and
+# would freeze at seed time, while secondmate homes already receive the live
+# data/captain-shared.md through bin/fm-config-inherit-lib.sh and print it in
+# full at every session start.
 # docs/configuration.md documents the marker contract for captains editing
 # data/captain-shared.md; this header owns the extraction mechanics.
 # Scaffolds carry no role scope: fm-spawn.sh supplies fm_brief_worker_role from
@@ -192,6 +198,39 @@ if [ "$NO_PROJECTS" -eq 1 ] && [ "$KIND" != secondmate ]; then
   exit 1
 fi
 
+# Standing orders are the lines strictly between the literal marker lines,
+# each of which may carry trailing whitespace or a CRLF ending. A BEGIN with
+# no matching END is malformed rather than an opt-out, so awk signals it and
+# the scaffold stops before anything is written; an absent file, absent
+# markers, or a blank body stay silent.
+STANDING_ORDERS_BODY=""
+CAPTAIN_SHARED="$DATA/captain-shared.md"
+if [ -f "$CAPTAIN_SHARED" ]; then
+  STANDING_ORDERS_BODY=$(awk '
+    { marker = $0; sub(/\r$/, "", marker); sub(/[[:blank:]]+$/, "", marker) }
+    marker == "<!-- FM_STANDING_ORDERS_BEGIN -->" && !found { in_block=1; found=1; next }
+    marker == "<!-- FM_STANDING_ORDERS_END -->" && in_block { in_block=0; ended=1; next }
+    in_block { print }
+    END { if (found && !ended) exit 1 }
+  ' "$CAPTAIN_SHARED") || {
+    echo "error: $CAPTAIN_SHARED has an unterminated <!-- FM_STANDING_ORDERS_BEGIN --> marker with no matching <!-- FM_STANDING_ORDERS_END -->; close the pair or remove the marker" >&2
+    exit 1
+  }
+fi
+case "$STANDING_ORDERS_BODY" in
+  *[![:space:]]*) ;;
+  *) STANDING_ORDERS_BODY="" ;;
+esac
+STANDING_ORDERS_BLOCK=""
+if [ -n "$STANDING_ORDERS_BODY" ]; then
+  STANDING_ORDERS_SECTION=$(printf '%s\n' \
+    "# Captain's standing orders" \
+    'These orders are binding on this task, not defaults to trade away under time pressure.' \
+    '' \
+    "$STANDING_ORDERS_BODY")
+  STANDING_ORDERS_BLOCK="$STANDING_ORDERS_SECTION"$'\n\n'
+fi
+
 BRIEF="$DATA/$ID/brief.md"
 [ -e "$BRIEF" ] && { echo "error: $BRIEF already exists" >&2; exit 1; }
 mkdir -p "$DATA/$ID"
@@ -223,35 +262,6 @@ The move IS the acknowledgement: without it firstmate rings again and eventually
 EOF
 INBOX_SECTION=${INBOX_SECTION%$'\n'}
 
-# Standing orders are strictly between the literal marker lines. A missing
-# file, a missing marker, or a BEGIN with no matching END all resolve to an
-# empty body (the awk END block signals failure and the body is discarded),
-# so a malformed or unterminated pair never leaks a truncated section.
-STANDING_ORDERS_BODY=""
-CAPTAIN_SHARED="$DATA/captain-shared.md"
-if [ -f "$CAPTAIN_SHARED" ]; then
-  STANDING_ORDERS_BODY=$(awk '
-    /^<!-- FM_STANDING_ORDERS_BEGIN -->$/ { if (!found) { in_block=1; found=1; next } }
-    /^<!-- FM_STANDING_ORDERS_END -->$/ { if (in_block) { in_block=0; ended=1; next } }
-    { if (in_block) print }
-    END { if (!ended) exit 1 }
-  ' "$CAPTAIN_SHARED") || STANDING_ORDERS_BODY=""
-fi
-case "$STANDING_ORDERS_BODY" in
-  *[![:space:]]*) ;;
-  *) STANDING_ORDERS_BODY="" ;;
-esac
-STANDING_ORDERS_BLOCK=""
-if [ -n "$STANDING_ORDERS_BODY" ]; then
-  STANDING_ORDERS_SECTION=$(printf '%s\n' \
-    "# Captain's standing orders" \
-    'These orders are binding on this task, not defaults to trade away under time pressure.' \
-    "They hold unless this brief's own task text explicitly overrides one." \
-    '' \
-    "$STANDING_ORDERS_BODY")
-  STANDING_ORDERS_BLOCK="$STANDING_ORDERS_SECTION"$'\n\n'
-fi
-
 if [ "$KIND" = secondmate ]; then
 SECONDMATE_PROJECTS=""
 idx=1
@@ -279,7 +289,7 @@ You are a persistent second mate managed by the main firstmate. Work on your own
 # Charter
 $SECONDMATE_CHARTER
 
-${STANDING_ORDERS_BLOCK}# Routing scope
+# Routing scope
 $SECONDMATE_SCOPE
 
 # Project clones
