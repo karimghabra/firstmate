@@ -226,7 +226,8 @@ Shared captain preferences that apply across secondmate domains live only in the
 `secondmate-provisioning` owns its propagation contract, including the required header, read-only secondmate copies, quarantine diagnostics, and the rollout rule that existing homes trim `data/captain.md` by hand after first propagation rather than deleting private content automatically.
 A captain who wants a preference to bind on every spawned crewmate and scout, not only on firstmate and its secondmates, writes it in `data/captain-shared.md` strictly between the literal marker lines `<!-- FM_STANDING_ORDERS_BEGIN -->` and `<!-- FM_STANDING_ORDERS_END -->`.
 `bin/fm-brief.sh` inlines that exact body into a "Captain's standing orders" section on every ship brief and scout brief it scaffolds; an absent file, absent markers, or a blank body are all a complete no-op, so a home with no such file scaffolds exactly as it always has.
-A `BEGIN` marker with no matching `END` is malformed input rather than an opt-out: the scaffold fails loudly on stderr and writes no brief, so a hand-edit typo cannot silently drop the orders from every brief.
+The file must hold exactly one well-formed marker pair; every other shape is malformed input rather than an opt-out, including a `BEGIN` with no matching `END`, a second `BEGIN`, a duplicated pair, and an `END` with no open `BEGIN`.
+A malformed file names its specific problem on stderr and writes no brief, so a hand-edit typo cannot silently drop the orders from every brief.
 A secondmate charter carries no such section, because a charter is written once and would freeze at seed time while secondmate homes already receive the live `data/captain-shared.md` through the propagation contract above and print it in full at every session start.
 `bin/fm-brief.sh`'s own header owns the extraction and placement mechanics.
 

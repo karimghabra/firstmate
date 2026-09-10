@@ -910,23 +910,35 @@ EOF
     "CRLF marker lines dropped the standing-orders section"
   assert_grep "No em dash." "$home/data/so-crlf-ship/brief.md" \
     "CRLF marker lines dropped the standing-orders body"
+  # The brief is pure-LF generated output, so a CRLF-authored source file must
+  # not leak carriage returns into the body it contributes.
+  ! grep -q $'\r' "$home/data/so-crlf-ship/brief.md" \
+    || fail "a CRLF data/captain-shared.md leaked carriage returns into the generated brief"
 
-  # Unterminated marker pair (BEGIN with no END) is malformed input, not an
-  # opt-out: it must fail loudly and write no brief at all.
-  cat > "$home/data/captain-shared.md" <<'EOF'
-<!-- FM_STANDING_ORDERS_BEGIN -->
-No em dash.
-EOF
-  local err rc
-  err=$(FM_HOME="$home" "$ROOT/bin/fm-brief.sh" so-unterminated-ship some-proj --mode no-mistakes 2>&1 >/dev/null)
-  rc=$?
-  expect_code 1 "$rc" "an unterminated standing-orders marker pair must fail the scaffold"
-  assert_contains "$err" "$home/data/captain-shared.md" \
-    "the unterminated-marker diagnostic did not name the offending file"
-  assert_contains "$err" "FM_STANDING_ORDERS_BEGIN" \
-    "the unterminated-marker diagnostic did not name the unterminated marker"
-  assert_absent "$home/data/so-unterminated-ship/brief.md" \
-    "an unterminated standing-orders marker pair still wrote a brief without the section"
+  # Every malformed marker shape is loud input rather than a silent opt-out:
+  # it must name the file and its problem on stderr and write no brief at all.
+  local err rc shape
+  for shape in unterminated duplicate-pair trailing-begin stray-end; do
+    case "$shape" in
+      unterminated)
+        printf '<!-- FM_STANDING_ORDERS_BEGIN -->\nNo em dash.\n' ;;
+      duplicate-pair)
+        printf '<!-- FM_STANDING_ORDERS_BEGIN -->\nNo em dash.\n<!-- FM_STANDING_ORDERS_END -->\nprose\n<!-- FM_STANDING_ORDERS_BEGIN -->\nOne sentence per line.\n<!-- FM_STANDING_ORDERS_END -->\n' ;;
+      trailing-begin)
+        printf '<!-- FM_STANDING_ORDERS_BEGIN -->\nNo em dash.\n<!-- FM_STANDING_ORDERS_END -->\n<!-- FM_STANDING_ORDERS_BEGIN -->\nOne sentence per line.\n' ;;
+      stray-end)
+        printf 'prose\n<!-- FM_STANDING_ORDERS_END -->\n' ;;
+    esac > "$home/data/captain-shared.md"
+    err=$(FM_HOME="$home" "$ROOT/bin/fm-brief.sh" "so-$shape-ship" some-proj --mode no-mistakes 2>&1 >/dev/null)
+    rc=$?
+    expect_code 1 "$rc" "a $shape standing-orders marker shape must fail the scaffold"
+    assert_contains "$err" "$home/data/captain-shared.md" \
+      "the $shape marker diagnostic did not name the offending file"
+    assert_contains "$err" "FM_STANDING_ORDERS" \
+      "the $shape marker diagnostic did not name the offending marker"
+    assert_absent "$home/data/so-$shape-ship/brief.md" \
+      "a $shape standing-orders marker shape still wrote a brief"
+  done
 
   # Absent file entirely: complete no-op (the common case for most homes).
   rm -f "$home/data/captain-shared.md"
