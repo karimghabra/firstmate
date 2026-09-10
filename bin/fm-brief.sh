@@ -66,10 +66,10 @@
 # fm-ensure-agents-md.sh's contract.
 # Ship and scout briefs also inline a "Captain's standing orders" section
 # carrying the entire content of the active home's data/standing-orders.md,
-# verbatim. There is no marked region, no delimiter, and no parser: the file
-# IS the payload, so there is no shape for a hand edit to break. An absent or
-# blank file is a complete no-op, producing a brief byte-identical to one
-# scaffolded with no standing orders at all.
+# verbatim, with nothing parsed, stripped, or added: the file IS the payload,
+# so it has no shape a hand edit could break. An absent or blank file is a
+# complete no-op, producing a brief byte-identical to one scaffolded with no
+# standing orders at all.
 # The section lands right after the Task section and before the Herdr section,
 # so it is read early rather than buried under Setup.
 # A secondmate charter carries no such section: a charter is written once and

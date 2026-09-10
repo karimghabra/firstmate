@@ -79,7 +79,7 @@ Every `/stow` invocation performs this complete pass, even when the session cont
 
 1. Run `bin/fm-startup-memory-budget.sh report` before considering a write.
    Record its effective budget and each file's estimated-token total.
-   The budget is per home: this home's three files against this home's own allowance, never a fleet total.
+   The budget is per home: this home's four startup-memory files against this home's own allowance, never a fleet total.
    The helper's stable estimate is the documented conservative local approximation, not provider-exact accounting.
    If it rejects the setting or a memory file, do not infer a default or silently continue.
    Report that concrete exception and do not call the session reset-safe.
@@ -117,7 +117,7 @@ Every `/stow` invocation performs this complete pass, even when the session cont
    The sole exception is relocation to a JIT owner after explicit, per-item captain approval under the offload flow below, and that entry remains in memory until its destination is live.
 8. Run `bin/fm-startup-memory-budget.sh report` again after the complete pass.
    Finish at or below the effective budget, or open a concrete captain decision before ending the pass.
-   A secondmate must explicitly report `primary-owned-shared-file-alone-exceeds-budget` when the inherited shared file alone exceeds its allowance, because local curation cannot resolve it.
+   A secondmate must explicitly report `primary-owned-shared-file-alone-exceeds-budget` when the inherited shared files alone exceed its allowance, because local curation cannot resolve it.
    Route that constraint to the primary owner and open one concrete captain decision at the primary owning level that names the shortfall, with exactly these options: raise the affected home's effective budget, or explicitly approve the primary owner trimming or offloading each named shared-file entry.
    When the convergence precondition skipped eviction, report the exempt pinned floor and the remaining shortfall as that concrete inability rather than archiving eligible knowledge that could not close the gap.
    Only after every safe non-pinned archival, consolidation, offload, and eligible eviction action is exhausted may a remaining excess be attributed to pinned safety, authority, or genuine captain-preference entries.

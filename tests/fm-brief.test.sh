@@ -818,7 +818,7 @@ test_scout_and_secondmate_load_decision_hold_policy() {
 }
 
 # data/standing-orders.md is delivered verbatim: the whole file is the payload,
-# with no marked region and no parser. It must reach the ship and scout briefs,
+# with nothing parsed, stripped, or added. It must reach the ship and scout briefs,
 # never a secondmate charter (which is written once and would freeze while the
 # live file keeps reaching secondmate homes), and an absent file must be a
 # byte-identical no-op on every scaffold kind.
@@ -839,8 +839,8 @@ test_standing_orders_inline_and_no_op() {
   assert_present "$baseline_secondmate" "baseline secondmate charter was not scaffolded"
 
   # A present file is delivered verbatim into the ship and scout briefs. The
-  # body deliberately includes markdown punctuation and a would-be marker line
-  # to prove nothing is parsed, stripped, or treated as a delimiter.
+  # body deliberately includes markdown punctuation and an HTML comment that an
+  # earlier design would have treated as a delimiter, to prove nothing parses it.
   orders=$(printf '%s\n%s\n%s\n%s' \
     '- No em dash.' \
     '- Never add an agent name as a commit co-author.' \
