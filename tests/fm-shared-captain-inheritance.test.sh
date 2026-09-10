@@ -1,7 +1,8 @@
 #!/usr/bin/env bash
 # Behavior tests for primary-authoritative shared captain-preference inheritance.
 #
-# The narrow shared surface is exactly data/captain-shared.md.
+# The narrow shared surface is exactly data/captain-shared.md and
+# data/standing-orders.md.
 # data/captain.md and data/learnings.md remain domain-local in every home.
 set -u
 
@@ -93,74 +94,72 @@ test_first_copy_readonly_and_local_files_preserved() {
   pass "shared captain first copy converges, is read-only, and preserves local captain/learnings files"
 }
 
-# The shared copy is read-only in a secondmate home, so a malformed
-# standing-orders marker block must never reach one: there is no local remedy
-# there, and bin/fm-brief.sh refuses to scaffold a crewmate or scout brief
-# against a malformed file. Propagation is therefore all-or-nothing, and the
-# primary home stays the only place the block can be broken or repaired.
-standing_orders_shape() {
-  case "$1" in
-    well-formed)
-      printf '%s\n%s\n%s\n' '<!-- FM_STANDING_ORDERS_BEGIN -->' 'No em dash.' '<!-- FM_STANDING_ORDERS_END -->' ;;
-    unterminated)
-      printf '%s\n%s\n' '<!-- FM_STANDING_ORDERS_BEGIN -->' 'No em dash.' ;;
-    duplicate-pair)
-      printf '%s\n%s\n%s\n%s\n%s\n%s\n%s\n' '<!-- FM_STANDING_ORDERS_BEGIN -->' 'No em dash.' \
-        '<!-- FM_STANDING_ORDERS_END -->' 'prose' '<!-- FM_STANDING_ORDERS_BEGIN -->' \
-        'One sentence per line.' '<!-- FM_STANDING_ORDERS_END -->' ;;
-    trailing-begin)
-      printf '%s\n%s\n%s\n%s\n%s\n' '<!-- FM_STANDING_ORDERS_BEGIN -->' 'No em dash.' \
-        '<!-- FM_STANDING_ORDERS_END -->' '<!-- FM_STANDING_ORDERS_BEGIN -->' 'One sentence per line.' ;;
-    stray-end)
-      printf '%s\n%s\n' 'prose' '<!-- FM_STANDING_ORDERS_END -->' ;;
-  esac
-}
-
-test_standing_orders_marker_block_gates_propagation() {
-  local rec primary second report err rc shape prior fresh_rec fresh_primary fresh_second
+# data/standing-orders.md rides the same inheritance contract as
+# data/captain-shared.md: the primary's copy wins, it lands read-only in every
+# secondmate home, and the replacement is atomic so a destination is never left
+# holding a partially written file.
+test_standing_orders_file_propagates_read_only() {
+  local rec primary second report out orders mode_before
   rec=$(new_home_pair standing-orders)
   primary=${rec%%|*}
   second=${rec#*|}
   report="$TMP_ROOT/standing-orders.report"
+  write_shared "$primary/data/captain-shared.md" "shared v1"
 
-  # A well-formed block propagates exactly like any other shared content.
-  write_shared "$primary/data/captain-shared.md" "$(standing_orders_shape well-formed)"
-  FM_CONFIG_INHERIT_REPORT="$report" propagate_secondmate_inheritance "$primary" "$second" >/dev/null 2>&1 \
-    || fail "a well-formed standing-orders block must still propagate"
-  cmp -s "$primary/data/captain-shared.md" "$second/data/captain-shared.md" \
-    || fail "a well-formed standing-orders block did not converge into the secondmate home"
-  assert_shared_readonly "$second/data/captain-shared.md"
-  prior=$(cat "$second/data/captain-shared.md")
+  # First copy: the file lands read-only and byte-identical.
+  orders=$(printf '%s\n%s' '- No em dash.' '- Reproduce bugs end to end before fixing.')
+  printf '%s\n' "$orders" > "$primary/data/standing-orders.md"
+  out=$(FM_CONFIG_INHERIT_REPORT="$report" propagate_secondmate_inheritance "$primary" "$second") \
+    || fail "propagating data/standing-orders.md failed"
+  [ -z "$out" ] || fail "first standing-orders copy should not emit a quarantine diagnostic: $out"
+  cmp -s "$primary/data/standing-orders.md" "$second/data/standing-orders.md" \
+    || fail "data/standing-orders.md did not converge into the secondmate home"
+  assert_shared_readonly "$second/data/standing-orders.md"
+  assert_secondmate_write_fails "$second/data/standing-orders.md"
+  assert_grep $'data/standing-orders.md\tpushed\t' "$report" \
+    "the standing-orders file should report pushed"
 
-  for shape in unterminated duplicate-pair trailing-begin stray-end; do
-    write_shared "$primary/data/captain-shared.md" "$(standing_orders_shape "$shape")"
-    : > "$report"
-    err=$(FM_CONFIG_INHERIT_REPORT="$report" propagate_secondmate_inheritance "$primary" "$second" 2>&1 >/dev/null)
-    rc=$?
-    expect_code 1 "$rc" "a $shape standing-orders block must refuse to propagate"
-    assert_contains "$err" "$primary/data/captain-shared.md" \
-      "the $shape refusal did not name the offending primary file"
-    assert_contains "$err" "FM_STANDING_ORDERS" \
-      "the $shape refusal did not name the specific marker defect"
-    assert_grep $'data/captain-shared.md\terror\t' "$report" \
-      "the $shape refusal was not recorded as an error in the inheritance report"
-    assert_equals "$prior" "$(cat "$second/data/captain-shared.md")" \
-      "a $shape standing-orders block overwrote the secondmate's prior copy"
-    assert_shared_readonly "$second/data/captain-shared.md"
-  done
-
-  # With no prior copy, a refusal must leave the destination with no file at
-  # all rather than a partially written one.
-  fresh_rec=$(new_home_pair standing-orders-fresh)
-  fresh_primary=${fresh_rec%%|*}
-  fresh_second=${fresh_rec#*|}
-  write_shared "$fresh_primary/data/captain-shared.md" "$(standing_orders_shape unterminated)"
+  # Unchanged bytes converge quietly and keep the read-only mode.
   : > "$report"
-  FM_CONFIG_INHERIT_REPORT="$report" propagate_secondmate_inheritance "$fresh_primary" "$fresh_second" >/dev/null 2>&1
-  assert_absent "$fresh_second/data/captain-shared.md" \
-    "a refused standing-orders block left a file behind in a destination that had none"
+  out=$(FM_CONFIG_INHERIT_REPORT="$report" propagate_secondmate_inheritance "$primary" "$second")
+  [ -z "$out" ] || fail "unchanged standing-orders convergence should stay quiet: $out"
+  assert_grep $'data/standing-orders.md\tunchanged\t' "$report" \
+    "unchanged standing-orders bytes should report unchanged"
+  assert_shared_readonly "$second/data/standing-orders.md"
 
-  pass "shared captain propagation refuses a malformed standing-orders block and preserves the destination copy"
+  # A changed primary re-converges the secondmate copy.
+  printf '%s\n' "$orders" > "$primary/data/standing-orders.md"
+  printf '%s\n' '- Fix lint and flaky tests on sight.' >> "$primary/data/standing-orders.md"
+  : > "$report"
+  FM_CONFIG_INHERIT_REPORT="$report" propagate_secondmate_inheritance "$primary" "$second" >/dev/null \
+    || fail "re-propagating changed standing orders failed"
+  cmp -s "$primary/data/standing-orders.md" "$second/data/standing-orders.md" \
+    || fail "a changed data/standing-orders.md did not re-converge"
+  assert_shared_readonly "$second/data/standing-orders.md"
+
+  # An unwritable destination directory must leave the prior copy intact and
+  # read-only rather than truncating it: propagation is atomic or skipped.
+  mode_before=$(file_mode "$second/data/standing-orders.md")
+  printf '%s\n' '- A further order.' >> "$primary/data/standing-orders.md"
+  chmod 500 "$second/data"
+  : > "$report"
+  FM_CONFIG_INHERIT_REPORT="$report" propagate_secondmate_inheritance "$primary" "$second" >/dev/null 2>&1
+  chmod 700 "$second/data"
+  assert_present "$second/data/standing-orders.md" \
+    "a failed standing-orders copy removed the destination file"
+  assert_equals "$mode_before" "$(file_mode "$second/data/standing-orders.md")" \
+    "a failed standing-orders copy changed the destination mode"
+  grep -q 'A further order' "$second/data/standing-orders.md" \
+    && fail "a failed standing-orders copy partially wrote the destination"
+
+  # An absent primary file mirrors absence downstream.
+  rm -f "$primary/data/standing-orders.md"
+  : > "$report"
+  FM_CONFIG_INHERIT_REPORT="$report" propagate_secondmate_inheritance "$primary" "$second" >/dev/null 2>&1
+  assert_absent "$second/data/standing-orders.md" \
+    "an absent primary data/standing-orders.md was not mirrored downstream"
+
+  pass "data/standing-orders.md propagates read-only, converges on change, and is atomic or skipped"
 }
 
 test_drift_quarantine_collision_and_repeated_convergence() {
@@ -463,7 +462,7 @@ EOF
 }
 
 test_first_copy_readonly_and_local_files_preserved
-test_standing_orders_marker_block_gates_propagation
+test_standing_orders_file_propagates_read_only
 test_drift_quarantine_collision_and_repeated_convergence
 test_missing_source_mirrors_absence_without_losing_local_bytes
 test_unsafe_artifacts_and_failure_restore_readonly_mode

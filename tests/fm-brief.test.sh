@@ -817,14 +817,13 @@ test_scout_and_secondmate_load_decision_hold_policy() {
   pass "fm-brief.sh: investigation and visual-review completions load the shared decision policy"
 }
 
-# The captain's standing orders (AGENTS.md's data/captain-shared.md, marked
-# with FM_STANDING_ORDERS_BEGIN/END) must inline into the ship and scout briefs
-# when present and non-blank, must never reach a secondmate charter (which is
-# written once and would freeze while the live file keeps reaching secondmate
-# homes), and must be a complete byte-identical no-op when the file is absent,
-# the markers are absent, or the body is blank.
+# data/standing-orders.md is delivered verbatim: the whole file is the payload,
+# with no marked region and no parser. It must reach the ship and scout briefs,
+# never a secondmate charter (which is written once and would freeze while the
+# live file keeps reaching secondmate homes), and an absent file must be a
+# byte-identical no-op on every scaffold kind.
 test_standing_orders_inline_and_no_op() {
-  local home baseline_ship baseline_scout baseline_secondmate
+  local home baseline_ship baseline_scout baseline_secondmate orders kind rendered
   home="$TMP_ROOT/standing-orders-home"
   mkdir -p "$home/data"
 
@@ -839,132 +838,65 @@ test_standing_orders_inline_and_no_op() {
   assert_present "$baseline_scout" "baseline scout brief was not scaffolded"
   assert_present "$baseline_secondmate" "baseline secondmate charter was not scaffolded"
 
-  # Present and populated: injects into the ship and scout briefs only.
-  cat > "$home/data/captain-shared.md" <<'EOF'
-# Shared captain preferences
-
-<!-- FM_STANDING_ORDERS_BEGIN -->
-No em dash.
-Never add an agent name as a commit co-author.
-<!-- FM_STANDING_ORDERS_END -->
-EOF
-  FM_HOME="$home" "$ROOT/bin/fm-brief.sh" so-populated-ship some-proj --mode no-mistakes >/dev/null 2>&1
-  FM_HOME="$home" "$ROOT/bin/fm-brief.sh" so-populated-scout some-proj --scout >/dev/null 2>&1
+  # A present file is delivered verbatim into the ship and scout briefs. The
+  # body deliberately includes markdown punctuation and a would-be marker line
+  # to prove nothing is parsed, stripped, or treated as a delimiter.
+  orders=$(printf '%s\n%s\n%s\n%s' \
+    '- No em dash.' \
+    '- Never add an agent name as a commit co-author.' \
+    '<!-- FM_STANDING_ORDERS_BEGIN -->' \
+    '  indented trailing line')
+  printf '%s\n' "$orders" > "$home/data/standing-orders.md"
+  FM_HOME="$home" "$ROOT/bin/fm-brief.sh" so-present-ship some-proj --mode no-mistakes >/dev/null 2>&1
+  FM_HOME="$home" "$ROOT/bin/fm-brief.sh" so-present-scout some-proj --scout >/dev/null 2>&1
   FM_HOME="$home" FM_SECONDMATE_CHARTER='Supervise assigned work.' \
-    "$ROOT/bin/fm-brief.sh" so-populated-secondmate --secondmate --no-projects >/dev/null 2>&1
+    "$ROOT/bin/fm-brief.sh" so-present-secondmate --secondmate --no-projects >/dev/null 2>&1
   for kind in ship scout; do
-    assert_grep "# Captain's standing orders" "$home/data/so-populated-$kind/brief.md" \
-      "$kind brief did not inline the populated standing-orders section"
-    assert_grep "No em dash." "$home/data/so-populated-$kind/brief.md" \
-      "$kind brief did not carry the standing-orders body"
-    assert_grep "binding on this task, not defaults to trade away under time pressure" "$home/data/so-populated-$kind/brief.md" \
-      "$kind brief did not carry the standing-orders preamble"
-    assert_no_grep "explicitly overrides" "$home/data/so-populated-$kind/brief.md" \
-      "$kind brief let its own task text override the captain's standing orders"
+    assert_grep "# Captain's standing orders" "$home/data/so-present-$kind/brief.md" \
+      "$kind brief did not carry the standing-orders section"
+    assert_grep "binding on this task, not defaults to trade away under time pressure" \
+      "$home/data/so-present-$kind/brief.md" "$kind brief did not carry the standing-orders preamble"
+    rendered=$(awk "/^# Captain.s standing orders\$/ { f = 1; next } f && /^# / { exit } f" \
+      "$home/data/so-present-$kind/brief.md" | sed '1,2d')
+    assert_equals "$orders" "$rendered" \
+      "$kind brief did not deliver data/standing-orders.md verbatim"
   done
-  # A secondmate charter persists, so it must stay byte-identical to the
-  # no-orders baseline rather than freezing a copy of the live shared file.
-  cmp -s "$home/data/so-populated-secondmate/brief.md" \
-    <(sed 's/so-baseline-secondmate/so-populated-secondmate/g' "$baseline_secondmate") \
-    || fail "secondmate charter changed when standing orders were present"
-  grep -n "# Task" "$home/data/so-populated-ship/brief.md" | head -1 | cut -d: -f1 > "$TMP_ROOT/task-line"
-  grep -n "# Captain's standing orders" "$home/data/so-populated-ship/brief.md" | head -1 | cut -d: -f1 > "$TMP_ROOT/orders-line"
-  grep -n "# Herdr lifecycle declaration" "$home/data/so-populated-ship/brief.md" | head -1 | cut -d: -f1 > "$TMP_ROOT/herdr-line"
+
+  # The section is placed between the Task and Herdr sections on a ship brief.
+  grep -n "# Task" "$home/data/so-present-ship/brief.md" | head -1 | cut -d: -f1 > "$TMP_ROOT/task-line"
+  grep -n "# Captain's standing orders" "$home/data/so-present-ship/brief.md" | head -1 | cut -d: -f1 > "$TMP_ROOT/orders-line"
+  grep -n "# Herdr lifecycle declaration" "$home/data/so-present-ship/brief.md" | head -1 | cut -d: -f1 > "$TMP_ROOT/herdr-line"
   [ "$(cat "$TMP_ROOT/task-line")" -lt "$(cat "$TMP_ROOT/orders-line")" ] \
     || fail "ship brief standing-orders section did not follow the Task section"
   [ "$(cat "$TMP_ROOT/orders-line")" -lt "$(cat "$TMP_ROOT/herdr-line")" ] \
     || fail "ship brief standing-orders section did not precede the Herdr section"
 
-  # Markers present but body blank: complete no-op.
-  cat > "$home/data/captain-shared.md" <<'EOF'
-<!-- FM_STANDING_ORDERS_BEGIN -->
+  # A secondmate charter persists, so it must stay byte-identical to the
+  # no-orders baseline rather than freezing a copy of the live file.
+  cmp -s "$home/data/so-present-secondmate/brief.md" \
+    <(sed 's/so-baseline-secondmate/so-present-secondmate/g' "$baseline_secondmate") \
+    || fail "secondmate charter changed when data/standing-orders.md was present"
 
-<!-- FM_STANDING_ORDERS_END -->
-EOF
+  # A blank file carries no section: there is nothing to deliver.
+  printf '\n   \n' > "$home/data/standing-orders.md"
   FM_HOME="$home" "$ROOT/bin/fm-brief.sh" so-blank-ship some-proj --mode no-mistakes >/dev/null 2>&1
   cmp -s "$home/data/so-blank-ship/brief.md" <(sed 's/so-baseline-ship/so-blank-ship/g' "$baseline_ship") \
-    || fail "blank standing-orders body was not a byte-identical no-op on the ship brief"
+    || fail "a blank data/standing-orders.md was not a byte-identical no-op on the ship brief"
 
-  # Markers absent entirely: complete no-op.
-  cat > "$home/data/captain-shared.md" <<'EOF'
-# Shared captain preferences
-Some preference text with no standing-orders markers at all.
-EOF
-  FM_HOME="$home" "$ROOT/bin/fm-brief.sh" so-nomarkers-ship some-proj --mode no-mistakes >/dev/null 2>&1
-  cmp -s "$home/data/so-nomarkers-ship/brief.md" <(sed 's/so-baseline-ship/so-nomarkers-ship/g' "$baseline_ship") \
-    || fail "absent standing-orders markers were not a byte-identical no-op on the ship brief"
-
-  # Marker lines carrying trailing whitespace or CRLF endings (a captain home
-  # on Windows under WSL) still match, rather than silently dropping the orders.
-  printf '<!-- FM_STANDING_ORDERS_BEGIN -->  \nNo em dash.\n<!-- FM_STANDING_ORDERS_END -->\t\n' \
-    > "$home/data/captain-shared.md"
-  FM_HOME="$home" "$ROOT/bin/fm-brief.sh" so-trailing-ws-ship some-proj --mode no-mistakes >/dev/null 2>&1
-  assert_grep "# Captain's standing orders" "$home/data/so-trailing-ws-ship/brief.md" \
-    "trailing whitespace on a marker line dropped the standing-orders section"
-  assert_grep "No em dash." "$home/data/so-trailing-ws-ship/brief.md" \
-    "trailing whitespace on a marker line dropped the standing-orders body"
-  printf '<!-- FM_STANDING_ORDERS_BEGIN -->\r\nNo em dash.\r\n<!-- FM_STANDING_ORDERS_END -->\r\n' \
-    > "$home/data/captain-shared.md"
-  FM_HOME="$home" "$ROOT/bin/fm-brief.sh" so-crlf-ship some-proj --mode no-mistakes >/dev/null 2>&1
-  assert_grep "# Captain's standing orders" "$home/data/so-crlf-ship/brief.md" \
-    "CRLF marker lines dropped the standing-orders section"
-  assert_grep "No em dash." "$home/data/so-crlf-ship/brief.md" \
-    "CRLF marker lines dropped the standing-orders body"
-  # The brief is pure-LF generated output, so a CRLF-authored source file must
-  # not leak carriage returns into the body it contributes.
-  ! grep -q $'\r' "$home/data/so-crlf-ship/brief.md" \
-    || fail "a CRLF data/captain-shared.md leaked carriage returns into the generated brief"
-
-  # Every malformed marker shape is loud input rather than a silent opt-out:
-  # it must name the file and its problem on stderr and write no brief at all.
-  local err rc shape
-  for shape in unterminated duplicate-pair trailing-begin stray-end; do
-    case "$shape" in
-      unterminated)
-        printf '<!-- FM_STANDING_ORDERS_BEGIN -->\nNo em dash.\n' ;;
-      duplicate-pair)
-        printf '<!-- FM_STANDING_ORDERS_BEGIN -->\nNo em dash.\n<!-- FM_STANDING_ORDERS_END -->\nprose\n<!-- FM_STANDING_ORDERS_BEGIN -->\nOne sentence per line.\n<!-- FM_STANDING_ORDERS_END -->\n' ;;
-      trailing-begin)
-        printf '<!-- FM_STANDING_ORDERS_BEGIN -->\nNo em dash.\n<!-- FM_STANDING_ORDERS_END -->\n<!-- FM_STANDING_ORDERS_BEGIN -->\nOne sentence per line.\n' ;;
-      stray-end)
-        printf 'prose\n<!-- FM_STANDING_ORDERS_END -->\n' ;;
-    esac > "$home/data/captain-shared.md"
-    err=$(FM_HOME="$home" "$ROOT/bin/fm-brief.sh" "so-$shape-ship" some-proj --mode no-mistakes 2>&1 >/dev/null)
-    rc=$?
-    expect_code 1 "$rc" "a $shape standing-orders marker shape must fail the scaffold"
-    assert_contains "$err" "$home/data/captain-shared.md" \
-      "the $shape marker diagnostic did not name the offending file"
-    assert_contains "$err" "FM_STANDING_ORDERS" \
-      "the $shape marker diagnostic did not name the offending marker"
-    assert_absent "$home/data/so-$shape-ship/brief.md" \
-      "a $shape standing-orders marker shape still wrote a brief"
-    # A charter consumes no standing orders, so the secondmate seeding path in
-    # fm-home-seed.sh must stay unblocked by a file the charter never reads.
-    err=$(FM_HOME="$home" FM_SECONDMATE_CHARTER='Supervise assigned work.' \
-      "$ROOT/bin/fm-brief.sh" "so-$shape-secondmate" --secondmate --no-projects 2>&1 >/dev/null)
-    rc=$?
-    expect_code 0 "$rc" "a $shape standing-orders marker shape blocked the secondmate charter scaffold"
-    assert_equals "" "$err" "a $shape standing-orders marker shape emitted a diagnostic on the charter path"
-    assert_present "$home/data/so-$shape-secondmate/brief.md" \
-      "a $shape standing-orders marker shape stopped the secondmate charter being written"
-    assert_no_grep "# Captain's standing orders" "$home/data/so-$shape-secondmate/brief.md" \
-      "the secondmate charter carried a standing-orders section"
-  done
-
-  # Absent file entirely: complete no-op (the common case for most homes).
-  rm -f "$home/data/captain-shared.md"
+  # An absent file is a byte-identical no-op on every scaffold kind.
+  rm -f "$home/data/standing-orders.md"
   FM_HOME="$home" "$ROOT/bin/fm-brief.sh" so-absent-ship some-proj --mode no-mistakes >/dev/null 2>&1
   FM_HOME="$home" "$ROOT/bin/fm-brief.sh" so-absent-scout some-proj --scout >/dev/null 2>&1
   FM_HOME="$home" FM_SECONDMATE_CHARTER='Supervise assigned work.' \
     "$ROOT/bin/fm-brief.sh" so-absent-secondmate --secondmate --no-projects >/dev/null 2>&1
   cmp -s "$home/data/so-absent-ship/brief.md" <(sed 's/so-baseline-ship/so-absent-ship/g' "$baseline_ship") \
-    || fail "absent data/captain-shared.md was not a byte-identical no-op on the ship brief"
+    || fail "absent data/standing-orders.md was not a byte-identical no-op on the ship brief"
   cmp -s "$home/data/so-absent-scout/brief.md" <(sed 's/so-baseline-scout/so-absent-scout/g' "$baseline_scout") \
-    || fail "absent data/captain-shared.md was not a byte-identical no-op on the scout brief"
+    || fail "absent data/standing-orders.md was not a byte-identical no-op on the scout brief"
   cmp -s "$home/data/so-absent-secondmate/brief.md" <(sed 's/so-baseline-secondmate/so-absent-secondmate/g' "$baseline_secondmate") \
-    || fail "absent data/captain-shared.md was not a byte-identical no-op on the secondmate charter"
+    || fail "absent data/standing-orders.md was not a byte-identical no-op on the secondmate charter"
 
-  pass "fm-brief.sh: standing orders inline into ship and scout briefs, stay off secondmate charters, no-op when absent, and fail loudly when unterminated"
+  pass "fm-brief.sh: data/standing-orders.md is delivered verbatim to ship and scout briefs, never to a charter, and is a no-op when absent"
 }
 
 # Scout and secondmate paths still scaffold well-formed briefs.

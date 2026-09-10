@@ -185,9 +185,6 @@ Approved project-level destinations are not produced by stow: they ship normally
 
 Forbidden destinations: any firstmate-repo-tracked skill per the hard rule; firstmate's own `AGENTS.md`, which is always-loaded for every fleet session; `docs/` alone, which is never agent-loaded on demand, though a skill body may point into docs for depth; and any committed surface for private content.
 A local skill exists only in this home, so offloading an entry out of `data/captain-shared.md` removes it from every inheriting home's always-injected memory: the proposal must say so, and the default for shared entries is keep.
-An entry between the `<!-- FM_STANDING_ORDERS_BEGIN -->` and `<!-- FM_STANDING_ORDERS_END -->` marker lines of `data/captain-shared.md` has a wider blast radius still, because `bin/fm-brief.sh` inlines that marked body into every ship and scout brief it scaffolds, so offloading one also removes it from every crewmate and scout spawned afterwards and the proposal must say that too.
-The two marker lines are load-bearing structure rather than content: curate the entries between them like any other shared entry, but carry both marker lines through every `rewritten`, `pruned`, `archived`, consolidation, and `proposed-offload` pass verbatim and in their original relative order.
-Dropping, reordering, or relocating either marker line silently stops the captain's standing orders reaching any spawned crewmate or scout, with no diagnostic on any channel.
 
 ### Flow: reduce, approve, migrate, remove
 

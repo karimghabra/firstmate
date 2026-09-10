@@ -21,8 +21,6 @@ DATA="${FM_DATA_OVERRIDE:-$FM_HOME/data}"
 . "$SCRIPT_DIR/fm-secondmate-registry-lib.sh"
 # shellcheck source=bin/fm-config-inherit-lib.sh
 . "$SCRIPT_DIR/fm-config-inherit-lib.sh"
-# shellcheck source=bin/fm-standing-orders-lib.sh
-. "$SCRIPT_DIR/fm-standing-orders-lib.sh"
 
 die() { printf 'error: %s\n' "$1" >&2; exit 1; }
 sha256_file() {
@@ -77,9 +75,6 @@ while IFS= read -r rel; do
     [ "$(file_link_count "$source")" = 1 ] || die "inherited source is hardlinked: $source"
     if [ "$rel" = data/captain-shared.md ]; then
       shared_captain_header_valid "$source" || die "shared captain preferences have no valid primary-authoritative header"
-      if defect=$(fm_standing_orders_defect "$source"); then
-        die "shared captain preferences at $source have $defect; repair the primary home copy before pushing"
-      fi
     fi
     snapshot="$TMP/$(printf '%s' "$rel" | tr '/' '_')"
     cp -p -- "$source" "$snapshot" || die "cannot snapshot inherited source: $source"

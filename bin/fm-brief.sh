@@ -64,24 +64,21 @@
 # it carries the AGENTS.md authoring bar (widely useful knowledge only, pointers
 # over copied detail) and defers self-governance recognition and insertion to
 # fm-ensure-agents-md.sh's contract.
-# Ship and scout briefs also inline a "Captain's standing orders" section when
-# the active home's data/captain-shared.md carries a non-blank standing-orders
-# body. bin/fm-standing-orders-lib.sh owns the marker shape and the extraction
-# itself, including which shapes are a no-op and which are malformed; this
-# header owns only what the brief does with the result. A body that comes back
-# empty scaffolds a brief byte-identical to one made with no standing orders
-# at all, and a malformed file names its problem on stderr and writes no
-# brief, so a hand-edit typo can never silently drop the orders.
+# Ship and scout briefs also inline a "Captain's standing orders" section
+# carrying the entire content of the active home's data/standing-orders.md,
+# verbatim. There is no marked region, no delimiter, and no parser: the file
+# IS the payload, so there is no shape for a hand edit to break. An absent or
+# blank file is a complete no-op, producing a brief byte-identical to one
+# scaffolded with no standing orders at all.
 # The section lands right after the Task section and before the Herdr section,
 # so it is read early rather than buried under Setup.
 # A secondmate charter carries no such section: a charter is written once and
 # would freeze at seed time, while secondmate homes already receive the live
-# data/captain-shared.md through bin/fm-config-inherit-lib.sh and print it in
-# full at every session start. A charter scaffold therefore never reads the
-# file and never fails on it, so a malformed marker pair cannot block the
-# secondmate seeding path in bin/fm-home-seed.sh or bin/fm-remote-home-seed.sh.
-# docs/configuration.md documents the marker contract for captains editing
-# data/captain-shared.md; this header owns the extraction mechanics.
+# data/standing-orders.md through bin/fm-config-inherit-lib.sh and any
+# persistent agent reads it itself.
+# docs/configuration.md owns the fact that data/standing-orders.md exists and
+# where it lives; this header owns the extraction, placement, and no-op
+# mechanics.
 # Scaffolds carry no role scope: fm-spawn.sh supplies fm_brief_worker_role from
 # fm-dod-lib.sh to every ship/scout launch brief, so this file never becomes a
 # second owner of a contract that must stay current across relaunches.
@@ -104,8 +101,6 @@ esac
 
 # shellcheck source=bin/fm-marker-lib.sh
 . "$SCRIPT_DIR/fm-marker-lib.sh"
-# shellcheck source=bin/fm-standing-orders-lib.sh
-. "$SCRIPT_DIR/fm-standing-orders-lib.sh"
 # shellcheck source=bin/fm-classify-lib.sh
 . "$SCRIPT_DIR/fm-classify-lib.sh"
 # shellcheck source=bin/fm-dod-lib.sh
@@ -201,34 +196,25 @@ if [ "$NO_PROJECTS" -eq 1 ] && [ "$KIND" != secondmate ]; then
   exit 1
 fi
 
-# Standing orders are the lines strictly between the literal marker lines,
-# each of which may carry trailing whitespace or a CRLF ending. The file must
-# hold exactly one well-formed pair: any other shape is malformed rather than
-# an opt-out, so awk names the problem on stderr and the scaffold stops before
-# anything is written. An absent file, absent markers, or a blank body stay
-# silent. Body lines shed a trailing CR so the section is pure LF like the
-# surrounding heredoc output. Only the ship and scout scaffolds consume the
-# block, so only they read the file at all: a charter carries no such section
-# and must never fail on a file it does not use.
+# The whole of data/standing-orders.md is the payload, delivered verbatim.
+# Only the ship and scout scaffolds carry it, so only they read the file.
 STANDING_ORDERS_BLOCK=""
 if [ "$KIND" != secondmate ]; then
-CAPTAIN_SHARED="$DATA/captain-shared.md"
-STANDING_ORDERS_BODY=$(fm_standing_orders_body "$CAPTAIN_SHARED") || {
-  echo "error: $CAPTAIN_SHARED has $(fm_standing_orders_defect "$CAPTAIN_SHARED"); the standing orders must be exactly one well-formed marker pair" >&2
-  exit 1
-}
-case "$STANDING_ORDERS_BODY" in
-  *[![:space:]]*) ;;
-  *) STANDING_ORDERS_BODY="" ;;
-esac
-if [ -n "$STANDING_ORDERS_BODY" ]; then
-  STANDING_ORDERS_SECTION=$(printf '%s\n' \
-    "# Captain's standing orders" \
-    'These orders are binding on this task, not defaults to trade away under time pressure.' \
-    '' \
-    "$STANDING_ORDERS_BODY")
-  STANDING_ORDERS_BLOCK="$STANDING_ORDERS_SECTION"$'\n\n'
+STANDING_ORDERS_BODY=""
+STANDING_ORDERS_FILE="$DATA/standing-orders.md"
+if [ -f "$STANDING_ORDERS_FILE" ]; then
+  STANDING_ORDERS_BODY=$(cat "$STANDING_ORDERS_FILE")
 fi
+case "$STANDING_ORDERS_BODY" in
+  *[![:space:]]*)
+    STANDING_ORDERS_SECTION=$(printf '%s\n' \
+      "# Captain's standing orders" \
+      'These orders are binding on this task, not defaults to trade away under time pressure.' \
+      '' \
+      "$STANDING_ORDERS_BODY")
+    STANDING_ORDERS_BLOCK="$STANDING_ORDERS_SECTION"$'\n\n'
+    ;;
+esac
 fi
 
 BRIEF="$DATA/$ID/brief.md"
