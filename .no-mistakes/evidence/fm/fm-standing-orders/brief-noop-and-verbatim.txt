@@ -1,0 +1,41 @@
+## Scenario: absent / blank / whitespace-only data/standing-orders.md is a byte-identical no-op
+## compared against the pre-change fm-brief.sh from base commit 269f8fe, same FM_HOME, code-root path normalized
+absent  file, ship   brief: IDENTICAL (10550 bytes)
+absent  file, scout  brief: IDENTICAL (5746 bytes)
+absent  file, sm     brief: IDENTICAL (8111 bytes)
+empty   file, ship   brief: IDENTICAL (10543 bytes)
+empty   file, scout  brief: IDENTICAL (5740 bytes)
+empty   file, sm     brief: IDENTICAL (8105 bytes)
+blank   file, ship   brief: IDENTICAL (10543 bytes)
+blank   file, scout  brief: IDENTICAL (5740 bytes)
+blank   file, sm     brief: IDENTICAL (8105 bytes)
+
+## Scenario: present file delivered verbatim (section body vs data/standing-orders.md bytes)
+ship brief: section body is byte-identical to data/standing-orders.md (708 bytes)
+scout brief: section body is byte-identical to data/standing-orders.md (708 bytes)
+
+## Scenario: with orders present, the only delta vs the base-commit ship brief is the inserted section (same home, root normalized)
+--- base-269f8fe/brief.md
++++ branch/brief.md
+@@ -7,6 +7,18 @@
+ ## Firstmate spec
+ {FIRSTMATE_SPEC}
+ 
++# Captain's standing orders
++These apply to every agent firstmate ever spawns.
++
++1. Never use an em-dash (—) in anything you write.
++2. Never add an agent name as a commit co-author automatically.
++3. Never hand-edit CHANGELOG.md or any auto-generated file.
++4. In long markdown, write one full sentence per line.
++5. Do not weight development cost heavily in technical decisions; prefer quality, simplicity, robustness, scalability and long-term maintainability.
++6. Reproduce a bug end to end, as an end user would see it, before fixing it.
++7. Hold the UI to a pixel-perfect standard, and fix what looks wrong even when it is unrelated to your task.
++8. Hold the same standard for lint, test failures and test flakiness: fix them on sight.
++
+ # Herdr lifecycle declaration - NOT ENABLED
+ **HARD SAFETY GATE:** this scaffold cannot inspect the task text filled in above.
+ If the task will start, stop, delete, restart, profile, or otherwise drive Herdr lifecycle behavior, stop and regenerate the brief with `--herdr-lab` before dispatch.
+
+## Secondmate charter with orders present vs base-commit charter
+secondmate charter: IDENTICAL to base (no frozen copy of the orders)

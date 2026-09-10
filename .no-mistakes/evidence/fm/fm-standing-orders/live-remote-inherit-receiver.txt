@@ -1,0 +1,22 @@
+## Live: remote receiver bin/fm-remote-inherit.sh applies data/standing-orders.md in a remote home
+$ fm-remote-inherit.sh put data/standing-orders.md 775 <sha> 1 < primary file
+pushed: data/standing-orders.md
+rc=0
+remote copy byte-identical, mode 444
+$ (same bytes, generation 2)
+unchanged: data/standing-orders.md
+rc=0
+## Adversarial: remote copy drifts locally, then the primary pushes generation 3
+quarantined: data/standing-orders.md.remote-quarantine-20260910T222650Z-1895089 (replaced)
+pushed: data/standing-orders.md
+rc=0
+remote copy restored, mode 444
+standing-orders.md.remote-quarantine-20260910T222650Z-1895089
+## Adversarial: a non-allowlisted data path is refused
+error: path is not inherited material: data/learnings.md
+rc=1
+## Primary absence mirrored remotely
+quarantined: data/standing-orders.md.remote-quarantine-20260910T222650Z-1895234 (removed)
+removed: data/standing-orders.md
+rc=0
+remote copy removed

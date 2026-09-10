@@ -1,0 +1,64 @@
+## Live: bin/fm-session-start.sh context digest in the PRIMARY home (firstmate) prints data/standing-orders.md
+data/standing-orders.md (shared, main-authoritative, read-only in secondmate homes)
+--------------------------------------------------------------------------------
+These apply to every agent firstmate ever spawns.
+
+1. Never use an em-dash (—) in anything you write.
+2. Never add an agent name as a commit co-author automatically.
+3. Never hand-edit CHANGELOG.md or any auto-generated file.
+4. In long markdown, write one full sentence per line.
+5. Do not weight development cost heavily in technical decisions; prefer quality, simplicity, robustness, scalability and long-term maintainability.
+6. Reproduce a bug end to end, as an end user would see it, before fixing it.
+7. Hold the UI to a pixel-perfect standard, and fix what looks wrong even when it is unrelated to your task.
+8. Hold the same standard for lint, test failures and test flakiness: fix them on sight.
+9. Lab-only ninth order added mid-session to exercise propagation.
+
+## Live: bin/fm-session-start.sh context digest in the SECONDMATE home prints its inherited read-only copy
+data/standing-orders.md (shared, main-authoritative, read-only in secondmate homes)
+--------------------------------------------------------------------------------
+These apply to every agent firstmate ever spawns.
+
+1. Never use an em-dash (—) in anything you write.
+2. Never add an agent name as a commit co-author automatically.
+3. Never hand-edit CHANGELOG.md or any auto-generated file.
+4. In long markdown, write one full sentence per line.
+5. Do not weight development cost heavily in technical decisions; prefer quality, simplicity, robustness, scalability and long-term maintainability.
+6. Reproduce a bug end to end, as an end user would see it, before fixing it.
+7. Hold the UI to a pixel-perfect standard, and fix what looks wrong even when it is unrelated to your task.
+8. Hold the same standard for lint, test failures and test flakiness: fix them on sight.
+9. Lab-only ninth order added mid-session to exercise propagation.
+
+
+## Live: bin/fm-startup-memory-budget.sh report counts data/standing-orders.md (primary, then secondmate)
+rc=0
+estimator=ceil(UTF-8 bytes / 3) conservative-local-estimate
+role=primary
+effective_budget_tokens=7500
+file=data/captain.md bytes=0 estimated_tokens=0 status=absent
+file=data/captain-shared.md bytes=0 estimated_tokens=0 status=absent
+file=data/standing-orders.md bytes=775 estimated_tokens=259 status=present
+file=data/learnings.md bytes=0 estimated_tokens=0 status=absent
+total_estimated_tokens=259
+budget_status=within-budget
+rc=0
+estimator=ceil(UTF-8 bytes / 3) conservative-local-estimate
+role=secondmate
+effective_budget_tokens=7500
+file=data/captain.md bytes=0 estimated_tokens=0 status=absent
+file=data/captain-shared.md bytes=0 estimated_tokens=0 status=absent
+file=data/standing-orders.md bytes=775 estimated_tokens=259 status=present
+file=data/learnings.md bytes=0 estimated_tokens=0 status=absent
+total_estimated_tokens=259
+budget_status=within-budget
+## Boundary: secondmate budget 100 tokens, standing orders alone 259 tokens
+estimator=ceil(UTF-8 bytes / 3) conservative-local-estimate
+role=secondmate
+effective_budget_tokens=100
+file=data/captain.md bytes=0 estimated_tokens=0 status=absent
+file=data/captain-shared.md bytes=0 estimated_tokens=0 status=absent
+file=data/standing-orders.md bytes=775 estimated_tokens=259 status=present
+file=data/learnings.md bytes=0 estimated_tokens=0 status=absent
+total_estimated_tokens=259
+budget_status=over-budget
+exception=primary-owned-shared-file-alone-exceeds-budget
+rc=0

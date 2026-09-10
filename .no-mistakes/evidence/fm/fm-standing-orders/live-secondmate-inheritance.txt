@@ -1,0 +1,19 @@
+## Live: secondmate launch (real bin/fm-spawn.sh smdocs <lab>/sm-home --secondmate) propagates data/standing-orders.md
+$ fm-spawn.sh smdocs <lab>/sm-home --secondmate --harness claude --backend tmux
+spawned smdocs harness=claude kind=secondmate mode=secondmate yolo=off window=lab:fm-smdocs worktree=<lab>/sm-home
+--- secondmate home data/ after launch ---
+total 12
+-rw-rw-r-- 1 mars mars 8091 Sep 10 15:21 charter.md
+-rw-rw-r-- 1 mars mars    0 Sep 10 15:21 projects.md
+-r--r--r-- 1 mars mars  708 Sep 10 15:21 standing-orders.md
+secondmate copy is byte-identical to the primary's data/standing-orders.md, mode 444
+secondmate charter carries a standing-orders section: 0 (expected 0: charters never freeze a copy)
+
+## Live: a crewmate scaffolded by the SECONDMATE (FM_HOME=<lab>/sm-home) carries the inherited orders
+rc=0
+scaffolded: <lab>/sm-home/data/smcrew1/brief.md (ship, mode=direct-PR; replace {TASK} and {FIRSTMATE_SPEC})
+secondmate crewmate brief: standing-orders section byte-identical to the primary's file
+3:# Task
+10:# Captain's standing orders
+22:# Herdr lifecycle declaration - NOT ENABLED
+27:# Setup

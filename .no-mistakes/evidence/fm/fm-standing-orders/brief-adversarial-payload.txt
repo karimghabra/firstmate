@@ -1,0 +1,19 @@
+## Adversarial payload: shell metacharacters, printf tokens, backslashes, a '# ' heading, a CRLF line
+--- data/standing-orders.md (cat -A) ---
+- Never run $(touch /tmp/fm-so-pwned-1714898) or `touch /tmp/fm-so-pwned-1714898`.$
+- Literal vars stay literal: $HOME ${FM_HOME} $DATA $1 $@$
+- printf tokens stay literal: %s %d %% \n \t \\ $
+# A heading inside the orders$
+- CRLF line follows$
+windows line^M$
+ship brief (a-ship proj --mode direct-PR): section body byte-identical to the file
+scout brief (a-scout proj --scout): section body byte-identical to the file
+herdr brief (a-herdr proj --mode local-only --herdr-lab): section body byte-identical to the file
+no command substitution executed (/tmp/fm-so-pwned-1714898 absent)
+--- herdr-lab ship brief section placement ---
+3:# Task
+10:# Captain's standing orders
+14:# A heading inside the orders
+18:# Herdr isolation - HARD SAFETY CONTRACT
+37:# Setup
+46:# Rules

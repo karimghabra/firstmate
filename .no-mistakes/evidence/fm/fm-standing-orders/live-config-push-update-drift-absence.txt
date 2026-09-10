@@ -1,0 +1,84 @@
+## Live: captain adds a 9th order to the primary; bin/fm-config-push.sh converges the live secondmate
+$ fm-config-push.sh
+rc=0
+●━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━
+●  WATCHER DOWN - SUPERVISION IS OFF
+●  1 task(s) in flight, but no watcher has a fresh beacon (last beat: never, grace 300s).
+●  Trust the emitted supervision protocol for this harness; do not use shell & for watcher repair.
+●  This is a supervision warning only; the guarded operation WILL still run.
+●  After draining queued wakes, repair missing watcher supervision according to the session-start block for this harness; do not use shell &.
+●━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━
+WARNING: queued wakes pending - drain them with bin/fm-wake-drain.sh before anything else.
+config-push: <lab>/primary -> live secondmate homes
+secondmate smdocs (<lab>/sm-home):
+SECONDMATE_SYNC: secondmate home <lab>/sm-home: quarantined data/standing-orders.md drift at <lab>/sm-home/data/.standing-orders.md.quarantine.20260910T222233Z.d3694a70003f972651d4702e14df17775e6d2a712e955f283c50a95d69a73a04
+  crew-dispatch.json: unchanged
+  crew-harness: unchanged
+  backlog-backend: unchanged
+  backend: unchanged
+  herdr-presentation-spaces: unchanged
+  startup-memory-budget: unchanged
+  trace-context: unchanged - session-scoped
+  launch-env-allowlist: unchanged
+  data/captain-shared.md: unchanged
+  data/standing-orders.md: pushed - quarantined local drift at <lab>/sm-home/data/.standing-orders.md.quarantine.20260910T222233Z.d3694a70003f972651d4702e14df17775e6d2a712e955f283c50a95d69a73a04
+secondmate copy now matches the updated primary (11 lines), mode 444
+9. Lab-only ninth order added mid-session to exercise propagation.
+reread instruction files under state/ referencing standing-orders (must be none: shared data files never inline into a config reread):
+  none
+
+## Adversarial: a secondmate hand-edits its read-only copy; the next push quarantines the drift and restores the captain's text
+$ fm-config-push.sh
+rc=0
+WARNING: watcher still down (same stale episode; last beat: never, grace 300s) - full banner already printed this episode.
+WARNING: queued wakes pending - drain them with bin/fm-wake-drain.sh before anything else.
+config-push: <lab>/primary -> live secondmate homes
+secondmate smdocs (<lab>/sm-home):
+SECONDMATE_SYNC: secondmate home <lab>/sm-home: quarantined data/standing-orders.md drift at <lab>/sm-home/data/.standing-orders.md.quarantine.20260910T222234Z.907bcd21ea16dd4c3015720c48a619d9433c4e9b0eab45cbe41be4b2772dc6e6
+  crew-dispatch.json: unchanged
+  crew-harness: unchanged
+  backlog-backend: unchanged
+  backend: unchanged
+  herdr-presentation-spaces: unchanged
+  startup-memory-budget: unchanged
+  trace-context: unchanged - session-scoped
+  launch-env-allowlist: unchanged
+  data/captain-shared.md: unchanged
+  data/standing-orders.md: pushed - quarantined local drift at <lab>/sm-home/data/.standing-orders.md.quarantine.20260910T222234Z.907bcd21ea16dd4c3015720c48a619d9433c4e9b0eab45cbe41be4b2772dc6e6
+secondmate copy restored to the primary's bytes, mode 444
+agent-authored lines left in the live copy: 0
+-rw-------  1 mars mars  708 Sep 10 15:21 .standing-orders.md.quarantine.20260910T222233Z.d3694a70003f972651d4702e14df17775e6d2a712e955f283c50a95d69a73a04
+-rw-------  1 mars mars  824 Sep 10 15:22 .standing-orders.md.quarantine.20260910T222234Z.907bcd21ea16dd4c3015720c48a619d9433c4e9b0eab45cbe41be4b2772dc6e6
+quarantine keeps the drifted bytes: 8. Hold the same standard for lint, test failures and test flakiness: fix them on sight.
+
+## Brief scaffolded in the secondmate home after the restore carries only the captain's orders
+rc=0
+scaffolded: <lab>/sm-home/data/smcrew2/brief.md (scout; replace {TASK} and {FIRSTMATE_SPEC})
+agent-authored lines in new brief: 0
+captain ninth order present in new brief: 1
+
+## Primary removes the file (captain withdraws all orders); push mirrors the absence
+rc=0
+WARNING: watcher still down (same stale episode; last beat: never, grace 300s) - full banner already printed this episode.
+WARNING: queued wakes pending - drain them with bin/fm-wake-drain.sh before anything else.
+config-push: <lab>/primary -> live secondmate homes
+secondmate smdocs (<lab>/sm-home):
+SECONDMATE_SYNC: secondmate home <lab>/sm-home: quarantined data/standing-orders.md drift at <lab>/sm-home/data/.standing-orders.md.quarantine.20260910T222236Z.06590e512d9e18a4663620e215f95d899af64ff348af2908457147fbf5932be8
+  crew-dispatch.json: unchanged
+  crew-harness: unchanged
+  backlog-backend: unchanged
+  backend: unchanged
+  herdr-presentation-spaces: unchanged
+  startup-memory-budget: unchanged
+  trace-context: unchanged - session-scoped
+  launch-env-allowlist: unchanged
+  data/captain-shared.md: unchanged
+  data/standing-orders.md: pushed - mirrored primary absence after quarantining local copy at <lab>/sm-home/data/.standing-orders.md.quarantine.20260910T222236Z.06590e512d9e18a4663620e215f95d899af64ff348af2908457147fbf5932be8
+secondmate copy removed (absence mirrored, prior copy quarantined)
+rc=0
+scaffolded: <lab>/sm-home/data/smcrew3/brief.md (scout; replace {TASK} and {FIRSTMATE_SPEC})
+standing-orders sections in a secondmate brief after withdrawal: 0
+
+## Correction: the drift quarantine from the adversarial step (824 bytes) holds the agent-authored line, out of the live copy:
+9. Lab-only ninth order added mid-session to exercise propagation.
+10. Agent-authored order the captain never gave.

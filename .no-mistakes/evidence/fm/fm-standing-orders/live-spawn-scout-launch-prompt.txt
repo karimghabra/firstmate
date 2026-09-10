@@ -1,0 +1,45 @@
+## Live: real bin/fm-spawn.sh (claude harness, tmux backend on a private socket) spawning scout task so-scout3
+$ fm-spawn.sh so-scout3 projects/proj --scout --backend tmux
+spawned so-scout3 harness=claude kind=scout window=lab:fm-so-scout3 worktree=<lab>/wt-scout
+--- pane of the spawned scout window ---
+aunch-brief.md')"
+fake claude received 7416 prompt bytes for so-scout3
+--- launch prompt kind: launch-brief ---
+--- decoded launch prompt, first 24 lines ---
+You are a crewmate: an autonomous worker agent managed by firstmate. Work on your own; do not wait for a human.
+
+# Task
+## Captain's intent
+Captain: survey how the project documents its build.
+
+## Firstmate spec
+Report the build steps you find.
+
+# Captain's standing orders
+These apply to every agent firstmate ever spawns.
+
+1. Never use an em-dash (—) in anything you write.
+2. Never add an agent name as a commit co-author automatically.
+3. Never hand-edit CHANGELOG.md or any auto-generated file.
+4. In long markdown, write one full sentence per line.
+5. Do not weight development cost heavily in technical decisions; prefer quality, simplicity, robustness, scalability and long-term maintainability.
+6. Reproduce a bug end to end, as an end user would see it, before fixing it.
+7. Hold the UI to a pixel-perfect standard, and fix what looks wrong even when it is unrelated to your task.
+8. Hold the same standard for lint, test failures and test flakiness: fix them on sight.
+
+# Herdr lifecycle declaration - NOT ENABLED
+**HARD SAFETY GATE:** this scaffold cannot inspect the task text filled in above.
+If the task will start, stop, delete, restart, profile, or otherwise drive Herdr lifecycle behavior, stop and regenerate the brief with `--herdr-lab` before dispatch.
+...
+--- section headings in the full delivered prompt ---
+3:# Task
+4:## Captain's intent
+7:## Firstmate spec
+10:# Captain's standing orders
+22:# Herdr lifecycle declaration - NOT ENABLED
+27:# Setup
+33:# Rules
+70:# Firstmate instruction inbox
+75:# Definition of done
+83:# Current worker role contract
+RESULT: the standing-orders section of the delivered scout prompt is byte-identical to data/standing-orders.md
