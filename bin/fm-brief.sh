@@ -64,6 +64,22 @@
 # it carries the AGENTS.md authoring bar (widely useful knowledge only, pointers
 # over copied detail) and defers self-governance recognition and insertion to
 # fm-ensure-agents-md.sh's contract.
+# Ship and scout briefs also inline a "Captain's standing orders" section
+# carrying the entire content of the active home's data/standing-orders.md,
+# verbatim, with nothing parsed, stripped, or added: the file IS the payload,
+# so it has no shape a hand edit could break. An absent or blank file is a
+# complete no-op, producing a brief byte-identical to one scaffolded with no
+# standing orders at all.
+# The section lands right after the Task section and before the Herdr section,
+# so it is read early rather than buried under Setup.
+# A secondmate charter carries no such section: a charter is written once and
+# would freeze at seed time, while secondmate homes already receive the live
+# data/standing-orders.md through bin/fm-config-inherit-lib.sh and every
+# persistent agent is handed it by bin/fm-session-start.sh's context digest at
+# every session start.
+# docs/configuration.md owns the fact that data/standing-orders.md exists and
+# where it lives; this header owns the extraction, placement, and no-op
+# mechanics.
 # Scaffolds carry no role scope: fm-spawn.sh supplies fm_brief_worker_role from
 # fm-dod-lib.sh to every ship/scout launch brief, so this file never becomes a
 # second owner of a contract that must stay current across relaunches.
@@ -179,6 +195,25 @@ fi
 if [ "$NO_PROJECTS" -eq 1 ] && [ "$KIND" != secondmate ]; then
   echo "error: --no-projects applies only to --secondmate charters" >&2
   exit 1
+fi
+
+# The whole of data/standing-orders.md is the payload, delivered verbatim.
+# Only the ship and scout scaffolds carry it, so only they read the file.
+STANDING_ORDERS_BLOCK=""
+if [ "$KIND" != secondmate ]; then
+STANDING_ORDERS_BODY=""
+STANDING_ORDERS_FILE="$DATA/standing-orders.md"
+if [ -f "$STANDING_ORDERS_FILE" ]; then
+  STANDING_ORDERS_BODY=$(cat "$STANDING_ORDERS_FILE")
+fi
+case "$STANDING_ORDERS_BODY" in
+  *[![:space:]]*)
+    STANDING_ORDERS_SECTION=$(printf '%s\n' \
+      "# Captain's standing orders" \
+      "$STANDING_ORDERS_BODY")
+    STANDING_ORDERS_BLOCK="$STANDING_ORDERS_SECTION"$'\n\n'
+    ;;
+esac
 fi
 
 BRIEF="$DATA/$ID/brief.md"
@@ -359,7 +394,7 @@ You are a crewmate: an autonomous worker agent managed by firstmate. Work on you
 
 $TASK_SECTION
 
-$HERDR_SECTION
+${STANDING_ORDERS_BLOCK}$HERDR_SECTION
 
 # Setup
 You are in a disposable git worktree of $REPO, at a detached HEAD on a clean default branch.
@@ -445,7 +480,7 @@ You are a crewmate: an autonomous worker agent managed by firstmate. Work on you
 
 $TASK_SECTION
 
-$HERDR_SECTION
+${STANDING_ORDERS_BLOCK}$HERDR_SECTION
 
 # Setup
 You are in a disposable git worktree of $REPO, at a detached HEAD on a clean default branch.

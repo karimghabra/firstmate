@@ -6,7 +6,7 @@
 #   fm-remote-inherit.sh absent <allowlisted-relative-path> 0 <empty-sha256> <generation>
 #
 # Only the inherited-material allowlist is writable or removable. Writes are
-# atomic ordinary-file replacements. Divergent data/captain-shared.md bytes are
+# atomic ordinary-file replacements. Divergent shared data-file bytes are
 # quarantined before replacement or removal and its converged copy is read-only.
 set -eu
 
@@ -124,16 +124,17 @@ commit_generation() {
 
 quarantine_shared() {
   local reason=$1 quarantine stamp base n=0
-  [ "$REL" = data/captain-shared.md ] && [ -f "$DEST" ] || return 0
+  fm_config_inherit_item_is_shared_data "$REL" || return 0
+  [ -f "$DEST" ] || return 0
   stamp=$(date -u +%Y%m%dT%H%M%SZ)
-  base="$HOME_REAL/data/captain-shared.md.remote-quarantine-$stamp-$$"
+  base="$HOME_REAL/$REL.remote-quarantine-$stamp-$$"
   quarantine=$base
   while [ -e "$quarantine" ] || [ -L "$quarantine" ]; do
     n=$((n + 1))
     quarantine="$base.$n"
   done
-  cp -p -- "$DEST" "$quarantine" || die "cannot quarantine divergent shared captain preferences"
-  chmod 600 "$quarantine" || die "cannot secure shared-preference quarantine"
+  cp -p -- "$DEST" "$quarantine" || die "cannot quarantine divergent $REL"
+  chmod 600 "$quarantine" || die "cannot secure the $REL quarantine"
   printf 'quarantined: %s (%s)\n' "${quarantine#"$HOME_REAL/"}" "$reason" >&2
 }
 
@@ -148,7 +149,7 @@ case "$COMMAND" in
     [ "$ACTUAL_HASH" = "$EXPECTED_HASH" ] || die "inherited material digest does not match its commitment"
     commit_generation
     if [ -f "$DEST" ] && cmp -s "$TMP" "$DEST"; then
-      [ "$REL" != data/captain-shared.md ] || chmod 444 "$DEST"
+      if fm_config_inherit_item_is_shared_data "$REL"; then chmod 444 "$DEST"; fi
       printf 'unchanged: %s\n' "$REL"
       exit 0
     fi
@@ -156,7 +157,7 @@ case "$COMMAND" in
     chmod 600 "$TMP" || die "cannot secure inherited material"
     mv -f -- "$TMP" "$DEST" || die "cannot publish inherited material"
     TMP=
-    [ "$REL" != data/captain-shared.md ] || chmod 444 "$DEST"
+    if fm_config_inherit_item_is_shared_data "$REL"; then chmod 444 "$DEST"; fi
     printf 'pushed: %s\n' "$REL"
     ;;
   absent)

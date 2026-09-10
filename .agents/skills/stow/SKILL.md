@@ -52,6 +52,11 @@ Marking rules:
   The required receipt action for that file is `routed`, not `unchanged`; name the ownership exception and do not declare the session reset-safe.
 - A pre-existing missing or hand-dropped marker is never grounds for destructive treatment: it means the file's default tier; an unmarked entry in a default-pinned file is simply pinned, while an unmarked entry in a file whose default tier carries a clock follows the migration rule below.
 
+`data/standing-orders.md` is outside this scheme entirely, in every home: `/stow` never rewrites, prunes, consolidates, retiers, marks, archives, offloads, or adds a header pointer to it, and it is never a curation input.
+Every byte of that file is delivered verbatim into every worker's instructions by `bin/fm-brief.sh`, so anything curation added to it would become instruction.
+It is the captain's own authored directive, revised by the captain directly, and it is still counted by the startup-memory budget below because it still consumes startup context.
+A new standing order reaches the file the way the existing ones did, which is that the captain states one and firstmate records his words; nothing routes into it automatically, because an accurate line an agent inserted on its own still means the whole fleet is taking an order nobody gave.
+
 Decay advances only when a pass runs, so a home stowed less often than a clock experiences that clock at its stow interval.
 
 ### Optional pass horizon (config/stow-pass-horizon)
@@ -79,14 +84,15 @@ Every `/stow` invocation performs this complete pass, even when the session cont
 
 1. Run `bin/fm-startup-memory-budget.sh report` before considering a write.
    Record its effective budget and each file's estimated-token total.
-   The budget is per home: this home's three files against this home's own allowance, never a fleet total.
+   The budget is per home: this home's four startup-memory files against this home's own allowance, never a fleet total.
    The helper's stable estimate is the documented conservative local approximation, not provider-exact accounting.
    If it rejects the setting or a memory file, do not infer a default or silently continue.
    Report that concrete exception and do not call the session reset-safe.
-2. Read every current memory file completely: `data/captain.md`, `data/captain-shared.md`, and `data/learnings.md`.
+2. Read every curated memory file completely: `data/captain.md`, `data/captain-shared.md`, and `data/learnings.md`.
    Treat an absent local file as absent, not as an invitation to manufacture content.
    In a primary home, all three are curation inputs under their existing ownership rules.
    In a secondmate home, `data/captain-shared.md` is a read-only primary-owned input: count it, never edit it, and curate only the editable local files.
+   `data/standing-orders.md` is the fourth counted file and no home's curation input, exempt per the rule above, so this pass counts it and changes nothing about it.
    Every mutation in the rest of this pass, including reinforcement, retiering, decay archival, legacy migration, consolidation, budget archival, and offload, applies only to an editable memory file.
    When a read-only shared entry appears to require one of those changes, leave it untouched, report the required change as an ownership exception, and route it to the primary owner.
 3. Build one whole-file retention plan before editing, ordered by likelihood of informing a future session.
@@ -117,8 +123,9 @@ Every `/stow` invocation performs this complete pass, even when the session cont
    The sole exception is relocation to a JIT owner after explicit, per-item captain approval under the offload flow below, and that entry remains in memory until its destination is live.
 8. Run `bin/fm-startup-memory-budget.sh report` again after the complete pass.
    Finish at or below the effective budget, or open a concrete captain decision before ending the pass.
-   A secondmate must explicitly report `primary-owned-shared-file-alone-exceeds-budget` when the inherited shared file alone exceeds its allowance, because local curation cannot resolve it.
-   Route that constraint to the primary owner and open one concrete captain decision at the primary owning level that names the shortfall, with exactly these options: raise the affected home's effective budget, or explicitly approve the primary owner trimming or offloading each named shared-file entry.
+   A secondmate must explicitly report `primary-owned-shared-file-alone-exceeds-budget` when the inherited shared files alone exceed its allowance, because local curation cannot resolve it.
+   Route that constraint to the primary owner and open one concrete captain decision at the primary owning level that names the shortfall, with exactly these options: raise the affected home's effective budget, or explicitly approve the primary owner trimming or offloading each named entry of an editable, curated shared file.
+   `data/standing-orders.md` is the exception at this step: no agent may trim or offload it in any home, so when standing orders drive the shortfall the only options are raising the affected home's effective budget or the captain shortening his own orders.
    When the convergence precondition skipped eviction, report the exempt pinned floor and the remaining shortfall as that concrete inability rather than archiving eligible knowledge that could not close the gap.
    Only after every safe non-pinned archival, consolidation, offload, and eligible eviction action is exhausted may a remaining excess be attributed to pinned safety, authority, or genuine captain-preference entries.
    In that last-resort case, create one captain-held decision that names the shortfall and each relevant pinned entry, with exactly these options: raise the effective budget, or explicitly approve offloading or trimming a named pinned entry.

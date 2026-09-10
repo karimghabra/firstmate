@@ -714,6 +714,13 @@ write_omp_loaded_markers() {
 
 # --- context digest: absent vs empty vs present -----------------------------
 
+# One labeled context-digest subsection: from its exact label line to the next
+# data/ label. Matching the label line exactly keeps the READ-ONCE CONTRACT
+# prose, which names the same files mid-sentence, out of the slice.
+context_digest_section() {  # <digest> <exact label line>
+  printf '%s\n' "$1" | awk -v label="$2" '$0 == label { flag = 1; next } /^data\// { flag = 0 } flag'
+}
+
 test_context_digest_absent_empty_present() {
   local rec root home fakebin out
   rec=$(new_world context-digest)
@@ -725,7 +732,8 @@ EOF
 
   printf '%s\n' '- demo [no-mistakes] - a demo project (added 2026-07-01)' > "$home/data/projects.md"
   : > "$home/data/captain.md"
-  # secondmates.md, captain-shared.md, and learnings.md deliberately absent
+  # secondmates.md, captain-shared.md, standing-orders.md, and learnings.md
+  # deliberately absent
 
   out=$(run_session_start "$home" "$root" "$fakebin:$BASE_PATH")
 
@@ -745,14 +753,23 @@ EOF
   assert_contains "$out" "data/secondmates.md" "digest did not label the secondmates.md section"
   assert_contains "$out" "data/learnings.md" "digest did not label the learnings.md section"
 
-  # Exactly four context ABSENT markers (secondmates.md, captain-shared.md,
-  # learnings.md; backlog.md is covered by its own test) - and the
-  # present-but-empty captain.md must NOT print ABSENT.
-  absent_count=$(printf '%s\n' "$out" | grep -c '^ABSENT$')
-  [ "$absent_count" -eq 4 ] || fail "expected 4 ABSENT markers (secondmates.md, captain-shared.md, learnings.md, backlog.md), got $absent_count: $out"
+  # Each absent context file is flagged ABSENT in its OWN subsection, and the
+  # present-but-empty captain.md is distinguished from absence. Asserting per
+  # file rather than counting ABSENT lines keeps this guard pinned to the
+  # property it protects instead of breaking on any future added digest line.
+  for label in \
+    "data/secondmates.md" \
+    "data/captain-shared.md (shared, main-authoritative, read-only in secondmate homes)" \
+    "data/standing-orders.md (shared, main-authoritative, read-only in secondmate homes)" \
+    "data/learnings.md"; do
+    section=$(context_digest_section "$out" "$label")
+    [ -n "$section" ] || fail "context digest printed no subsection for $label: $out"
+    assert_contains "$section" "ABSENT" "absent $label was not flagged ABSENT in the context digest"
+  done
 
-  cap_section=$(printf '%s\n' "$out" | awk '/^data\/captain\.md$/{flag=1;next}/^data\//{flag=0}flag')
+  cap_section=$(context_digest_section "$out" "data/captain.md")
   assert_contains "$cap_section" "(present, empty)" "empty-but-present captain.md was not distinguished from ABSENT"
+  assert_not_contains "$cap_section" "ABSENT" "empty-but-present captain.md was wrongly flagged ABSENT"
 
   pass "context digest distinguishes ABSENT, empty-but-present, and populated files"
 }

@@ -39,8 +39,8 @@
 #          into each validated live secondmate home.
 #          SECONDMATE_SYNC lines report actionable skipped placement-specific
 #          syncs or inheritance failures for live secondmate homes, plus
-#          quarantine diagnostics for divergent shared captain-preference
-#          copies; no-op/current and successful updates stay quiet.
+#          quarantine diagnostics for divergent shared data-file copies;
+#          no-op/current and successful updates stay quiet.
 #          SECONDMATE_LIVENESS lines report only actionable failures from the
 #          recovery-grade state owned by bin/fm-backend.sh's
 #          fm_backend_agent_state: skipped distinguishes an existing ambiguous
@@ -494,7 +494,8 @@ secondmate_sync() {
   # Inheritance propagation: push the primary-authoritative local inheritance
   # surface into every VALIDATED live secondmate home swept above.
   # FF_SEEN_HOMES is exactly that set, and fm-config-inherit-lib.sh owns the
-  # declared config items plus data/captain-shared.md.
+  # declared config items plus every shared data file in FM_SHARED_DATA_FILES
+  # (data/captain-shared.md and data/standing-orders.md).
   # After a successful push that changes allowlisted config/* for an already-
   # running home, send its literal-content reread instruction pointer so the
   # live agent does not keep applying stale defaults. Spawn/respawn already

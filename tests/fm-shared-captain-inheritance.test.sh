@@ -1,7 +1,8 @@
 #!/usr/bin/env bash
 # Behavior tests for primary-authoritative shared captain-preference inheritance.
 #
-# The narrow shared surface is exactly data/captain-shared.md.
+# The narrow shared surface is exactly data/captain-shared.md and
+# data/standing-orders.md.
 # data/captain.md and data/learnings.md remain domain-local in every home.
 set -u
 
@@ -91,6 +92,74 @@ test_first_copy_readonly_and_local_files_preserved() {
   assert_grep $'data/captain-shared.md\tunchanged\t' "$report" "unchanged bytes should report unchanged"
   assert_shared_readonly "$second/data/captain-shared.md"
   pass "shared captain first copy converges, is read-only, and preserves local captain/learnings files"
+}
+
+# data/standing-orders.md rides the same inheritance contract as
+# data/captain-shared.md: the primary's copy wins, it lands read-only in every
+# secondmate home, and the replacement is atomic so a destination is never left
+# holding a partially written file.
+test_standing_orders_file_propagates_read_only() {
+  local rec primary second report out orders mode_before
+  rec=$(new_home_pair standing-orders)
+  primary=${rec%%|*}
+  second=${rec#*|}
+  report="$TMP_ROOT/standing-orders.report"
+  write_shared "$primary/data/captain-shared.md" "shared v1"
+
+  # First copy: the file lands read-only and byte-identical.
+  orders=$(printf '%s\n%s' '- No em dash.' '- Reproduce bugs end to end before fixing.')
+  printf '%s\n' "$orders" > "$primary/data/standing-orders.md"
+  out=$(FM_CONFIG_INHERIT_REPORT="$report" propagate_secondmate_inheritance "$primary" "$second") \
+    || fail "propagating data/standing-orders.md failed"
+  [ -z "$out" ] || fail "first standing-orders copy should not emit a quarantine diagnostic: $out"
+  cmp -s "$primary/data/standing-orders.md" "$second/data/standing-orders.md" \
+    || fail "data/standing-orders.md did not converge into the secondmate home"
+  assert_shared_readonly "$second/data/standing-orders.md"
+  assert_secondmate_write_fails "$second/data/standing-orders.md"
+  assert_grep $'data/standing-orders.md\tpushed\t' "$report" \
+    "the standing-orders file should report pushed"
+
+  # Unchanged bytes converge quietly and keep the read-only mode.
+  : > "$report"
+  out=$(FM_CONFIG_INHERIT_REPORT="$report" propagate_secondmate_inheritance "$primary" "$second")
+  [ -z "$out" ] || fail "unchanged standing-orders convergence should stay quiet: $out"
+  assert_grep $'data/standing-orders.md\tunchanged\t' "$report" \
+    "unchanged standing-orders bytes should report unchanged"
+  assert_shared_readonly "$second/data/standing-orders.md"
+
+  # A changed primary re-converges the secondmate copy.
+  printf '%s\n' "$orders" > "$primary/data/standing-orders.md"
+  printf '%s\n' '- Fix lint and flaky tests on sight.' >> "$primary/data/standing-orders.md"
+  : > "$report"
+  FM_CONFIG_INHERIT_REPORT="$report" propagate_secondmate_inheritance "$primary" "$second" >/dev/null \
+    || fail "re-propagating changed standing orders failed"
+  cmp -s "$primary/data/standing-orders.md" "$second/data/standing-orders.md" \
+    || fail "a changed data/standing-orders.md did not re-converge"
+  assert_shared_readonly "$second/data/standing-orders.md"
+
+  # An unwritable destination directory must leave the prior copy intact and
+  # read-only rather than truncating it: propagation is atomic or skipped.
+  mode_before=$(file_mode "$second/data/standing-orders.md")
+  printf '%s\n' '- A further order.' >> "$primary/data/standing-orders.md"
+  chmod 500 "$second/data"
+  : > "$report"
+  FM_CONFIG_INHERIT_REPORT="$report" propagate_secondmate_inheritance "$primary" "$second" >/dev/null 2>&1
+  chmod 700 "$second/data"
+  assert_present "$second/data/standing-orders.md" \
+    "a failed standing-orders copy removed the destination file"
+  assert_equals "$mode_before" "$(file_mode "$second/data/standing-orders.md")" \
+    "a failed standing-orders copy changed the destination mode"
+  grep -q 'A further order' "$second/data/standing-orders.md" \
+    && fail "a failed standing-orders copy partially wrote the destination"
+
+  # An absent primary file mirrors absence downstream.
+  rm -f "$primary/data/standing-orders.md"
+  : > "$report"
+  FM_CONFIG_INHERIT_REPORT="$report" propagate_secondmate_inheritance "$primary" "$second" >/dev/null 2>&1
+  assert_absent "$second/data/standing-orders.md" \
+    "an absent primary data/standing-orders.md was not mirrored downstream"
+
+  pass "data/standing-orders.md propagates read-only, converges on change, and is atomic or skipped"
 }
 
 test_drift_quarantine_collision_and_repeated_convergence() {
@@ -370,6 +439,48 @@ EOF
   pass "fm-config-push convergence point updates changed shared captain source bytes from FM_DATA_OVERRIDE"
 }
 
+# The standing orders reach a spawned crewmate or scout through the brief, and
+# they reach firstmate and every secondmate through this digest. Both persistent
+# kinds run the same session start in their own home, so printing the file here
+# is the whole coverage mechanism for them.
+test_session_start_digest_prints_standing_orders() {
+  local rec w root home _sm fakebin out section
+  rec=$(new_git_world session-start-standing-orders)
+  IFS='|' read -r w root home _sm <<EOF
+$rec
+EOF
+  fakebin=$(make_fake_spawn_toolchain "$w")
+  add_bootstrap_compatible_tools "$fakebin"
+  fm_fake_exit0 "$fakebin" pgrep
+
+  # Absent: the digest must say so explicitly rather than omit the file.
+  out=$(PATH="$fakebin:$BASE_PATH" FM_HOME="$home" FM_ROOT_OVERRIDE="$root" \
+    "$ROOT/bin/fm-session-start.sh")
+  section=$(printf '%s\n' "$out" | awk '/^data\/standing-orders\.md \(shared/ { f = 1; next } f && /^data\/learnings\.md/ { exit } f')
+  [ -n "$section" ] || fail "session-start digest did not print a data/standing-orders.md subsection"
+  assert_contains "$section" "ABSENT" \
+    "an absent data/standing-orders.md should be flagged ABSENT in the digest"
+
+  # Present: the digest must carry its contents.
+  printf '%s\n' '- No em dash.' '- Fix lint and flaky tests on sight.' \
+    > "$home/data/standing-orders.md"
+  out=$(PATH="$fakebin:$BASE_PATH" FM_HOME="$home" FM_ROOT_OVERRIDE="$root" \
+    "$ROOT/bin/fm-session-start.sh")
+  section=$(printf '%s\n' "$out" | awk '/^data\/standing-orders\.md \(shared/ { f = 1; next } f && /^data\/learnings\.md/ { exit } f')
+  assert_contains "$section" "- No em dash." \
+    "session-start digest did not render data/standing-orders.md contents"
+  assert_contains "$section" "- Fix lint and flaky tests on sight." \
+    "session-start digest truncated data/standing-orders.md contents"
+  assert_not_contains "$section" "ABSENT" \
+    "a present data/standing-orders.md was still flagged ABSENT"
+
+  # The read-once contract must name it, or the agent is told to re-read it.
+  section=$(printf '%s\n' "$out" | awk '/^READ-ONCE CONTRACT$/ { f = 1 } /^FLEET STATE$/ { f = 0 } f')
+  assert_contains "$section" "data/standing-orders.md" \
+    "read-once contract should name standing-orders.md among the files it covers"
+  pass "session-start digest prints data/standing-orders.md, or flags it ABSENT"
+}
+
 test_session_start_digest_labels_shared_file_and_read_once_rule() {
   local rec w root home _sm fakebin out contract
   rec=$(new_git_world session-start-label)
@@ -393,6 +504,7 @@ EOF
 }
 
 test_first_copy_readonly_and_local_files_preserved
+test_standing_orders_file_propagates_read_only
 test_drift_quarantine_collision_and_repeated_convergence
 test_missing_source_mirrors_absence_without_losing_local_bytes
 test_unsafe_artifacts_and_failure_restore_readonly_mode
@@ -400,5 +512,6 @@ test_spawn_convergence_point_copies_shared_file
 test_bootstrap_convergence_point_copies_shared_file
 test_config_push_convergence_point_updates_changed_source
 test_session_start_digest_labels_shared_file_and_read_once_rule
+test_session_start_digest_prints_standing_orders
 
 echo "# all fm-shared-captain-inheritance tests passed"

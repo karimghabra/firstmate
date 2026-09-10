@@ -268,7 +268,7 @@ test_receipt_facts_are_complete_and_show_before_and_after() {
   [ "$(value_in "$s" budget_report)" = ok ] || fail "receipt stanza lacks an accounting outcome"
   [ -n "$(value_in "$s" transport)" ] || fail "receipt stanza lacks a transport"
   local file
-  for file in captain.md captain-shared.md learnings.md; do
+  for file in captain.md captain-shared.md standing-orders.md learnings.md; do
     assert_contains "$s" "file=data/$file " "receipt stanza lacks a per-file action input for $file"
   done
   [ "$(value_in "$s" budget_status)" = over-budget ] \
