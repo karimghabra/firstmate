@@ -854,10 +854,8 @@ test_standing_orders_inline_and_no_op() {
   for kind in ship scout; do
     assert_grep "# Captain's standing orders" "$home/data/so-present-$kind/brief.md" \
       "$kind brief did not carry the standing-orders section"
-    assert_grep "binding on this task, not defaults to trade away under time pressure" \
-      "$home/data/so-present-$kind/brief.md" "$kind brief did not carry the standing-orders preamble"
     rendered=$(awk "/^# Captain.s standing orders\$/ { f = 1; next } f && /^# / { exit } f" \
-      "$home/data/so-present-$kind/brief.md" | sed '1,2d')
+      "$home/data/so-present-$kind/brief.md" | sed '$d')
     assert_equals "$orders" "$rendered" \
       "$kind brief did not deliver data/standing-orders.md verbatim"
   done

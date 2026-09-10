@@ -74,8 +74,9 @@
 # so it is read early rather than buried under Setup.
 # A secondmate charter carries no such section: a charter is written once and
 # would freeze at seed time, while secondmate homes already receive the live
-# data/standing-orders.md through bin/fm-config-inherit-lib.sh and any
-# persistent agent reads it itself.
+# data/standing-orders.md through bin/fm-config-inherit-lib.sh and every
+# persistent agent is handed it by bin/fm-session-start.sh's context digest at
+# every session start.
 # docs/configuration.md owns the fact that data/standing-orders.md exists and
 # where it lives; this header owns the extraction, placement, and no-op
 # mechanics.
@@ -209,8 +210,6 @@ case "$STANDING_ORDERS_BODY" in
   *[![:space:]]*)
     STANDING_ORDERS_SECTION=$(printf '%s\n' \
       "# Captain's standing orders" \
-      'These orders are binding on this task, not defaults to trade away under time pressure.' \
-      '' \
       "$STANDING_ORDERS_BODY")
     STANDING_ORDERS_BLOCK="$STANDING_ORDERS_SECTION"$'\n\n'
     ;;

@@ -439,6 +439,48 @@ EOF
   pass "fm-config-push convergence point updates changed shared captain source bytes from FM_DATA_OVERRIDE"
 }
 
+# The standing orders reach a spawned crewmate or scout through the brief, and
+# they reach firstmate and every secondmate through this digest. Both persistent
+# kinds run the same session start in their own home, so printing the file here
+# is the whole coverage mechanism for them.
+test_session_start_digest_prints_standing_orders() {
+  local rec w root home _sm fakebin out section
+  rec=$(new_git_world session-start-standing-orders)
+  IFS='|' read -r w root home _sm <<EOF
+$rec
+EOF
+  fakebin=$(make_fake_spawn_toolchain "$w")
+  add_bootstrap_compatible_tools "$fakebin"
+  fm_fake_exit0 "$fakebin" pgrep
+
+  # Absent: the digest must say so explicitly rather than omit the file.
+  out=$(PATH="$fakebin:$BASE_PATH" FM_HOME="$home" FM_ROOT_OVERRIDE="$root" \
+    "$ROOT/bin/fm-session-start.sh")
+  section=$(printf '%s\n' "$out" | awk '/^data\/standing-orders\.md \(shared/ { f = 1; next } f && /^data\/learnings\.md/ { exit } f')
+  [ -n "$section" ] || fail "session-start digest did not print a data/standing-orders.md subsection"
+  assert_contains "$section" "ABSENT" \
+    "an absent data/standing-orders.md should be flagged ABSENT in the digest"
+
+  # Present: the digest must carry its contents.
+  printf '%s\n' '- No em dash.' '- Fix lint and flaky tests on sight.' \
+    > "$home/data/standing-orders.md"
+  out=$(PATH="$fakebin:$BASE_PATH" FM_HOME="$home" FM_ROOT_OVERRIDE="$root" \
+    "$ROOT/bin/fm-session-start.sh")
+  section=$(printf '%s\n' "$out" | awk '/^data\/standing-orders\.md \(shared/ { f = 1; next } f && /^data\/learnings\.md/ { exit } f')
+  assert_contains "$section" "- No em dash." \
+    "session-start digest did not render data/standing-orders.md contents"
+  assert_contains "$section" "- Fix lint and flaky tests on sight." \
+    "session-start digest truncated data/standing-orders.md contents"
+  assert_not_contains "$section" "ABSENT" \
+    "a present data/standing-orders.md was still flagged ABSENT"
+
+  # The read-once contract must name it, or the agent is told to re-read it.
+  section=$(printf '%s\n' "$out" | awk '/^READ-ONCE CONTRACT$/ { f = 1 } /^FLEET STATE$/ { f = 0 } f')
+  assert_contains "$section" "data/standing-orders.md" \
+    "read-once contract should name standing-orders.md among the files it covers"
+  pass "session-start digest prints data/standing-orders.md, or flags it ABSENT"
+}
+
 test_session_start_digest_labels_shared_file_and_read_once_rule() {
   local rec w root home _sm fakebin out contract
   rec=$(new_git_world session-start-label)
@@ -470,5 +512,6 @@ test_spawn_convergence_point_copies_shared_file
 test_bootstrap_convergence_point_copies_shared_file
 test_config_push_convergence_point_updates_changed_source
 test_session_start_digest_labels_shared_file_and_read_once_rule
+test_session_start_digest_prints_standing_orders
 
 echo "# all fm-shared-captain-inheritance tests passed"

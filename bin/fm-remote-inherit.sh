@@ -133,8 +133,8 @@ quarantine_shared() {
     n=$((n + 1))
     quarantine="$base.$n"
   done
-  cp -p -- "$DEST" "$quarantine" || die "cannot quarantine divergent shared captain preferences"
-  chmod 600 "$quarantine" || die "cannot secure shared-preference quarantine"
+  cp -p -- "$DEST" "$quarantine" || die "cannot quarantine divergent $REL"
+  chmod 600 "$quarantine" || die "cannot secure the $REL quarantine"
   printf 'quarantined: %s (%s)\n' "${quarantine#"$HOME_REAL/"}" "$reason" >&2
 }
 
