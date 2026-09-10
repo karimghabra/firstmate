@@ -122,7 +122,9 @@ Every propagation point converges the secondmate copy to the primary bytes; when
 The helper rejects unsafe directories, symlinked or nonordinary source or destination artifacts, and hardlinked destination files.
 Between propagation runs, the secondmate copy is filesystem read-only; the helper may make its owned destination writable only around a guarded update and restores read-only mode on success, unchanged bytes, and recoverable failure paths.
 Before replacing divergent secondmate bytes, the helper hash-compares source and destination, quarantines the secondmate-local version to a collision-safe private dated sibling file, and emits a `SECONDMATE_SYNC:` diagnostic naming the home and quarantine artifact.
-`data/standing-orders.md` is the second file on this same shared surface, carrying the captain's standing engineering orders; it has no header requirement of its own, and a secondmate routes a proposed change to it through the main firstmate exactly as it does for `data/captain-shared.md`.
+`data/standing-orders.md` is the second file on this same shared surface, carrying the captain's standing engineering orders; it has no header requirement of its own, and a secondmate never edits its read-only copy.
+A secondmate that believes the captain has stated a new standing order routes that proposal to the main firstmate, and firstmate relays it to the captain rather than writing it, because only the captain's own words are ever written into that file.
+Every byte of it is delivered verbatim into every worker's instructions, so a line an agent inserted, however accurate, means the whole fleet is taking an order nobody gave.
 Never copy any secondmate `data/captain-shared.md` or `data/standing-orders.md` back into the primary.
 Keep each home's `data/captain.md` domain-local.
 After first propagation to an existing home, trim that home's local `data/captain.md` by hand to domain-specific content plus pointers to `data/captain-shared.md`; do not automate or silently delete private content.
