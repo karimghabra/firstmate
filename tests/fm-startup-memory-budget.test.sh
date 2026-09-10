@@ -181,9 +181,11 @@ test_budget_accounting_reports_all_three_files_and_safe_failure() {
     "report did not account for captain memory"
   assert_contains "$out" 'file=data/captain-shared.md bytes=7 estimated_tokens=3 status=present' \
     "report did not account for shared memory"
+  assert_contains "$out" 'file=data/standing-orders.md bytes=0 estimated_tokens=0 status=absent' \
+    "report did not account for absent standing orders"
   assert_contains "$out" 'file=data/learnings.md bytes=0 estimated_tokens=0 status=absent' \
     "report did not account for absent learnings"
-  assert_contains "$out" 'total_estimated_tokens=5' "report total was not the sum of all three files"
+  assert_contains "$out" 'total_estimated_tokens=5' "report total was not the sum of all four files"
   assert_contains "$out" 'budget_status=within-budget' "report did not classify the initial total"
 
   printf 'abcdefabcdefabcdefabcdef\n' > "$home/data/learnings.md"
@@ -202,7 +204,7 @@ test_budget_accounting_reports_all_three_files_and_safe_failure() {
   assert_contains "$out" 'memory file is not an ordinary regular file' \
     "accounting failure did not identify the unsafe memory file"
   [ "$(<"$outside")" = outside ] || fail "accounting failure changed a symlink target"
-  pass "budget accounting sums the three startup files and reports safe failures"
+  pass "budget accounting sums the four startup files and reports safe failures"
 }
 
 new_propagation_world() {
