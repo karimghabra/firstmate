@@ -229,6 +229,7 @@ Shared captain preferences that apply across secondmate domains live only in the
 
 Engineering orders the captain wants binding on every spawned crewmate and scout, not only on firstmate and its secondmates, live in the active home's `data/standing-orders.md`.
 The whole file is the payload, written as ordinary markdown in whatever shape the captain wants.
+Nothing ships or seeds it: an operator who wants standing orders creates the file in their own home, and the captain revises it there directly.
 `bin/fm-brief.sh` delivers its entire contents verbatim into a "Captain's standing orders" section on every ship brief and scout brief it scaffolds, with nothing parsed, stripped, or added; that header owns the extraction, placement, and no-op mechanics.
 An absent file simply means this home keeps no standing orders, and every brief is then byte-identical to one scaffolded before the file existed.
 It is inherited read-only into every secondmate home exactly like `data/captain-shared.md`, and printed in the session-start context digest so firstmate and every secondmate carry it too.

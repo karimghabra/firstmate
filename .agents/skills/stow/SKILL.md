@@ -55,6 +55,7 @@ Marking rules:
 `data/standing-orders.md` is outside this scheme entirely, in every home: `/stow` never rewrites, prunes, consolidates, retiers, marks, archives, offloads, or adds a header pointer to it, and it is never a curation input.
 Every byte of that file is delivered verbatim into every worker's instructions by `bin/fm-brief.sh`, so anything curation added to it would become instruction.
 It is the captain's own authored directive, revised by the captain directly, and it is still counted by the startup-memory budget below because it still consumes startup context.
+A new standing order reaches the file the way the existing ones did, which is that the captain states one and firstmate records his words; nothing routes into it automatically, because an accurate line an agent inserted on its own still means the whole fleet is taking an order nobody gave.
 
 Decay advances only when a pass runs, so a home stowed less often than a clock experiences that clock at its stow interval.
 
@@ -123,7 +124,8 @@ Every `/stow` invocation performs this complete pass, even when the session cont
 8. Run `bin/fm-startup-memory-budget.sh report` again after the complete pass.
    Finish at or below the effective budget, or open a concrete captain decision before ending the pass.
    A secondmate must explicitly report `primary-owned-shared-file-alone-exceeds-budget` when the inherited shared files alone exceed its allowance, because local curation cannot resolve it.
-   Route that constraint to the primary owner and open one concrete captain decision at the primary owning level that names the shortfall, with exactly these options: raise the affected home's effective budget, or explicitly approve the primary owner trimming or offloading each named shared-file entry.
+   Route that constraint to the primary owner and open one concrete captain decision at the primary owning level that names the shortfall, with exactly these options: raise the affected home's effective budget, or explicitly approve the primary owner trimming or offloading each named entry of an editable, curated shared file.
+   `data/standing-orders.md` is the exception at this step: no agent may trim or offload it in any home, so when standing orders drive the shortfall the only options are raising the affected home's effective budget or the captain shortening his own orders.
    When the convergence precondition skipped eviction, report the exempt pinned floor and the remaining shortfall as that concrete inability rather than archiving eligible knowledge that could not close the gap.
    Only after every safe non-pinned archival, consolidation, offload, and eligible eviction action is exhausted may a remaining excess be attributed to pinned safety, authority, or genuine captain-preference entries.
    In that last-resort case, create one captain-held decision that names the shortfall and each relevant pinned entry, with exactly these options: raise the effective budget, or explicitly approve offloading or trimming a named pinned entry.
