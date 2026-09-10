@@ -229,6 +229,8 @@ A captain who wants a preference to bind on every spawned crewmate and scout, no
 The file must hold exactly one well-formed marker pair; every other shape is malformed input rather than an opt-out, including a `BEGIN` with no matching `END`, a second `BEGIN`, a duplicated pair, and an `END` with no open `BEGIN`.
 A malformed file names its specific problem on stderr and writes no brief, so a hand-edit typo cannot silently drop the orders from every brief.
 A secondmate charter carries no such section, because a charter is written once and would freeze at seed time while secondmate homes already receive the live `data/captain-shared.md` through the propagation contract above and print it in full at every session start.
+A charter scaffold therefore never reads the file, so a malformed marker pair cannot block secondmate seeding.
+The [`stow` skill](../.agents/skills/stow/SKILL.md) owns the rule that keeps the marker lines themselves intact across curation passes.
 `bin/fm-brief.sh`'s own header owns the extraction and placement mechanics.
 
 ## Operational learnings (data/learnings.md)

@@ -938,6 +938,17 @@ EOF
       "the $shape marker diagnostic did not name the offending marker"
     assert_absent "$home/data/so-$shape-ship/brief.md" \
       "a $shape standing-orders marker shape still wrote a brief"
+    # A charter consumes no standing orders, so the secondmate seeding path in
+    # fm-home-seed.sh must stay unblocked by a file the charter never reads.
+    err=$(FM_HOME="$home" FM_SECONDMATE_CHARTER='Supervise assigned work.' \
+      "$ROOT/bin/fm-brief.sh" "so-$shape-secondmate" --secondmate --no-projects 2>&1 >/dev/null)
+    rc=$?
+    expect_code 0 "$rc" "a $shape standing-orders marker shape blocked the secondmate charter scaffold"
+    assert_equals "" "$err" "a $shape standing-orders marker shape emitted a diagnostic on the charter path"
+    assert_present "$home/data/so-$shape-secondmate/brief.md" \
+      "a $shape standing-orders marker shape stopped the secondmate charter being written"
+    assert_no_grep "# Captain's standing orders" "$home/data/so-$shape-secondmate/brief.md" \
+      "the secondmate charter carried a standing-orders section"
   done
 
   # Absent file entirely: complete no-op (the common case for most homes).

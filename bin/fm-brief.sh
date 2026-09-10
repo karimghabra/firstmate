@@ -82,7 +82,9 @@
 # A secondmate charter carries no such section: a charter is written once and
 # would freeze at seed time, while secondmate homes already receive the live
 # data/captain-shared.md through bin/fm-config-inherit-lib.sh and print it in
-# full at every session start.
+# full at every session start. A charter scaffold therefore never reads the
+# file and never fails on it, so a malformed marker pair cannot block the
+# secondmate seeding path in bin/fm-home-seed.sh or bin/fm-remote-home-seed.sh.
 # docs/configuration.md documents the marker contract for captains editing
 # data/captain-shared.md; this header owns the extraction mechanics.
 # Scaffolds carry no role scope: fm-spawn.sh supplies fm_brief_worker_role from
@@ -208,7 +210,11 @@ fi
 # an opt-out, so awk names the problem on stderr and the scaffold stops before
 # anything is written. An absent file, absent markers, or a blank body stay
 # silent. Body lines shed a trailing CR so the section is pure LF like the
-# surrounding heredoc output.
+# surrounding heredoc output. Only the ship and scout scaffolds consume the
+# block, so only they read the file at all: a charter carries no such section
+# and must never fail on a file it does not use.
+STANDING_ORDERS_BLOCK=""
+if [ "$KIND" != secondmate ]; then
 STANDING_ORDERS_BODY=""
 CAPTAIN_SHARED="$DATA/captain-shared.md"
 if [ -f "$CAPTAIN_SHARED" ]; then
@@ -236,7 +242,6 @@ case "$STANDING_ORDERS_BODY" in
   *[![:space:]]*) ;;
   *) STANDING_ORDERS_BODY="" ;;
 esac
-STANDING_ORDERS_BLOCK=""
 if [ -n "$STANDING_ORDERS_BODY" ]; then
   STANDING_ORDERS_SECTION=$(printf '%s\n' \
     "# Captain's standing orders" \
@@ -244,6 +249,7 @@ if [ -n "$STANDING_ORDERS_BODY" ]; then
     '' \
     "$STANDING_ORDERS_BODY")
   STANDING_ORDERS_BLOCK="$STANDING_ORDERS_SECTION"$'\n\n'
+fi
 fi
 
 BRIEF="$DATA/$ID/brief.md"
