@@ -93,6 +93,76 @@ test_first_copy_readonly_and_local_files_preserved() {
   pass "shared captain first copy converges, is read-only, and preserves local captain/learnings files"
 }
 
+# The shared copy is read-only in a secondmate home, so a malformed
+# standing-orders marker block must never reach one: there is no local remedy
+# there, and bin/fm-brief.sh refuses to scaffold a crewmate or scout brief
+# against a malformed file. Propagation is therefore all-or-nothing, and the
+# primary home stays the only place the block can be broken or repaired.
+standing_orders_shape() {
+  case "$1" in
+    well-formed)
+      printf '%s\n%s\n%s\n' '<!-- FM_STANDING_ORDERS_BEGIN -->' 'No em dash.' '<!-- FM_STANDING_ORDERS_END -->' ;;
+    unterminated)
+      printf '%s\n%s\n' '<!-- FM_STANDING_ORDERS_BEGIN -->' 'No em dash.' ;;
+    duplicate-pair)
+      printf '%s\n%s\n%s\n%s\n%s\n%s\n%s\n' '<!-- FM_STANDING_ORDERS_BEGIN -->' 'No em dash.' \
+        '<!-- FM_STANDING_ORDERS_END -->' 'prose' '<!-- FM_STANDING_ORDERS_BEGIN -->' \
+        'One sentence per line.' '<!-- FM_STANDING_ORDERS_END -->' ;;
+    trailing-begin)
+      printf '%s\n%s\n%s\n%s\n%s\n' '<!-- FM_STANDING_ORDERS_BEGIN -->' 'No em dash.' \
+        '<!-- FM_STANDING_ORDERS_END -->' '<!-- FM_STANDING_ORDERS_BEGIN -->' 'One sentence per line.' ;;
+    stray-end)
+      printf '%s\n%s\n' 'prose' '<!-- FM_STANDING_ORDERS_END -->' ;;
+  esac
+}
+
+test_standing_orders_marker_block_gates_propagation() {
+  local rec primary second report err rc shape prior fresh_rec fresh_primary fresh_second
+  rec=$(new_home_pair standing-orders)
+  primary=${rec%%|*}
+  second=${rec#*|}
+  report="$TMP_ROOT/standing-orders.report"
+
+  # A well-formed block propagates exactly like any other shared content.
+  write_shared "$primary/data/captain-shared.md" "$(standing_orders_shape well-formed)"
+  FM_CONFIG_INHERIT_REPORT="$report" propagate_secondmate_inheritance "$primary" "$second" >/dev/null 2>&1 \
+    || fail "a well-formed standing-orders block must still propagate"
+  cmp -s "$primary/data/captain-shared.md" "$second/data/captain-shared.md" \
+    || fail "a well-formed standing-orders block did not converge into the secondmate home"
+  assert_shared_readonly "$second/data/captain-shared.md"
+  prior=$(cat "$second/data/captain-shared.md")
+
+  for shape in unterminated duplicate-pair trailing-begin stray-end; do
+    write_shared "$primary/data/captain-shared.md" "$(standing_orders_shape "$shape")"
+    : > "$report"
+    err=$(FM_CONFIG_INHERIT_REPORT="$report" propagate_secondmate_inheritance "$primary" "$second" 2>&1 >/dev/null)
+    rc=$?
+    expect_code 1 "$rc" "a $shape standing-orders block must refuse to propagate"
+    assert_contains "$err" "$primary/data/captain-shared.md" \
+      "the $shape refusal did not name the offending primary file"
+    assert_contains "$err" "FM_STANDING_ORDERS" \
+      "the $shape refusal did not name the specific marker defect"
+    assert_grep $'data/captain-shared.md\terror\t' "$report" \
+      "the $shape refusal was not recorded as an error in the inheritance report"
+    assert_equals "$prior" "$(cat "$second/data/captain-shared.md")" \
+      "a $shape standing-orders block overwrote the secondmate's prior copy"
+    assert_shared_readonly "$second/data/captain-shared.md"
+  done
+
+  # With no prior copy, a refusal must leave the destination with no file at
+  # all rather than a partially written one.
+  fresh_rec=$(new_home_pair standing-orders-fresh)
+  fresh_primary=${fresh_rec%%|*}
+  fresh_second=${fresh_rec#*|}
+  write_shared "$fresh_primary/data/captain-shared.md" "$(standing_orders_shape unterminated)"
+  : > "$report"
+  FM_CONFIG_INHERIT_REPORT="$report" propagate_secondmate_inheritance "$fresh_primary" "$fresh_second" >/dev/null 2>&1
+  assert_absent "$fresh_second/data/captain-shared.md" \
+    "a refused standing-orders block left a file behind in a destination that had none"
+
+  pass "shared captain propagation refuses a malformed standing-orders block and preserves the destination copy"
+}
+
 test_drift_quarantine_collision_and_repeated_convergence() {
   local rec primary second fakebin hash collision report out diag qpath qcount
   rec=$(new_home_pair drift)
@@ -393,6 +463,7 @@ EOF
 }
 
 test_first_copy_readonly_and_local_files_preserved
+test_standing_orders_marker_block_gates_propagation
 test_drift_quarantine_collision_and_repeated_convergence
 test_missing_source_mirrors_absence_without_losing_local_bytes
 test_unsafe_artifacts_and_failure_restore_readonly_mode

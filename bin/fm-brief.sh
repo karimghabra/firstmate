@@ -65,18 +65,13 @@
 # over copied detail) and defers self-governance recognition and insertion to
 # fm-ensure-agents-md.sh's contract.
 # Ship and scout briefs also inline a "Captain's standing orders" section when
-# the active home's data/captain-shared.md has a non-blank body strictly
-# between the literal lines "<!-- FM_STANDING_ORDERS_BEGIN -->" and
-# "<!-- FM_STANDING_ORDERS_END -->", each tolerating trailing whitespace and a
-# CRLF line ending, and body lines shed a trailing CR so the section is pure
-# LF like the rest of the generated brief. An absent file, absent markers, or
-# a blank body are all a complete no-op, producing a brief byte-identical to
-# one scaffolded with no standing orders at all. Every other shape is
-# malformed input rather than an opt-out, including a BEGIN with no matching
-# END, a second BEGIN, a duplicated pair, and an END with no open BEGIN: the
-# file must hold exactly one well-formed pair, and anything else names its
-# problem on stderr and writes no brief, so a hand-edit typo can never
-# silently drop the orders from every brief.
+# the active home's data/captain-shared.md carries a non-blank standing-orders
+# body. bin/fm-standing-orders-lib.sh owns the marker shape and the extraction
+# itself, including which shapes are a no-op and which are malformed; this
+# header owns only what the brief does with the result. A body that comes back
+# empty scaffolds a brief byte-identical to one made with no standing orders
+# at all, and a malformed file names its problem on stderr and writes no
+# brief, so a hand-edit typo can never silently drop the orders.
 # The section lands right after the Task section and before the Herdr section,
 # so it is read early rather than buried under Setup.
 # A secondmate charter carries no such section: a charter is written once and
@@ -109,6 +104,8 @@ esac
 
 # shellcheck source=bin/fm-marker-lib.sh
 . "$SCRIPT_DIR/fm-marker-lib.sh"
+# shellcheck source=bin/fm-standing-orders-lib.sh
+. "$SCRIPT_DIR/fm-standing-orders-lib.sh"
 # shellcheck source=bin/fm-classify-lib.sh
 . "$SCRIPT_DIR/fm-classify-lib.sh"
 # shellcheck source=bin/fm-dod-lib.sh
@@ -215,29 +212,11 @@ fi
 # and must never fail on a file it does not use.
 STANDING_ORDERS_BLOCK=""
 if [ "$KIND" != secondmate ]; then
-STANDING_ORDERS_BODY=""
 CAPTAIN_SHARED="$DATA/captain-shared.md"
-if [ -f "$CAPTAIN_SHARED" ]; then
-  STANDING_ORDERS_BODY=$(awk -v file="$CAPTAIN_SHARED" '
-    { marker = $0; sub(/\r$/, "", marker); sub(/[[:blank:]]+$/, "", marker) }
-    marker == "<!-- FM_STANDING_ORDERS_BEGIN -->" {
-      if (begins) problem = "a second <!-- FM_STANDING_ORDERS_BEGIN --> marker"
-      begins++; in_block = 1; next
-    }
-    marker == "<!-- FM_STANDING_ORDERS_END -->" {
-      if (!in_block) problem = "a <!-- FM_STANDING_ORDERS_END --> marker with no open <!-- FM_STANDING_ORDERS_BEGIN -->"
-      in_block = 0; next
-    }
-    in_block { sub(/\r$/, ""); print }
-    END {
-      if (in_block && !problem) problem = "an unterminated <!-- FM_STANDING_ORDERS_BEGIN --> marker with no matching <!-- FM_STANDING_ORDERS_END -->"
-      if (problem) {
-        printf "error: %s has %s; the standing orders must be exactly one well-formed marker pair\n", file, problem > "/dev/stderr"
-        exit 1
-      }
-    }
-  ' "$CAPTAIN_SHARED") || exit 1
-fi
+STANDING_ORDERS_BODY=$(fm_standing_orders_body "$CAPTAIN_SHARED") || {
+  echo "error: $CAPTAIN_SHARED has $(fm_standing_orders_defect "$CAPTAIN_SHARED"); the standing orders must be exactly one well-formed marker pair" >&2
+  exit 1
+}
 case "$STANDING_ORDERS_BODY" in
   *[![:space:]]*) ;;
   *) STANDING_ORDERS_BODY="" ;;

@@ -225,13 +225,11 @@ Before changing it, inspect the current file and curate the matching bullet in p
 Shared captain preferences that apply across secondmate domains live only in the primary home's optional `data/captain-shared.md`.
 `secondmate-provisioning` owns its propagation contract, including the required header, read-only secondmate copies, quarantine diagnostics, and the rollout rule that existing homes trim `data/captain.md` by hand after first propagation rather than deleting private content automatically.
 A captain who wants a preference to bind on every spawned crewmate and scout, not only on firstmate and its secondmates, writes it in `data/captain-shared.md` strictly between the literal marker lines `<!-- FM_STANDING_ORDERS_BEGIN -->` and `<!-- FM_STANDING_ORDERS_END -->`.
-`bin/fm-brief.sh` inlines that exact body into a "Captain's standing orders" section on every ship brief and scout brief it scaffolds; an absent file, absent markers, or a blank body are all a complete no-op, so a home with no such file scaffolds exactly as it always has.
-The file must hold exactly one well-formed marker pair; every other shape is malformed input rather than an opt-out, including a `BEGIN` with no matching `END`, a second `BEGIN`, a duplicated pair, and an `END` with no open `BEGIN`.
-A malformed file names its specific problem on stderr and writes no brief, so a hand-edit typo cannot silently drop the orders from every brief.
-A secondmate charter carries no such section, because a charter is written once and would freeze at seed time while secondmate homes already receive the live `data/captain-shared.md` through the propagation contract above and print it in full at every session start.
-A charter scaffold therefore never reads the file, so a malformed marker pair cannot block secondmate seeding.
+The marked block goes below the required header block, because `shared_captain_header_valid` in `bin/fm-config-inherit-lib.sh` reads only the file's first twelve lines and a block pushed above the header phrases moves them out of that window.
+`bin/fm-brief.sh` inlines that exact body into a "Captain's standing orders" section on every ship brief and scout brief it scaffolds.
+Propagation refuses to copy a file whose marked block is malformed, so a secondmate home never receives a broken one and the primary home stays the only place the block can be repaired.
 The [`stow` skill](../.agents/skills/stow/SKILL.md) owns the rule that keeps the marker lines themselves intact across curation passes.
-`bin/fm-brief.sh`'s own header owns the extraction and placement mechanics.
+`bin/fm-standing-orders-lib.sh` owns the marker shape, and `bin/fm-brief.sh`'s own header owns the extraction, placement, and no-op mechanics.
 
 ## Operational learnings (data/learnings.md)
 

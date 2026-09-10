@@ -53,6 +53,8 @@
 #
 # shellcheck source=bin/fm-startup-memory-budget-lib.sh
 . "$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)/fm-startup-memory-budget-lib.sh"
+# shellcheck source=bin/fm-standing-orders-lib.sh
+. "$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)/fm-standing-orders-lib.sh"
 
 # The one shared data file in this inheritance contract. There is deliberately
 # no shared learnings file.
@@ -321,7 +323,7 @@ copy_shared_captain_file() {
 }
 
 propagate_shared_captain_preferences() {
-  local src_data=$1 dest_data=$2 src dest src_hash dest_hash dest_parent dest_home quarantine reason rc
+  local src_data=$1 dest_data=$2 src dest src_hash dest_hash dest_parent dest_home quarantine reason rc defect
   [ -n "$src_data" ] || return 1
   [ -n "$dest_data" ] || return 1
   src="$src_data/$FM_SHARED_CAPTAIN_FILE"
@@ -339,6 +341,12 @@ propagate_shared_captain_preferences() {
     fi
     if ! shared_captain_header_valid "$src"; then
       reason="primary source header missing required main-authoritative warning"
+      warn_inheritable_config_error "$FM_SHARED_CAPTAIN_REL" "$src" "$reason"
+      record_inheritable_config_result "$FM_SHARED_CAPTAIN_REL" error "$reason"
+      return 1
+    fi
+    if defect=$(fm_standing_orders_defect "$src"); then
+      reason="primary source has $defect, so nothing was propagated"
       warn_inheritable_config_error "$FM_SHARED_CAPTAIN_REL" "$src" "$reason"
       record_inheritable_config_result "$FM_SHARED_CAPTAIN_REL" error "$reason"
       return 1
