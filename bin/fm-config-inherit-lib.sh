@@ -594,8 +594,9 @@ FM_CONFIG_REREAD_FRAMING='These inherited config files changed. Re-read and appl
 
 # fm_config_reread_is_allowlisted_item <item>
 # True only for the declared inheritable config allowlist (bare item name as
-# recorded in FM_CONFIG_INHERIT_REPORT). data/captain-shared.md is never
-# allowlisted here and must never be inlined into a reread instruction.
+# recorded in FM_CONFIG_INHERIT_REPORT). No shared data file in
+# FM_SHARED_DATA_FILES is ever allowlisted here, and none of them must ever be
+# inlined into a reread instruction.
 fm_config_reread_is_allowlisted_item() {
   local item=$1 candidate
   for candidate in $FM_INHERITABLE_CONFIG; do
@@ -725,8 +726,8 @@ fm_config_reread_save_retry_report() {
 # relative path, begin/end delimiters, and either the destination file's full
 # exact post-write bytes (streamed unparsed) or the literal token ABSENT when
 # the destination copy was removed. Returns 1 when no allowlisted config item
-# changed (or on write failure). Never inlines data/captain-shared.md, SHA
-# values, selected profiles, or any generated interpretation.
+# changed (or on write failure). Never inlines any FM_SHARED_DATA_FILES entry,
+# SHA values, selected profiles, or any generated interpretation.
 fm_config_write_reread_instruction() {
   local dest_home=$1 report=$2 instruction_path=$3 item rel dest parent tmp first=1
   FM_CONFIG_REREAD_FAILED_TEMP=""
@@ -1080,7 +1081,8 @@ fm_config_reread_quarantine_pending() {
 # single-line pointers to those files through the routed secondmate path
 # (fm-send). The files contain only changed config paths, clear delimiters, and
 # the destination's full exact post-write bytes (or ABSENT) - never summaries,
-# SHA values, selected profiles, or data/captain-shared.md. No-op (return 0) when
+# SHA values, selected profiles, or any FM_SHARED_DATA_FILES entry. No-op
+# (return 0) when
 # nothing changed and no pending delivery exists. On publication or send
 # failure, print a concrete CONFIG_REREAD retry diagnostic to stdout and return
 # non-zero - never claim the live agent reread the values.
