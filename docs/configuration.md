@@ -224,6 +224,9 @@ Domain-local preferences for one captain's fleet live locally in each home's `da
 Before changing it, inspect the current file and curate the matching bullet in place under the internal [`stow` skill's](../.agents/skills/stow/SKILL.md) tiering and archive contract; add a new bullet only for a genuinely new durable preference.
 Shared captain preferences that apply across secondmate domains live only in the primary home's optional `data/captain-shared.md`.
 `secondmate-provisioning` owns its propagation contract, including the required header, read-only secondmate copies, quarantine diagnostics, and the rollout rule that existing homes trim `data/captain.md` by hand after first propagation rather than deleting private content automatically.
+A captain who wants a preference to bind on every spawned crewmate and scout, not only on firstmate and its secondmates, writes it in `data/captain-shared.md` strictly between the literal marker lines `<!-- FM_STANDING_ORDERS_BEGIN -->` and `<!-- FM_STANDING_ORDERS_END -->`.
+`bin/fm-brief.sh` inlines that exact body into a "Captain's standing orders" section on every ship brief, scout brief, and secondmate charter it scaffolds; an absent file, absent markers, an unterminated marker, or a blank body are all a complete no-op, so a home with no such file scaffolds exactly as it always has.
+`bin/fm-brief.sh`'s own header owns the extraction and placement mechanics.
 
 ## Operational learnings (data/learnings.md)
 

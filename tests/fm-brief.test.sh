@@ -817,6 +817,104 @@ test_scout_and_secondmate_load_decision_hold_policy() {
   pass "fm-brief.sh: investigation and visual-review completions load the shared decision policy"
 }
 
+# The captain's standing orders (AGENTS.md's data/captain-shared.md, marked
+# with FM_STANDING_ORDERS_BEGIN/END) must inline into every scaffold kind when
+# present and non-blank, and must be a complete byte-identical no-op when the
+# file is absent, the markers are absent, the body is blank, or the marker
+# pair is unterminated.
+test_standing_orders_inline_and_no_op() {
+  local home baseline_ship baseline_scout baseline_secondmate
+  home="$TMP_ROOT/standing-orders-home"
+  mkdir -p "$home/data"
+
+  FM_HOME="$home" "$ROOT/bin/fm-brief.sh" so-baseline-ship some-proj --mode no-mistakes >/dev/null 2>&1
+  FM_HOME="$home" "$ROOT/bin/fm-brief.sh" so-baseline-scout some-proj --scout >/dev/null 2>&1
+  FM_HOME="$home" FM_SECONDMATE_CHARTER='Supervise assigned work.' \
+    "$ROOT/bin/fm-brief.sh" so-baseline-secondmate --secondmate --no-projects >/dev/null 2>&1
+  baseline_ship="$home/data/so-baseline-ship/brief.md"
+  baseline_scout="$home/data/so-baseline-scout/brief.md"
+  baseline_secondmate="$home/data/so-baseline-secondmate/brief.md"
+  assert_present "$baseline_ship" "baseline ship brief was not scaffolded"
+  assert_present "$baseline_scout" "baseline scout brief was not scaffolded"
+  assert_present "$baseline_secondmate" "baseline secondmate charter was not scaffolded"
+
+  # Present and populated: injects into all three scaffold kinds.
+  cat > "$home/data/captain-shared.md" <<'EOF'
+# Shared captain preferences
+
+<!-- FM_STANDING_ORDERS_BEGIN -->
+No em dash.
+Never add an agent name as a commit co-author.
+<!-- FM_STANDING_ORDERS_END -->
+EOF
+  FM_HOME="$home" "$ROOT/bin/fm-brief.sh" so-populated-ship some-proj --mode no-mistakes >/dev/null 2>&1
+  FM_HOME="$home" "$ROOT/bin/fm-brief.sh" so-populated-scout some-proj --scout >/dev/null 2>&1
+  FM_HOME="$home" FM_SECONDMATE_CHARTER='Supervise assigned work.' \
+    "$ROOT/bin/fm-brief.sh" so-populated-secondmate --secondmate --no-projects >/dev/null 2>&1
+  for kind in ship scout secondmate; do
+    assert_grep "# Captain's standing orders" "$home/data/so-populated-$kind/brief.md" \
+      "$kind brief did not inline the populated standing-orders section"
+    assert_grep "No em dash." "$home/data/so-populated-$kind/brief.md" \
+      "$kind brief did not carry the standing-orders body"
+    assert_grep "binding on this task, not defaults to trade away under time pressure" "$home/data/so-populated-$kind/brief.md" \
+      "$kind brief did not carry the standing-orders preamble"
+  done
+  assert_grep "# Captain's standing orders" "$home/data/so-populated-ship/brief.md" \
+    "ship brief standing-orders section missing"
+  grep -n "# Task" "$home/data/so-populated-ship/brief.md" | head -1 | cut -d: -f1 > "$TMP_ROOT/task-line"
+  grep -n "# Captain's standing orders" "$home/data/so-populated-ship/brief.md" | head -1 | cut -d: -f1 > "$TMP_ROOT/orders-line"
+  grep -n "# Herdr lifecycle declaration" "$home/data/so-populated-ship/brief.md" | head -1 | cut -d: -f1 > "$TMP_ROOT/herdr-line"
+  [ "$(cat "$TMP_ROOT/task-line")" -lt "$(cat "$TMP_ROOT/orders-line")" ] \
+    || fail "ship brief standing-orders section did not follow the Task section"
+  [ "$(cat "$TMP_ROOT/orders-line")" -lt "$(cat "$TMP_ROOT/herdr-line")" ] \
+    || fail "ship brief standing-orders section did not precede the Herdr section"
+
+  # Markers present but body blank: complete no-op.
+  cat > "$home/data/captain-shared.md" <<'EOF'
+<!-- FM_STANDING_ORDERS_BEGIN -->
+
+<!-- FM_STANDING_ORDERS_END -->
+EOF
+  FM_HOME="$home" "$ROOT/bin/fm-brief.sh" so-blank-ship some-proj --mode no-mistakes >/dev/null 2>&1
+  cmp -s "$home/data/so-blank-ship/brief.md" <(sed 's/so-baseline-ship/so-blank-ship/g' "$baseline_ship") \
+    || fail "blank standing-orders body was not a byte-identical no-op on the ship brief"
+
+  # Markers absent entirely: complete no-op.
+  cat > "$home/data/captain-shared.md" <<'EOF'
+# Shared captain preferences
+Some preference text with no standing-orders markers at all.
+EOF
+  FM_HOME="$home" "$ROOT/bin/fm-brief.sh" so-nomarkers-ship some-proj --mode no-mistakes >/dev/null 2>&1
+  cmp -s "$home/data/so-nomarkers-ship/brief.md" <(sed 's/so-baseline-ship/so-nomarkers-ship/g' "$baseline_ship") \
+    || fail "absent standing-orders markers were not a byte-identical no-op on the ship brief"
+
+  # Unterminated marker pair (BEGIN with no END): must not leak a truncated section.
+  cat > "$home/data/captain-shared.md" <<'EOF'
+<!-- FM_STANDING_ORDERS_BEGIN -->
+No em dash.
+EOF
+  FM_HOME="$home" "$ROOT/bin/fm-brief.sh" so-unterminated-ship some-proj --mode no-mistakes >/dev/null 2>&1
+  assert_no_grep "# Captain's standing orders" "$home/data/so-unterminated-ship/brief.md" \
+    "unterminated standing-orders marker leaked a truncated section"
+  cmp -s "$home/data/so-unterminated-ship/brief.md" <(sed 's/so-baseline-ship/so-unterminated-ship/g' "$baseline_ship") \
+    || fail "unterminated standing-orders marker pair was not a byte-identical no-op on the ship brief"
+
+  # Absent file entirely: complete no-op (the common case for most homes).
+  rm -f "$home/data/captain-shared.md"
+  FM_HOME="$home" "$ROOT/bin/fm-brief.sh" so-absent-ship some-proj --mode no-mistakes >/dev/null 2>&1
+  FM_HOME="$home" "$ROOT/bin/fm-brief.sh" so-absent-scout some-proj --scout >/dev/null 2>&1
+  FM_HOME="$home" FM_SECONDMATE_CHARTER='Supervise assigned work.' \
+    "$ROOT/bin/fm-brief.sh" so-absent-secondmate --secondmate --no-projects >/dev/null 2>&1
+  cmp -s "$home/data/so-absent-ship/brief.md" <(sed 's/so-baseline-ship/so-absent-ship/g' "$baseline_ship") \
+    || fail "absent data/captain-shared.md was not a byte-identical no-op on the ship brief"
+  cmp -s "$home/data/so-absent-scout/brief.md" <(sed 's/so-baseline-scout/so-absent-scout/g' "$baseline_scout") \
+    || fail "absent data/captain-shared.md was not a byte-identical no-op on the scout brief"
+  cmp -s "$home/data/so-absent-secondmate/brief.md" <(sed 's/so-baseline-secondmate/so-absent-secondmate/g' "$baseline_secondmate") \
+    || fail "absent data/captain-shared.md was not a byte-identical no-op on the secondmate charter"
+
+  pass "fm-brief.sh: standing orders inline when populated and are a byte-identical no-op otherwise"
+}
+
 # Scout and secondmate paths still scaffold well-formed briefs.
 test_scout_and_secondmate_scaffold() {
   local brief
@@ -890,4 +988,5 @@ test_secondmate_marked_request_reporting_contract
 test_secondmate_directory_paths_are_absolute_and_output_is_stable
 test_pause_verb_override_renders_all_brief_scaffolds
 test_scout_and_secondmate_load_decision_hold_policy
+test_standing_orders_inline_and_no_op
 test_scout_and_secondmate_scaffold
