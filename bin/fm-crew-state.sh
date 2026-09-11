@@ -54,7 +54,14 @@
 #      the active step is ci, `axi status` alone cannot tell "still waiting on
 #      checks" from "checks green, waiting on merge" (see nm_ci_checks_state) -
 #      a ci-step log-tail check overrides working -> done once checks read
-#      green, so a green PR is never silently read as still-validating. And a
+#      green, so a green PR is never silently read as still-validating. While
+#      the ci monitor is still waiting on a GitHub PR, one bounded read-only
+#      forge call adds what it waits on ("waiting on 2 of 14 checks: ..."), or
+#      names it behind once every check settled more than twice its longest
+#      poll interval ago (nm_ci_forge_observe). That is detection only: the
+#      state stays working and never becomes a readiness or merge input;
+#      bin/fm-inactive-reconcile.sh wakes the supervisor to look at a behind
+#      monitor once per occurrence, keyed on the settled time it names. And a
 #      terminal FAILED run whose only failure is the ci monitor step, after
 #      every substantive step completed and the ci log's last marker reads
 #      checks green, also reads done (held-for-merge), never failed: a monitor
@@ -108,6 +115,10 @@ STATE="${FM_STATE_OVERRIDE:-$FM_HOME/state}"
 . "$SCRIPT_DIR/fm-busy-lib.sh"
 # shellcheck source=bin/fm-nm-run-lib.sh
 . "$SCRIPT_DIR/fm-nm-run-lib.sh"
+# shellcheck source=bin/fm-timeout-lib.sh
+. "$SCRIPT_DIR/fm-timeout-lib.sh"
+# shellcheck source=bin/fm-pr-lib.sh
+. "$SCRIPT_DIR/fm-pr-lib.sh"
 
 ID=${1:-}
 [ -n "$ID" ] || { echo "usage: fm-crew-state.sh <id>" >&2; exit 2; }
@@ -126,6 +137,18 @@ case "$NM_TIMEOUT" in ''|*[!0-9]*) NM_TIMEOUT=10 ;; esac
 # entire history every call.
 FM_CREW_STATE_RUNS_LIMIT=${FM_CREW_STATE_RUNS_LIMIT:-200}
 case "$FM_CREW_STATE_RUNS_LIMIT" in ''|*[!0-9]*) FM_CREW_STATE_RUNS_LIMIT=200 ;; esac
+# The forge cross-check for a waiting ci monitor (nm_ci_forge_observe below):
+# one bounded read-only call, and how long every check may have been terminal
+# before the monitor counts as behind. The default is twice the no-mistakes CI
+# monitor's longest poll interval (120s once it has watched for 15 minutes,
+# pollInterval at v1.72.0), so a monitor that is merely between polls never
+# reads as behind. FM_CREW_STATE_NOW is a test clock (epoch seconds).
+FM_CREW_STATE_FORGE_TIMEOUT=${FM_CREW_STATE_FORGE_TIMEOUT:-5}
+case "$FM_CREW_STATE_FORGE_TIMEOUT" in *[!0-9]*|'') FM_CREW_STATE_FORGE_TIMEOUT=5 ;; esac
+[ "$((10#$FM_CREW_STATE_FORGE_TIMEOUT))" -gt 0 ] || FM_CREW_STATE_FORGE_TIMEOUT=5
+FM_CREW_STATE_CI_BEHIND_SECS=${FM_CREW_STATE_CI_BEHIND_SECS:-240}
+case "$FM_CREW_STATE_CI_BEHIND_SECS" in *[!0-9]*|'') FM_CREW_STATE_CI_BEHIND_SECS=240 ;; esac
+[ "$((10#$FM_CREW_STATE_CI_BEHIND_SECS))" -gt 0 ] || FM_CREW_STATE_CI_BEHIND_SECS=240
 SEP=' · '
 
 # Emit the one canonical line and exit 0. Detail is optional.
@@ -511,12 +534,10 @@ nm_effective_ci_step_status() {
 # so the last match is current): green with nothing red after it means CI is
 # green right now, still only waiting on merge/close.
 nm_ci_checks_state() {
-  local run_id log_tail marker
-  run_id=$(strip_quotes "$(nm_field id)")
-  [ -n "$run_id" ] || { printf 'unknown'; return; }
-  log_tail=$(nm_run axi logs --step ci --run "$run_id") || true
-  [ -n "$log_tail" ] || { printf 'unknown'; return; }
-  marker=$(printf '%s\n' "$log_tail" \
+  local marker
+  nm_ci_log_tail_load
+  [ -n "$CI_LOG_TAIL" ] || { printf 'unknown'; return; }
+  marker=$(printf '%s\n' "$CI_LOG_TAIL" \
     | grep -E 'CI checks passed|no CI checks reported - still monitoring|no CI checks reported yet|checks failed|issues detected|CI checks running|base branch advanced.*re-arming CI monitor timeout' \
     | tail -1)
   case "$marker" in
@@ -524,6 +545,136 @@ nm_ci_checks_state() {
     *"no CI checks reported yet"*|*"checks failed"*|*"issues detected"*|*"CI checks running"*|*"base branch advanced"*"re-arming CI monitor timeout"*) printf 'not-ready' ;;
     *) printf 'unknown' ;;
   esac
+}
+
+# The ci step's log tail, read at most once per invocation. Callers in the main
+# shell load it before any command substitution reads it, so the checks-green
+# read above and the monitor's waiting statement below judge one observation.
+CI_LOG_TAIL=
+CI_LOG_TAIL_LOADED=0
+nm_ci_log_tail_load() {
+  local run_id
+  [ "$CI_LOG_TAIL_LOADED" = 1 ] && return 0
+  CI_LOG_TAIL_LOADED=1
+  run_id=$(strip_quotes "$(nm_field id)")
+  [ -n "$run_id" ] || return 0
+  CI_LOG_TAIL=$(nm_run axi logs --step ci --run "$run_id") || true
+}
+
+# 0 when the ci monitor's most recent statement of what it is doing is that it
+# is waiting for checks; it states that once and then says nothing more until
+# what it sees changes. A base-advance re-arm is not a statement of what it
+# sees, so it is skipped; a later pass, failure, or repair-wait statement means
+# the monitor is not claiming to wait for results.
+NM_CI_WAITING_RE='CI checks running|no CI checks reported yet|issues detected but checks still pending'
+nm_ci_monitor_reports_waiting() {
+  local latest
+  latest=$(printf '%s\n' "$CI_LOG_TAIL" \
+    | grep -E "$NM_CI_WAITING_RE|checks passed|no CI checks reported - still monitoring|checks failed|issues detected|fix already attempted" \
+    | tail -1)
+  [ -n "$latest" ] && printf '%s\n' "$latest" | grep -qE "$NM_CI_WAITING_RE"
+}
+
+# Seconds as the detail line shows an age: plain seconds under two minutes,
+# whole minutes after.
+crew_state_age() {  # <seconds>
+  if [ "$1" -lt 120 ]; then printf '%ss' "$1"; else printf '%sm' "$(($1 / 60))"; fi
+}
+
+# The forge's own check rollup for the PR the attributed run is watching, as
+# lines: PR head SHA, distinct check names, names not yet terminal, the latest
+# terminal time, then up to three pending names. Every entry counts, so a
+# same-name rerun still in flight keeps its name pending rather than being
+# hidden behind an older completed run. A StatusContext is terminal once it is
+# SUCCESS, FAILURE, or ERROR and its only timestamp is when it was posted.
+# shellcheck disable=SC2016 # jq program, expanded by gh rather than the shell.
+NM_CI_FORGE_JQ='
+  [ .statusCheckRollup[]? |
+    if .__typename == "StatusContext" then
+      { n: (.context // ""), done: ((.state // "") | test("^(SUCCESS|FAILURE|ERROR)$")), at: (.startedAt // "") }
+    else
+      { n: (.name // ""), done: ((.status // "") == "COMPLETED"), at: (.completedAt // "") }
+    end
+    | .n |= gsub("[[:cntrl:]]"; " ") ] as $c
+  | ($c | map(select(.done | not) | .n) | unique) as $pending
+  | (.headRefOid // ""),
+    ($c | map(.n) | unique | length | tostring),
+    ($pending | length | tostring),
+    ([$c[] | select(.done) | .at] | max // ""),
+    $pending[:3][]'
+
+# Detection only, never a readiness or merge input: while the ci monitor of the
+# attributed run still reports waiting, say what the forge shows it waiting on,
+# and name a monitor that has not observed checks which settled longer ago than
+# FM_CREW_STATE_CI_BEHIND_SECS. The monitor logs only when what it sees changes,
+# so without this a healthy 24-minute wait and a monitor that stopped polling
+# read identically. One bounded read-only gh call; a PR on another forge, a
+# missing gh, or a failed read adds nothing that could read as progress.
+# A behind note names the settled time, which stays fixed for one occurrence
+# while its age does not, so a consumer can key that occurrence on it.
+# Sets CI_FORGE_NOTE, empty when not applicable.
+CI_FORGE_NOTE=
+nm_ci_forge_observe() {
+  local pr_url run_head out forge_head total pending settled_at settled_epoch now age names name shown
+  CI_FORGE_NOTE=
+  pr_url=$(strip_quotes "$(nm_field pr)")
+  fm_pr_url_parse "$pr_url" && [ "$FM_PR_PROVIDER" = github ] || return 0
+  CI_FORGE_NOTE="forge checks unreadable"
+  command -v gh >/dev/null 2>&1 || return 0
+  run_head=$(strip_quotes "$(nm_field head_sha)")
+  [ -n "$run_head" ] || run_head=$(strip_quotes "$(nm_field head)")
+  out=$(fm_run_timed "$FM_CREW_STATE_FORGE_TIMEOUT" \
+    env GH_PROMPT_DISABLED=1 GH_NO_UPDATE_NOTIFIER=1 \
+    gh pr view "$pr_url" --json headRefOid,statusCheckRollup --jq "$NM_CI_FORGE_JQ" 2>/dev/null) || return 0
+  {
+    IFS= read -r forge_head || true
+    IFS= read -r total || true
+    IFS= read -r pending || true
+    IFS= read -r settled_at || true
+    names=''
+    shown=0
+    while IFS= read -r name; do
+      [ -n "$name" ] || continue
+      names="${names:+$names, }$name"
+      shown=$((shown + 1))
+    done
+  } <<EOF
+$out
+EOF
+  case "$total" in ''|*[!0-9]*) return 0 ;; esac
+  case "$pending" in ''|*[!0-9]*) return 0 ;; esac
+  case "$forge_head" in [0-9a-f]*) ;; *) return 0 ;; esac
+  case "$forge_head" in
+    "$run_head"*) [ -n "$run_head" ] || return 0 ;;
+    *)
+      CI_FORGE_NOTE="forge PR head ${forge_head:0:8} is not the run's head ${run_head:0:8}; checks not compared"
+      return 0
+      ;;
+  esac
+  if [ "$total" -eq 0 ]; then
+    CI_FORGE_NOTE="forge reports no checks yet"
+    return 0
+  fi
+  if [ "$pending" -gt 0 ]; then
+    [ "$pending" -gt "$shown" ] && names="$names +$((pending - shown)) more"
+    CI_FORGE_NOTE="waiting on $pending of $total checks: $names"
+    return 0
+  fi
+  settled_epoch=$(fm_utc_iso_to_epoch "$settled_at") || {
+    CI_FORGE_NOTE="all $total checks settled"
+    return 0
+  }
+  now=${FM_CREW_STATE_NOW:-}
+  case "$now" in ''|*[!0-9]*) now=$(date +%s) ;; esac
+  age=$((now - settled_epoch))
+  [ "$age" -ge 0 ] || age=0
+  if [ "$age" -le "$FM_CREW_STATE_CI_BEHIND_SECS" ]; then
+    CI_FORGE_NOTE="all $total checks settled $(crew_state_age "$age") ago, within the monitor's poll window"
+  elif nm_ci_monitor_reports_waiting; then
+    CI_FORGE_NOTE="pipeline monitor behind: all $total checks settled at $settled_at ($(crew_state_age "$age") ago), not yet observed"
+  else
+    CI_FORGE_NOTE="all $total checks settled $(crew_state_age "$age") ago"
+  fi
 }
 # Coarse fallback when the bare `axi status` answer is not this branch's own
 # matching run: either it names another branch (routine once several crews
@@ -702,6 +853,7 @@ if [ "$HAVE_RUN" = 1 ]; then
         CI_STEP_STATUS=$(nm_effective_ci_step_status)
         case "$CI_STEP_STATUS" in
           running)
+            nm_ci_log_tail_load
             CI_LOG_STATE=$(nm_ci_checks_state)
             if [ "$CI_LOG_STATE" = green ]; then
               RUN_STATE="done"
@@ -724,6 +876,7 @@ if [ "$HAVE_RUN" = 1 ]; then
     if [ "$RUN_STATUS" = fixing ]; then
       CI_LOG_STATE=not-ready
     elif [ "$CI_STEP_STATUS" = running ] && [ -z "$CI_LOG_STATE" ]; then
+      nm_ci_log_tail_load
       CI_LOG_STATE=$(nm_ci_checks_state)
     elif [ "$CI_STEP_STATUS" = fixing ]; then
       CI_LOG_STATE=not-ready
@@ -731,6 +884,16 @@ if [ "$HAVE_RUN" = 1 ]; then
     if [ "$CI_LOG_STATE" != not-ready ]; then
       emit "done" status-log "$(status_line_note "$LOG_LINE")${SEP}run still monitoring PR"
     fi
+  fi
+
+  # A ci monitor still waiting gets the forge's view of what it waits on, and
+  # is named behind once every check has settled longer ago than it polls. The
+  # state stays working: only the pipeline's own verdict moves it.
+  if [ "$RUN_STATE" = working ] && [ "$RUN_SOURCE" = full ] \
+    && [ "$CI_STEP_STATUS" = running ] && [ "$CI_LOG_STATE" != green ]; then
+    nm_ci_log_tail_load
+    nm_ci_forge_observe
+    [ -n "$CI_FORGE_NOTE" ] && RUN_DETAIL="$RUN_DETAIL${SEP}$CI_FORGE_NOTE"
   fi
 
   # Reconcile the status log. A needs-decision/blocked log line that the run-step

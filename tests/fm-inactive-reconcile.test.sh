@@ -32,7 +32,11 @@ make_tools() { # <world>
   mkdir -p "$fake"
   cat > "$fake/fm-crew-state.sh" <<'SH'
 #!/usr/bin/env bash
-printf 'state: %s · source: fake\n' "${FM_FAKE_CREW_STATE:-unknown}"
+if [ -n "${FM_FAKE_CREW_LINE:-}" ]; then
+  printf '%s\n' "$FM_FAKE_CREW_LINE"
+else
+  printf 'state: %s · source: fake\n' "${FM_FAKE_CREW_STATE:-unknown}"
+fi
 SH
   cat > "$fake/tmux" <<'SH'
 #!/usr/bin/env bash
@@ -777,6 +781,31 @@ test_notice_recovery_does_not_duplicate_wake() {
   pass "notice recovery remains idempotent across queue acknowledgement"
 }
 
+# A behind CI monitor is fm-crew-state.sh's working run-step line naming when
+# every check settled. In a secondmate home the wake stays in the mate's own
+# queue, because the mate supervises its direct crew; nothing reaches the parent
+# channel, nothing becomes a terminal outcome, and the same note on any other
+# source never wakes.
+test_behind_ci_monitor_wakes_own_supervisor_only() {
+  local behind='state: working · source: run-step · ci running · pipeline monitor behind: all 14 checks settled at 2026-09-11T17:30:54Z (9m ago), not yet observed'
+  make_world behind-mate; bind_secondmate local
+  write_child "$MATE" child 'working: validating'
+  FM_FAKE_CREW_LINE=$behind run_reconcile "$MATE" --startup >/dev/null
+  [ "$(wake_count "$MATE" 'ci-monitor-behind:')" = 1 ] || fail "a behind monitor did not wake the mate once"
+  [ ! -s "$MAIN/state/mate.status" ] || fail "a behind monitor reached the parent channel: $(cat "$MAIN/state/mate.status")"
+  [ "$(find "$MATE/state/terminal-outcomes" -type f | wc -l | tr -d ' ')" = 0 ] \
+    || fail "a behind monitor was recorded as a terminal outcome"
+  FM_FAKE_CREW_LINE=${behind/9m ago/31m ago} run_reconcile "$MATE" --startup >/dev/null
+  [ "$(wake_count "$MATE" 'ci-monitor-behind:')" = 1 ] || fail "the same occurrence woke again as its age moved"
+
+  make_world behind-other-source
+  write_child "$MAIN" child 'working: validating'
+  FM_FAKE_CREW_LINE=${behind/run-step/status-log} run_reconcile "$MAIN" --startup >/dev/null
+  ! grep -q 'ci-monitor-behind:' "$MAIN/state/.wake-queue" 2>/dev/null || fail "a non-run-step line woke as a behind monitor"
+  [ ! -s "$WORLD/forge.log" ] || fail "the behind wake invoked a forge command"
+  pass "a behind ci monitor wakes only its own home's supervisor, once, and never as an outcome"
+}
+
 # Forge command shims fail loudly. A successful scan proves this path never uses
 # them while reconciling a local terminal outcome.
 test_reconciliation_never_calls_forge() {
@@ -807,6 +836,7 @@ test_relaunch_cannot_replace_metadata_during_state_snapshot
 test_heartbeat_cap_does_not_delay_reconciliation
 test_scan_marker_replaces_symlink_safely
 test_nonterminal_and_captain_held_states_do_not_report
+test_behind_ci_monitor_wakes_own_supervisor_only
 test_watcher_hook_and_idle_secondmate_exemption
 test_watcher_poll_delivers_child_ledger_line_to_parent
 test_stalled_state_read_is_bounded_and_scan_progresses

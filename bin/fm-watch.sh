@@ -85,7 +85,9 @@
 #                          status, unless afk is active
 #   check: inactive-outcome bounded poll-loop reconciliation found a suspicious
 #                          inactive terminal outcome that still lacks its durable
-#                          upstream receipt
+#                          upstream receipt, or a new occurrence of an inactive
+#                          crewmate's CI monitor behind long-settled checks (a
+#                          wake to look, never a readiness signal)
 #   check: secondmate wake-loop stalled: mate=<id> row=<seq> idle=<seconds>s
 #                          an actionable row in an endpoint-recorded local
 #                          secondmate home's durable wake queue did not advance

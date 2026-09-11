@@ -48,9 +48,20 @@
 # skipped here, so one outcome is never reported twice. It then uses
 # fm-crew-state.sh as the sole current-state source.
 # Only a done or failed state is suspicious enough to create a durable terminal
-# outcome record or wake the supervisor.
+# outcome record.
+# The one non-terminal wake is a pipeline CI monitor that is behind: a
+# `state: working` run-step line whose detail says every check on the run's PR
+# head settled at a named time, longer ago than the monitor polls, while the
+# monitor still says it is waiting. That wake only asks this home's supervisor
+# to come and look. It is never a readiness, done, or merge signal, and it
+# creates no terminal outcome; the task stays working until the pipeline's own
+# verdict moves it. It is surfaced once per occurrence through this home's own
+# wake queue, keyed on the spawn incarnation, task id, and the settled time the
+# line names (never its changing age), with a ci-monitor-behind/<fingerprint>
+# marker recording that the occurrence was queued; a later settlement is a new
+# occurrence.
 # Working, paused, parked, blocked, unknown, persistent secondmates, and
-# captain-held work retain their existing supervision semantics.
+# captain-held work otherwise retain their existing supervision semantics.
 #
 # A terminal-outcomes/<fingerprint>.pending record remains until its upstream
 # receipt is durable.
@@ -76,7 +87,9 @@
 # and its cursor records the last child visited within the aggregate budget.
 #
 # The scan reads only durable local state and fm-crew-state.sh; it never invokes
-# gh, gh-axi, curl, fm-pr-check.sh, fm-pr-poll.sh, or a state *.check.sh.
+# gh, gh-axi, curl, fm-pr-check.sh, fm-pr-poll.sh, or a state *.check.sh
+# itself. Any forge read is fm-crew-state.sh's own bounded read-only check read
+# for a waiting CI monitor, inside this scan's per-child state-read bound.
 set -u
 export LC_ALL=C
 
@@ -84,6 +97,7 @@ SCRIPT_DIR="$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)"
 FM_HOME="${FM_HOME:-${FM_ROOT_OVERRIDE:-$(cd "$SCRIPT_DIR/.." && pwd)}}"
 STATE="${FM_STATE_OVERRIDE:-$FM_HOME/state}"
 OUTCOME_DIR="$STATE/terminal-outcomes"
+CI_BEHIND_DIR="$STATE/ci-monitor-behind"
 SCAN_MARKER="$STATE/.inactive-outcome-reconcile"
 SCAN_LOCK="$STATE/.inactive-outcome-reconcile.lock"
 CREW_STATE_BIN="${FM_INACTIVE_CREW_STATE_BIN:-$SCRIPT_DIR/fm-crew-state.sh}"
@@ -469,6 +483,24 @@ report_child() { # <id>
   report_child_ledger_locked "$id" "$meta"
 }
 
+# Wake this home's supervisor once per occurrence of a behind CI monitor (see
+# the header). An occurrence already queued, or whose wake is still in the
+# queue, stays quiet; a failed append leaves no marker, so the next scan retries.
+surface_ci_monitor_behind() { # <id> <meta> <state-line>
+  local id=$1 meta=$2 state_line=$3 re settled fingerprint rc=0
+  re='pipeline monitor behind: all [0-9]+ checks settled at ([0-9][0-9TZ:.+-]*) \('
+  [[ "$state_line" =~ $re ]] || return 0
+  settled=${BASH_REMATCH[1]}
+  fingerprint=$(sha256_text "$(meta_incarnation "$meta")|$id|ci-monitor-behind|$settled")
+  [ ! -e "$CI_BEHIND_DIR/$fingerprint" ] || return 0
+  publish_actionable "ci-monitor-behind:$fingerprint" \
+    "pipeline ci monitor behind: child=$id every check settled at $settled but the ci step still says it is waiting; the task stays working, so look before acting (not a readiness signal)" \
+    || rc=$?
+  [ "$rc" -ne 2 ] || return 0
+  mkdir -p "$CI_BEHIND_DIR" && [ ! -L "$CI_BEHIND_DIR" ] || return 1
+  : > "$CI_BEHIND_DIR/$fingerprint"
+}
+
 reconcile_direct_child_locked() { # <id> <meta> <secondmate-id-or-empty> <timeout>
   local id=$1 meta=$2 self=${3:-} timeout=$4 status turn last age state_line state pr incarnation fingerprint outcome_key payload kind state_rc=0
   [ -f "$meta" ] && [ ! -L "$meta" ] || return 0
@@ -494,6 +526,10 @@ reconcile_direct_child_locked() { # <id> <meta> <secondmate-id-or-empty> <timeou
   case "$state_line" in
     'state: done '*) state='done' ;;
     'state: failed '*) state='failed' ;;
+    'state: working · source: run-step · '*)
+      surface_ci_monitor_behind "$id" "$meta" "$state_line"
+      return
+      ;;
     *) return 0 ;;
   esac
   pr=$(pr_for_task "$meta" "$status")
