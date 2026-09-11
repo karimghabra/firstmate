@@ -378,9 +378,10 @@ The [Relay configuration reference](configuration.md#promised-public-replies-sta
 ## Project memory belongs to projects
 
 Durable project-intrinsic agent knowledge lives in each project's committed agent guide.
-A project with no guide gets a real `AGENTS.md` plus a real `CLAUDE.md` `@AGENTS.md` import pointer, while a project that already has a guide keeps it at its existing path, because relocating a working guide is a reviewable change of its own rather than a side effect of unrelated work.
+A project with no guide gets a real `AGENTS.md` plus a real `CLAUDE.md` `@AGENTS.md` import pointer, and an existing `AGENTS.md` without a `CLAUDE.md` gains that pointer.
+A project that already has a guide keeps it at its existing path, because relocating a working guide is a reviewable change of its own rather than a side effect of unrelated work.
 Ship briefs prompt crewmates to create a guide or record into the existing one through the normal delivery path only when the task produced durable knowledge; `data/projects.md` stays a thin private registry.
-Each project guide carries self-governance guidance; [`bin/fm-ensure-agents-md.sh`](../bin/fm-ensure-agents-md.sh) owns the guide layout rules, the explicit layout-migration mode, the canonical wording, and idempotent insertion, while its header and help document that mode and the explicit mark for equivalent project-owned guidance.
+Each project guide carries self-governance guidance; [`bin/fm-ensure-agents-md.sh`](../bin/fm-ensure-agents-md.sh) owns the guide layout rules, the canonical wording, and idempotent insertion, while its header and help document the explicit mark for equivalent project-owned guidance.
 It refuses a case-variant real memory file such as a lowercase `agents.md`, so the pointer's `@AGENTS.md` import resolves to a real `AGENTS.md` on a case-sensitive filesystem, and surfaces the mismatch for manual reconciliation.
 The full ownership rule - what is project-intrinsic versus fleet-private, and how firstmate keeps the two apart without writing into project clones - is owned by [`AGENTS.md`](../AGENTS.md) (project and knowledge management).
 
