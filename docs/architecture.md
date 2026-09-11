@@ -236,6 +236,8 @@ Placement is proven only at launch, so `bin/fm-spawn.sh` also exports the task i
 
 Firstmate's own no-mistakes gate runs agents inside a checkout that also contains the fleet-captain identity in `AGENTS.md`, so gate execution needs an authority boundary separate from ordinary crewmate worktree isolation.
 The tracked `.no-mistakes.yaml` sets `disable_project_settings: true`; no-mistakes honors that setting only from the trusted default-branch copy, so a pushed branch cannot enable its own project instructions during validation.
+The same file closes the CI repair door: no-mistakes cannot bound its CI repair agent to the files a branch touched, and every file that agent can reach here is shared fleet tooling, so `auto_fix.ci: 0` parks a red check or merge conflict at a gate for the driving worker instead of starting an unsupervised repair.
+no-mistakes reads `auto_fix` from the pushed branch but the `ci` block only from the trusted copy, so `ci.revalidate_repairs: true` is the backstop that sends any CI repair back through Review before it is published; [`tests/fm-nm-test-contract.test.sh`](../tests/fm-nm-test-contract.test.sh) pins these settings.
 Independently, `fm-spawn.sh`, `fm-send.sh`, `fm-control.sh`, and `fm-teardown.sh` source `bin/fm-gate-refuse-lib.sh` and exit with status 3 before fleet mutation when the gate environment marker is present or the current checkout matches the default no-mistakes gate-repository topology.
 A normal primary checkout or crewmate worktree has neither signal and remains unaffected.
 The helper's header owns the exact signal detection, relocated-home limitation, test-harness bypass, and relationship to no-mistakes' HEAD-continuity guard.

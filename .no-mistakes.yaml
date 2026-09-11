@@ -9,6 +9,23 @@
 # HEAD-continuity guard; see docs/architecture.md "No-mistakes gate authority boundary."
 disable_project_settings: true
 
+# no-mistakes' CI repair agent is unsupervised: on a red check or merge conflict
+# it edits whatever it decides the failure needs and publishes, with no gate and
+# no review. Every file it can reach here is shared tooling the whole fleet runs
+# on, and the red check is often not the branch's own doing, so "make a flaky
+# test deterministic" on an unrelated test loosens a timeout or assertion and
+# buries the real defect. no-mistakes cannot bound the repair to the files a
+# branch touched, so disable automatic CI repair: a red check parks at a gate for
+# the driving worker to decide. auto_fix is read from the pushed branch, so a
+# branch could raise it again for its own run; the ci block is trusted-only, so
+# revalidate_repairs is the backstop that sends every CI repair, automatic or
+# requested at the gate, back through Review before it is published. Asserted by
+# tests/fm-nm-test-contract.test.sh.
+auto_fix:
+  ci: 0
+ci:
+  revalidate_repairs: true
+
 # Trusted documentation placement policy for the Document step.
 # The audience inventory and coding guideline own the detail; keep this as a
 # pointer so gate instructions cannot become a second prose policy.
