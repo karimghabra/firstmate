@@ -17,16 +17,25 @@
 #   uses uniquely-named throwaway sessions killed by exact name. A harmless
 #   sleeper replaces the real daemon (FM_AFK_LAUNCH_ENTRY) so the test observes
 #   only the terminal lifecycle.
+#
+#   DELIVERY PROOF (real tmux panes, skipped when tmux is absent): the daemon
+#   delivers only by typing into a composer the shared classifier reads as
+#   exactly empty, so both launch paths refuse with exit 4, before writing any
+#   away-mode state, when the captain pane cannot be confirmed.
 set -u
 
 ROOT="$(cd "$(dirname "${BASH_SOURCE[0]}")/.." && pwd)"
 LAUNCH="$ROOT/bin/fm-afk-launch.sh"
 START="$ROOT/bin/fm-afk-start.sh"
 CONTRACT="$ROOT/bin/fm-afk-contract.sh"
-# The daemon paths refuse on a Pi primary, so pin a daemon-running harness for
-# every unit below; the Pi refusal has its own units (unit_pi_never_launches_the_daemon).
-unset PI_CODING_AGENT FM_PI_HARNESS CURSOR_AGENT CURSOR_INVOKED_AS GEMINI_CLI ATLASSIAN_AGENT_TYPE ROVODEV_CLI
-export CLAUDECODE=1
+# The daemon paths refuse on Pi and Claude primaries, so pin a daemon-running
+# harness for every unit below; those refusals have their own unit
+# (unit_own_cycle_harnesses_never_launch_the_daemon).
+unset PI_CODING_AGENT FM_PI_HARNESS CURSOR_AGENT CURSOR_INVOKED_AS GEMINI_CLI ATLASSIAN_AGENT_TYPE ROVODEV_CLI CLAUDECODE FM_OMP_HARNESS
+export GROK_AGENT=1
+# Supervisor-pane discovery must never resolve the pane this suite was started
+# from: every unit names its captain pane explicitly or deliberately has none.
+unset TMUX_PANE HERDR_ENV HERDR_PANE_ID
 
 FAILED=0
 fail() { printf 'not ok - %s\n' "$1" >&2; FAILED=1; }
@@ -48,6 +57,36 @@ trap GLOBAL_CLEANUP EXIT
 confirm_posture() {  # <home>
   FM_HOME="$1" FM_STATE_OVERRIDE="$1/state" "$CONTRACT" propose >/dev/null 2>&1 \
     && FM_HOME="$1" FM_STATE_OVERRIDE="$1/state" "$CONTRACT" confirm >/dev/null 2>&1
+}
+
+# launch_past_delivery_proof <verb>: run one launcher verb with the delivery
+# proof satisfied, for units whose subject is the record and terminal
+# lifecycle rather than the proof. The proof's own units drive real panes.
+# The override lives only in this child shell.
+launch_past_delivery_proof() {  # <verb>
+  bash -c '. "$1"; fm_supervisor_delivery_proof() { printf empty; }; fm_afk_launch_main "$2"' _ "$LAUNCH" "$1"
+}
+
+# make_captain_pane <session> agent|shell: start a detached tmux session whose
+# pane shows either an idle agent composer (Claude's bare prompt glyph, the
+# cursor parked on it) or a dead-shell prompt, wait for it to draw, and set
+# CAPTAIN_PANE to its pane id. Tracked for cleanup by exact name.
+CAPTAIN_PANE=
+make_captain_pane() {  # <session> agent|shell
+  local session=$1 kind=$2 _
+  CAPTAIN_PANE=
+  case "$kind" in
+    agent) tmux new-session -d -s "$session" -x 120 -y 30 "bash -c 'printf \"\\342\\235\\257 \"; exec sleep 600'" 2>/dev/null ;;
+    shell) tmux new-session -d -s "$session" -x 120 -y 30 "env PS1='\$ ' bash --norc --noprofile -i" 2>/dev/null ;;
+    *) return 1 ;;
+  esac || return 1
+  TRACK_TMUX_SESSIONS="$TRACK_TMUX_SESSIONS $session"
+  CAPTAIN_PANE=$(tmux display-message -p -t "$session" '#{pane_id}' 2>/dev/null) || return 1
+  for _ in $(seq 1 60); do
+    [ -n "$(tmux capture-pane -p -t "$CAPTAIN_PANE" 2>/dev/null | tr -d '[:space:]')" ] && return 0
+    sleep 0.05
+  done
+  return 1
 }
 
 # ---------------------------------------------------------------------------
@@ -89,29 +128,38 @@ unit_propose_confirm_records_the_posture_without_a_daemon() {
   rm -rf "$st"
 }
 
-unit_pi_never_launches_the_daemon() {
-  local st harness out rc
-  for harness in pi pi-signed; do
-    st=$(mktemp -d "${TMPDIR:-/tmp}/fm-afk-pi.XXXXXX")
+# Pi's supervision session and Claude's Stop-hook rewake keep supervising under
+# the away-posture record, so neither path may ever switch them off for a
+# daemon: not even with a confirmed record and a pane the daemon could reach.
+unit_own_cycle_harnesses_never_launch_the_daemon() {
+  local st harness out rc verb
+  for harness in pi pi-signed claude; do
+    st=$(mktemp -d "${TMPDIR:-/tmp}/fm-afk-own-cycle.XXXXXX")
     mkdir -p "$st/state"
     out=$(FM_HOME="$st" FM_STATE_OVERRIDE="$st/state" FM_TEST_HARNESS="$harness" \
       FM_SUPERVISOR_TARGET=unused FM_SUPERVISOR_BACKEND=tmux FM_AFK_LAUNCH_ENTRY="$SLEEPER" \
       bash -c '. "$1"; fm_afk_launch_primary_harness() { printf "%s" "$FM_TEST_HARNESS"; }; fm_afk_launch_main start' _ "$LAUNCH" 2>&1)
     rc=$?
-    if [ "$rc" -ne 0 ] && printf '%s' "$out" | grep -F "the away daemon is no longer launched on $harness" >/dev/null \
+    if [ "$rc" -ne 0 ] && printf '%s' "$out" | grep -F "the away daemon is not launched on $harness" >/dev/null \
       && [ ! -e "$st/state/.afk" ] && [ ! -e "$st/state/.afk-daemon-terminal" ] && [ ! -e "$st/state/.afk-contract" ]; then
       pass "$harness: start refuses to launch the daemon and writes no state"
     else
       fail "$harness: start did not refuse cleanly (rc=$rc): $out"
     fi
-    out=$(FM_HOME="$st" FM_STATE_OVERRIDE="$st/state" FM_TEST_HARNESS="$harness" \
-      bash -c '. "$1"; fm_afk_launch_primary_harness() { printf "%s" "$FM_TEST_HARNESS"; }; fm_afk_launch_main start-native' _ "$LAUNCH" 2>&1)
-    rc=$?
-    if [ "$rc" -ne 0 ] && [ ! -e "$st/state/.afk" ] && [ ! -e "$st/state/.afk-daemon-terminal" ]; then
-      pass "$harness: start-native refuses to prepare a daemon"
-    else
-      fail "$harness: start-native did not refuse (rc=$rc): $out"
-    fi
+    confirm_posture "$st" || fail "$harness: could not confirm fixture posture"
+    for verb in start start-native; do
+      out=$(FM_HOME="$st" FM_STATE_OVERRIDE="$st/state" FM_TEST_HARNESS="$harness" \
+        FM_SUPERVISOR_TARGET=unused FM_SUPERVISOR_BACKEND=tmux FM_AFK_LAUNCH_ENTRY="$SLEEPER" \
+        bash -c '. "$1"; fm_afk_launch_primary_harness() { printf "%s" "$FM_TEST_HARNESS"; }
+          fm_supervisor_delivery_proof() { printf empty; }; fm_afk_launch_main "$2"' _ "$LAUNCH" "$verb" 2>&1)
+      rc=$?
+      if [ "$rc" -ne 0 ] && printf '%s' "$out" | grep -F "the away daemon is not launched on $harness" >/dev/null \
+        && [ ! -e "$st/state/.afk" ] && [ ! -e "$st/state/.afk-daemon-terminal" ] && [ -f "$st/state/.afk-contract" ]; then
+        pass "$harness: $verb refuses the daemon even with a confirmed posture and a deliverable pane"
+      else
+        fail "$harness: $verb did not refuse cleanly with a confirmed posture (rc=$rc): $out"
+      fi
+    done
     rm -rf "$st"
   done
 }
@@ -130,7 +178,7 @@ unit_daemon_entry_requires_confirmation() {
     fail "daemon entry: pending proposal was promoted or refusal was unclear (rc=$rc): $out"
   fi
   FM_HOME="$st" FM_STATE_OVERRIDE="$st/state" "$CONTRACT" confirm >/dev/null 2>&1
-  if FM_HOME="$st" FM_STATE_OVERRIDE="$st/state" "$LAUNCH" start-native >/dev/null 2>&1 \
+  if FM_HOME="$st" FM_STATE_OVERRIDE="$st/state" launch_past_delivery_proof start-native >/dev/null 2>&1 \
     && [ -e "$st/state/.afk" ]; then
     pass "daemon entry: an explicitly confirmed record permits lifecycle preparation"
   else
@@ -155,12 +203,130 @@ unit_failed_daemon_launch_preserves_confirmed_record() {
   rm -rf "$st"
 }
 
+# ---------------------------------------------------------------------------
+# UNIT 0b: the delivery proof. The daemon delivers only by typing into a
+# composer the shared classifier reads as exactly empty, and its state/.afk flag
+# switches the ordinary supervision cycle off. A launch against a captain pane
+# it could never type into must refuse with exit 4 before writing any
+# away-mode state, leave the posture record standing, and say so. Real tmux
+# panes drive the real classifier; the agent pane is the positive control that
+# keeps the refusal from passing vacuously.
+# ---------------------------------------------------------------------------
+unit_delivery_proof_gates_every_daemon_launch() {
+  command -v tmux >/dev/null 2>&1 || { echo "skip: tmux not found (delivery proof)"; return 0; }
+  local st out rc verb shell_session agent_session hash daemon_sessions
+  st=$(mktemp -d "${TMPDIR:-/tmp}/fm-afk-proof.XXXXXX")
+  mkdir -p "$st/state"
+  confirm_posture "$st" || fail "delivery proof: could not confirm fixture posture"
+  hash=$(printf '%s' "$st" | cksum | cut -d' ' -f1)
+  shell_session="fm-afk-proof-shell-$$"
+  agent_session="fm-afk-proof-agent-$$"
+  make_captain_pane "$shell_session" shell || { fail "delivery proof: could not draw the dead-shell pane"; rm -rf "$st"; return 0; }
+  for verb in start start-native; do
+    out=$(FM_HOME="$st" FM_STATE_OVERRIDE="$st/state" FM_SUPERVISOR_TARGET="$CAPTAIN_PANE" \
+      FM_SUPERVISOR_BACKEND=tmux FM_SUPERVISOR_DELIVERY_PROOF_ATTEMPTS=1 FM_AFK_LAUNCH_ENTRY="$SLEEPER" \
+      "$LAUNCH" "$verb" 2>&1)
+    rc=$?
+    daemon_sessions=$(tmux list-sessions -F '#{session_name}' 2>/dev/null | grep -c "^fm-afk-daemon-$hash-" || true)
+    if [ "$rc" -eq 4 ] && [ ! -e "$st/state/.afk" ] && [ ! -e "$st/state/.afk-daemon-terminal" ] \
+      && [ "$daemon_sessions" -eq 0 ] && [ -f "$st/state/.afk-contract" ] \
+      && printf '%s' "$out" | grep -F "cannot confirm the supervisor composer at $CAPTAIN_PANE" >/dev/null \
+      && printf '%s' "$out" | grep -F 'verdict unknown' >/dev/null \
+      && printf '%s' "$out" | grep -F 'the away-posture record stands and the ordinary supervision cycle keeps owning supervision' >/dev/null; then
+      pass "delivery proof: $verb refuses a dead-shell captain pane with exit 4, launches nothing, and keeps the posture record"
+    else
+      fail "delivery proof: $verb did not refuse the dead-shell pane cleanly (rc=$rc sessions=$daemon_sessions): $out"
+    fi
+  done
+
+  out=$(FM_HOME="$st" FM_STATE_OVERRIDE="$st/state" FM_SUPERVISOR_TARGET=unused \
+    FM_SUPERVISOR_BACKEND=zellij "$LAUNCH" start-native 2>&1)
+  rc=$?
+  if [ "$rc" -eq 4 ] && [ ! -e "$st/state/.afk" ] && printf '%s' "$out" | grep -F 'verdict unsupported' >/dev/null; then
+    pass "delivery proof: a supervisor backend the daemon cannot inject into refuses with exit 4"
+  else
+    fail "delivery proof: unsupported supervisor backend did not refuse cleanly (rc=$rc): $out"
+  fi
+
+  make_captain_pane "$agent_session" agent || { fail "delivery proof: could not draw the agent-composer pane"; rm -rf "$st"; return 0; }
+  out=$(FM_HOME="$st" FM_STATE_OVERRIDE="$st/state" FM_SUPERVISOR_TARGET="$CAPTAIN_PANE" \
+    FM_SUPERVISOR_BACKEND=tmux "$LAUNCH" start-native 2>&1)
+  rc=$?
+  if [ "$rc" -eq 0 ] && [ -e "$st/state/.afk" ] && [ "$(cut -f1 "$st/state/.afk-daemon-terminal" 2>/dev/null)" = none ]; then
+    pass "delivery proof: an idle agent composer proves delivery and the native entry proceeds"
+  else
+    fail "delivery proof: an idle agent composer did not pass the proof (rc=$rc): $out"
+  fi
+  FM_HOME="$st" FM_STATE_OVERRIDE="$st/state" "$LAUNCH" stop >/dev/null 2>&1
+  tmux kill-session -t "$shell_session" 2>/dev/null || true
+  tmux kill-session -t "$agent_session" 2>/dev/null || true
+  rm -rf "$st"
+}
+
+# A refused launch promises that the ordinary supervision cycle keeps
+# supervising, which is false while state/.afk still switches it off. Both
+# refusals therefore release a flag no running daemon owns - a crashed daemon's,
+# or one an older launch left on a harness that no longer runs a daemon - and
+# leave a live daemon's flag for the ordered return.
+unit_refusals_release_only_an_unowned_away_flag() {
+  local st out rc sleeper_pid lock
+  st=$(mktemp -d "${TMPDIR:-/tmp}/fm-afk-unowned-flag.XXXXXX")
+  mkdir -p "$st/state"
+  confirm_posture "$st" || fail "unowned flag: could not confirm fixture posture"
+  date '+%s' > "$st/state/.afk"
+  out=$(FM_HOME="$st" FM_STATE_OVERRIDE="$st/state" \
+    bash -c '. "$1"; fm_afk_launch_primary_harness() { printf claude; }; fm_afk_launch_main start-native' _ "$LAUNCH" 2>&1)
+  rc=$?
+  if [ "$rc" -ne 0 ] && [ ! -e "$st/state/.afk" ] \
+    && printf '%s' "$out" | grep -F 'released a state/.afk that no running daemon owned' >/dev/null; then
+    pass "unowned flag: the Claude refusal releases a flag no running daemon owns"
+  else
+    fail "unowned flag: the Claude refusal left an unowned flag switching supervision off (rc=$rc): $out"
+  fi
+
+  date '+%s' > "$st/state/.afk"
+  sleep 600 &
+  # shellcheck disable=SC2031 # The background PID is captured immediately in this shell.
+  sleeper_pid=$!
+  lock="$st/state/.supervise-daemon.lock"
+  mkdir -p "$lock"
+  printf '%s' "$sleeper_pid" > "$lock/pid"
+  # shellcheck source=/dev/null
+  ( . "$ROOT/bin/fm-wake-lib.sh"; fm_pid_identity "$sleeper_pid" > "$lock/pid-identity" 2>/dev/null ) || true
+  FM_HOME="$st" FM_STATE_OVERRIDE="$st/state" \
+    bash -c '. "$1"; fm_afk_launch_primary_harness() { printf claude; }; fm_afk_launch_main start-native' _ "$LAUNCH" >/dev/null 2>&1
+  if [ -e "$st/state/.afk" ]; then
+    pass "unowned flag: a live daemon's flag survives the refusal for the ordered return"
+  else
+    fail "unowned flag: the refusal removed a live daemon's flag"
+  fi
+  kill "$sleeper_pid" 2>/dev/null || true
+  wait "$sleeper_pid" 2>/dev/null || true
+  rm -rf "$lock"
+
+  if command -v tmux >/dev/null 2>&1 && make_captain_pane "fm-afk-unowned-shell-$$" shell; then
+    out=$(FM_HOME="$st" FM_STATE_OVERRIDE="$st/state" FM_SUPERVISOR_TARGET="$CAPTAIN_PANE" \
+      FM_SUPERVISOR_BACKEND=tmux FM_SUPERVISOR_DELIVERY_PROOF_ATTEMPTS=1 "$LAUNCH" start-native 2>&1)
+    rc=$?
+    if [ "$rc" -eq 4 ] && [ ! -e "$st/state/.afk" ] \
+      && printf '%s' "$out" | grep -F 'released a state/.afk that no running daemon owned' >/dev/null; then
+      pass "unowned flag: the delivery-proof refusal releases a flag no running daemon owns"
+    else
+      fail "unowned flag: the delivery-proof refusal left an unowned flag (rc=$rc): $out"
+    fi
+    tmux kill-session -t "fm-afk-unowned-shell-$$" 2>/dev/null || true
+  else
+    echo "skip: tmux not found (unowned flag after the delivery proof)"
+  fi
+  rm -rf "$st"
+}
+
 unit_stop_archives_the_record_last() {
   local st epoch
   st=$(mktemp -d "${TMPDIR:-/tmp}/fm-afk-stop-archive.XXXXXX")
   mkdir -p "$st/state"
   confirm_posture "$st" || fail "stop archive: could not confirm fixture posture"
-  FM_HOME="$st" FM_STATE_OVERRIDE="$st/state" "$LAUNCH" start-native >/dev/null 2>&1 || fail "stop archive: native entry failed"
+  FM_HOME="$st" FM_STATE_OVERRIDE="$st/state" launch_past_delivery_proof start-native >/dev/null 2>&1 || fail "stop archive: native entry failed"
   epoch=$(FM_HOME="$st" FM_STATE_OVERRIDE="$st/state" "$CONTRACT" field entered_epoch)
   if FM_HOME="$st" FM_STATE_OVERRIDE="$st/state" "$LAUNCH" stop >/dev/null 2>&1 \
     && [ ! -e "$st/state/.afk" ] && [ ! -e "$st/state/.afk-contract" ] \
@@ -355,8 +521,10 @@ unit_failed_start_rolls_back_state() {
   printf 'pending\n' > "$st/state/.subsuper-escalations"
   printf 'wedged\n' > "$st/state/.subsuper-inject-wedged"
   confirm_posture "$st" || fail "failed start: could not confirm fixture posture"
+  # Past the delivery proof so the unsupported backend reaches terminal creation
+  # and its rollback, which is this unit's subject.
   if FM_HOME="$st" FM_STATE_OVERRIDE="$st/state" FM_SUPERVISOR_TARGET=unused \
-    FM_SUPERVISOR_BACKEND=unsupported "$LAUNCH" start >/dev/null 2>&1; then
+    FM_SUPERVISOR_BACKEND=unsupported launch_past_delivery_proof start >/dev/null 2>&1; then
     fail "failed start: unsupported backend unexpectedly succeeded"
   elif [ ! -e "$st/state/.afk" ] \
     && [ "$(cat "$st/state/.subsuper-escalations")" = pending ] \
@@ -373,9 +541,8 @@ unit_concurrent_start_serialized() {
   local st cap_session cap_pane first second rec count
   st=$(mktemp -d "${TMPDIR:-/tmp}/fm-afk-concurrent.XXXXXX")
   cap_session="fm-afk-concurrent-cap-$$"
-  tmux new-session -d -s "$cap_session" 2>/dev/null || { fail "concurrent start: captain session creation failed"; rm -rf "$st"; return 0; }
-  TRACK_TMUX_SESSIONS="$TRACK_TMUX_SESSIONS $cap_session"
-  cap_pane=$(tmux display-message -p -t "$cap_session" '#{pane_id}')
+  make_captain_pane "$cap_session" agent || { fail "concurrent start: captain session creation failed"; rm -rf "$st"; return 0; }
+  cap_pane=$CAPTAIN_PANE
   confirm_posture "$st" || fail "concurrent start: could not confirm fixture posture"
   FM_HOME="$st" FM_STATE_OVERRIDE="$st/state" FM_SUPERVISOR_TARGET="$cap_pane" \
     FM_SUPERVISOR_BACKEND=tmux FM_AFK_LAUNCH_ENTRY="$SLEEPER" "$LAUNCH" start >/dev/null 2>&1 &
@@ -634,7 +801,7 @@ unit_native_lifecycle() {
   mkdir -p "$st/state"
   : > "$st/state/.subsuper-escalations"
   confirm_posture "$st" || fail "native lifecycle: could not confirm fixture posture"
-  if FM_HOME="$st" FM_STATE_OVERRIDE="$st/state" "$LAUNCH" start-native >/dev/null 2>&1 \
+  if FM_HOME="$st" FM_STATE_OVERRIDE="$st/state" launch_past_delivery_proof start-native >/dev/null 2>&1 \
     && [ "$(cut -f1 "$st/state/.afk-daemon-terminal")" = none ] \
     && [ -e "$st/state/.afk" ] \
     && [ ! -e "$st/state/.subsuper-escalations" ]; then
@@ -884,9 +1051,10 @@ unit_stop_confirms_daemon_exit() {
 }
 
 unit_refresh_validates_record() {
-  local st daemon_pid
+  local st daemon_pid out
   st=$(mktemp -d "${TMPDIR:-/tmp}/fm-afk-refresh-record.XXXXXX")
   mkdir -p "$st/state/.supervise-daemon.lock"
+  confirm_posture "$st" || fail "refresh record: could not confirm fixture posture"
   printf 'tmux\tonly-two-fields\n' > "$st/state/.afk-daemon-terminal"
   sleep 30 &
   # shellcheck disable=SC2031 # The background PID is captured immediately in this shell.
@@ -894,14 +1062,15 @@ unit_refresh_validates_record() {
   printf '%s' "$daemon_pid" > "$st/state/.supervise-daemon.lock/pid"
   # shellcheck source=/dev/null
   ( . "$ROOT/bin/fm-wake-lib.sh"; fm_pid_identity "$daemon_pid" > "$st/state/.supervise-daemon.lock/pid-identity" )
-  if FM_HOME="$st" FM_STATE_OVERRIDE="$st/state" FM_SUPERVISOR_TARGET=unused \
+  if out=$(FM_HOME="$st" FM_STATE_OVERRIDE="$st/state" FM_SUPERVISOR_TARGET=unused \
     FM_SUPERVISOR_BACKEND=tmux bash -c '
       . "$1"
       ! fm_afk_launch_start && ! fm_afk_launch_start_native
-    ' _ "$LAUNCH" && [ ! -e "$st/state/.afk" ]; then
+    ' _ "$LAUNCH" 2>&1) && [ ! -e "$st/state/.afk" ] \
+    && [ "$(printf '%s\n' "$out" | grep -cF 'daemon terminal record is malformed')" -eq 2 ]; then
     pass "refresh record: malformed terminal identity fails closed"
   else
-    fail "refresh record: malformed terminal identity was accepted"
+    fail "refresh record: malformed terminal identity was accepted or refused for another reason: $out"
   fi
   kill "$daemon_pid" 2>/dev/null || true
   wait "$daemon_pid" 2>/dev/null || true
@@ -909,19 +1078,22 @@ unit_refresh_validates_record() {
 }
 
 unit_clear_failure_aborts_entry() {
-  local st
+  local st out
   st=$(mktemp -d "${TMPDIR:-/tmp}/fm-afk-clear-fail.XXXXXX")
   mkdir -p "$st/state"
+  confirm_posture "$st" || fail "clear failure: could not confirm fixture posture"
   : > "$st/state/.subsuper-escalations"
-  if FM_HOME="$st" FM_STATE_OVERRIDE="$st/state" bash -c '
+  if out=$(FM_HOME="$st" FM_STATE_OVERRIDE="$st/state" bash -c '
     . "$1"
+    fm_supervisor_delivery_proof() { printf empty; }
     fm_afk_launch_reconcile() { return 0; }
     fm_afk_clear_stale_artifacts() { return 1; }
     ! fm_afk_launch_start_native
-  ' _ "$LAUNCH" && [ ! -e "$st/state/.afk" ] && [ -e "$st/state/.subsuper-escalations" ]; then
+  ' _ "$LAUNCH" 2>&1) && [ ! -e "$st/state/.afk" ] && [ -e "$st/state/.subsuper-escalations" ] \
+    && printf '%s' "$out" | grep -F 'failed to clear stale away-mode artifacts' >/dev/null; then
     pass "clear failure: native entry aborts and restores prior state"
   else
-    fail "clear failure: native entry proceeded or lost prior state"
+    fail "clear failure: native entry proceeded, lost prior state, or stopped for another reason: $out"
   fi
   rm -rf "$st"
 }
@@ -963,18 +1135,21 @@ unit_incomplete_restore_retains_backup() {
 }
 
 unit_flag_write_failure_aborts() {
-  local st
+  local st marker
   st=$(mktemp -d "${TMPDIR:-/tmp}/fm-afk-flag-fail.XXXXXX")
   mkdir -p "$st/state"
-  FM_HOME="$st" FM_STATE_OVERRIDE="$st/state" bash -c '
+  confirm_posture "$st" || fail "flag failure: could not confirm fixture posture"
+  marker="$st/flag-write-attempted"
+  FM_HOME="$st" FM_STATE_OVERRIDE="$st/state" MARKER="$marker" bash -c '
     . "$1"
-    fm_afk_launch_flag_write() { return 1; }
+    fm_supervisor_delivery_proof() { printf empty; }
+    fm_afk_launch_flag_write() { : > "$MARKER"; return 1; }
     ! fm_afk_launch_start_native
   ' _ "$LAUNCH"
-  if [ ! -e "$st/state/.afk" ] && [ ! -e "$st/state/.afk-daemon-terminal" ]; then
+  if [ -e "$marker" ] && [ ! -e "$st/state/.afk" ] && [ ! -e "$st/state/.afk-daemon-terminal" ]; then
     pass "flag failure: lifecycle aborts without active state"
   else
-    fail "flag failure: lifecycle reported active state"
+    fail "flag failure: lifecycle reported active state or never reached the flag write"
   fi
   rm -rf "$st"
 }
@@ -1016,9 +1191,12 @@ e2e_herdr() {
   before=$(fm_backend_herdr_cli "$SESSION" pane list --workspace "$cap_ws" 2>/dev/null | jq --arg t "$cap_tab" '[.result.panes[]?|select(.tab_id==$t)]|length')
   ws_before=$(fm_backend_herdr_cli "$SESSION" workspace list 2>/dev/null | jq '[.result.workspaces[]?]|length')
 
+  # The lab captain pane is a plain shell, which the delivery proof correctly
+  # refuses; this e2e's subject is the daemon terminal topology, so it runs past
+  # the proof (the proof's own units drive real panes).
   FM_HOME="$home_tmp" FM_STATE_OVERRIDE="$home_tmp/state" \
     FM_SUPERVISOR_TARGET="$target" FM_SUPERVISOR_BACKEND=herdr FM_AFK_LAUNCH_ENTRY="$SLEEPER" \
-    "$LAUNCH" start >/dev/null 2>&1
+    launch_past_delivery_proof start >/dev/null 2>&1
 
   during=$(fm_backend_herdr_cli "$SESSION" pane list --workspace "$cap_ws" 2>/dev/null | jq --arg t "$cap_tab" '[.result.panes[]?|select(.tab_id==$t)]|length')
   ws_during=$(fm_backend_herdr_cli "$SESSION" workspace list 2>/dev/null | jq '[.result.workspaces[]?]|length')
@@ -1051,9 +1229,10 @@ e2e_tmux() {
   local cap_session home_tmp cap_pane before during after rec
   cap_session="fm-afk-launch-cap-$$"
   home_tmp=$(mktemp -d "${TMPDIR:-/tmp}/fm-afk-tmux-home.XXXXXX")
-  tmux new-session -d -s "$cap_session" 2>/dev/null || { fail "tmux e2e: could not create captain session"; rm -rf "$home_tmp"; return 0; }
-  TRACK_TMUX_SESSIONS="$TRACK_TMUX_SESSIONS $cap_session"
-  cap_pane=$(tmux display-message -p -t "$cap_session" '#{pane_id}')
+  # The captain pane shows a real idle agent composer, so the launch passes the
+  # real delivery proof before this test observes its terminal topology.
+  make_captain_pane "$cap_session" agent || { fail "tmux e2e: could not create captain session"; rm -rf "$home_tmp"; return 0; }
+  cap_pane=$CAPTAIN_PANE
   confirm_posture "$home_tmp" || fail "tmux e2e: could not confirm fixture posture"
   before=$(tmux list-panes -t "$cap_session" | wc -l | tr -d ' ')
 
@@ -1081,9 +1260,11 @@ e2e_tmux() {
 
 unit_clear_stale
 unit_propose_confirm_records_the_posture_without_a_daemon
-unit_pi_never_launches_the_daemon
+unit_own_cycle_harnesses_never_launch_the_daemon
 unit_daemon_entry_requires_confirmation
 unit_failed_daemon_launch_preserves_confirmed_record
+unit_delivery_proof_gates_every_daemon_launch
+unit_refusals_release_only_an_unowned_away_flag
 unit_stop_archives_the_record_last
 unit_relative_paths_are_absolute_before_daemon_launch
 unit_fresh_vs_refresh

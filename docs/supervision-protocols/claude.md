@@ -1,6 +1,8 @@
 Mode: Claude Stop-hook-owned supervision.
 
-When this session owns supervision and away mode is not active:
+The away daemon is not launched on Claude, so the away-posture record alone leaves this protocol running while the captain is away.
+
+When this session owns supervision and no legacy away daemon flag is active:
 1. Drain first with `bin/fm-wake-drain.sh`.
    After handling all emitted wakes and reconciling open decisions and unread status lines, run the exact `--ack-through` command printed as `WAKE_ACK_REQUIRED`; until then the work remains durable for idempotent re-handling after interruption.
 2. Routine watcher arm and re-arm are owned by the Stop `asyncRewake` hook (`bin/fm-claude-stop-autoarm.sh`), never by you.

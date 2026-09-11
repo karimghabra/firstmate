@@ -53,6 +53,7 @@ test_afk_start_ignores_stale_pidfile_without_lock() {
   assert_contains "$out" "starting supervise daemon" "fm-afk-start.sh did not attempt daemon startup"
   assert_contains "$out" "does not support supervisor backend 'unsupported'" "daemon startup did not reach backend validation"
   assert_not_contains "$out" "daemon already running" "fm-afk-start.sh trusted a stale pidfile-only live pid"
+  assert_absent "$state/.afk" "a daemon refusing an unsupported backend left state/.afk switching off the ordinary supervision cycle"
   pass "fm-afk-start.sh ignores stale pidfile-only live pids"
 }
 
@@ -74,7 +75,40 @@ test_afk_start_reclaims_stale_daemon_lock_reused_pid() {
   assert_contains "$out" "does not support supervisor backend 'unsupported'" "daemon startup did not reach backend validation after stale lock cleanup"
   assert_not_contains "$out" "daemon already running" "fm-afk-start.sh trusted a stale daemon lock with a reused pid"
   assert_not_contains "$out" "another fm-supervise-daemon is already running" "daemon singleton lock still trusted the reused pid"
+  assert_absent "$lock" "a refused daemon kept the singleton lock"
+  assert_absent "$state/.afk" "a refused daemon left state/.afk switching off the ordinary supervision cycle"
   pass "fm-afk-start.sh reclaims stale daemon locks whose live pid identity no longer matches"
+}
+
+# The daemon types escalations only into a composer the shared classifier reads
+# as exactly empty, and while state/.afk exists it is the only supervisor. A
+# daemon started against a pane it can never type into - here a dead-shell
+# prompt - must refuse loudly and hand supervision back by clearing state/.afk,
+# instead of running on with every escalation stranded in its buffer.
+test_daemon_startup_refuses_undeliverable_supervisor_pane() {
+  local dir state capture out status
+  dir=$(make_supercase daemon-delivery-proof)
+  state="$dir/state"
+  capture="$dir/capture"
+  printf '$ \n' > "$capture"
+  # shellcheck source=bin/fm-timeout-lib.sh
+  . "$ROOT/bin/fm-timeout-lib.sh"
+  out=$(PATH="$dir/fakebin:$PATH" FM_STATE_OVERRIDE="$state" FM_SUPERVISOR_BACKEND=tmux \
+    FM_SUPERVISOR_TARGET=%1 FM_FAKE_TMUX_CAPTURE="$capture" FM_FAKE_TMUX_CURSOR_Y=0 \
+    FM_SUPERVISOR_DELIVERY_PROOF_ATTEMPTS=1 fm_run_timed 30 "$AFK_START" 2>&1)
+  status=$?
+
+  [ "$status" -ne 124 ] || fail "the daemon kept running against a supervisor pane it can never deliver to"
+  [ "$status" -ne 0 ] || fail "the daemon started against a supervisor pane it can never deliver to"
+  assert_contains "$out" "away-mode daemon refused to start: it cannot confirm the supervisor composer at '%1'" \
+    "the daemon's startup refusal did not name the undeliverable pane"
+  assert_contains "$out" "verdict unknown" "the daemon's startup refusal did not name the composer verdict"
+  assert_absent "$state/.afk" "a refused daemon left state/.afk switching off the ordinary supervision cycle"
+  assert_absent "$state/.supervise-daemon.lock" "a refused daemon kept the singleton lock"
+  assert_absent "$state/.supervise-daemon.pid" "a refused daemon kept its pidfile"
+  assert_grep "startup refused: cleared state/.afk" "$state/.supervise-daemon.log" \
+    "the daemon log did not record handing supervision back"
+  pass "daemon startup refuses a supervisor pane it can never deliver to and hands supervision back"
 }
 
 test_daemon_state_root_uses_fm_home() {
@@ -2667,6 +2701,7 @@ test_inject_msg_defers_on_unrecognized_composer_state() {
 test_afk_start_refuses_when_flag_cannot_be_written
 test_afk_start_ignores_stale_pidfile_without_lock
 test_afk_start_reclaims_stale_daemon_lock_reused_pid
+test_daemon_startup_refuses_undeliverable_supervisor_pane
 test_daemon_state_root_uses_fm_home
 test_classify_routine_signal_self
 test_classify_terminal_signal_escalates
