@@ -1,0 +1,4 @@
+parsed workflow model identical between base 8facd7c and head b92e741: True
+tests-portable-parallel-1: name='Behavior portable parallel 1' timeout-minutes=10 run-step='bin/fm-test-run.sh --lane portable-parallel-1 \\'
+tests-portable-parallel-2: name='Behavior portable parallel 2' timeout-minutes=10 run-step='bin/fm-test-run.sh --lane portable-parallel-2 \\'
+Pi install step present in: ['tests-portable-parallel-1']

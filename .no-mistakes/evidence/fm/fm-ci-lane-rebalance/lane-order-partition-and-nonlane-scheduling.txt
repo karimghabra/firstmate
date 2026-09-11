@@ -1,0 +1,47 @@
+== S2: stored lane order equals the runner's longest-hint-first schedule ==
+portable-parallel-1: stored order == --list-scheduled (OK)
+portable-parallel-2: stored order == --list-scheduled (OK)
+portable-parallel-1 --list-scheduled:
+  tests/fm-lint.test.sh
+  tests/fm-pr-merge.test.sh
+  tests/fm-test-run.test.sh
+  tests/fm-cd-pretool-check.test.sh
+  tests/fm-pi-primary-types.test.sh
+  tests/fm-grok-harness.test.sh
+  tests/fm-composer-lib.test.sh
+  tests/fm-review-diff.test.sh
+  tests/fm-tmux-submit-busy.test.sh
+  tests/fm-composer-ghost.test.sh
+  tests/fm-brief.test.sh
+portable-parallel-2 --list-scheduled:
+  tests/fm-captain-hold-lifecycle.test.sh
+  tests/fm-x-mode.test.sh
+  tests/fm-arm-pretool-check.test.sh
+  tests/fm-backend-herdr.test.sh
+  tests/fm-crew-state.test.sh
+  tests/fm-herdr-lab.test.sh
+  tests/fm-send-popup-settle.test.sh
+  tests/fm-send-strict.test.sh
+  tests/fm-spawn-batch.test.sh
+  tests/fm-send-settle.test.sh
+  tests/fm-ensure-agents-md.test.sh
+  tests/fm-supervision-instructions.test.sh
+  tests/fm-transition-lib.test.sh
+
+== S3: lanes partition exactly the proven-isolated set; Pi test stays in the lane that installs Pi ==
+union(lane1,lane2) == --proven-isolated (24 scripts) (OK)
+duplicates across lanes: 0
+same 24-script membership as base, only redistributed (OK)
+tests/fm-pi-primary-types.test.sh is in portable-parallel-1 (the job with the Pi install step) (OK)
+moved lane1->lane2: tests/fm-captain-hold-lifecycle.test.sh tests/fm-transition-lib.test.sh tests/fm-x-mode.test.sh 
+moved lane2->lane1: tests/fm-composer-lib.test.sh tests/fm-pr-merge.test.sh tests/fm-tmux-submit-busy.test.sh 
+
+== S4 (adversarial): non-lane --list-scheduled selections are byte-identical to base ==
+identical: --list-scheduled --proven-isolated (24 lines)
+identical: --list-scheduled --all (194 lines)
+identical: --list-scheduled --family pure-contract-unit (35 lines)
+identical: --list-scheduled --lane portable-serial (157 lines)
+identical: --list-scheduled --lane portable-serial-1of5 (31 lines)
+identical: --list-scheduled --lane real-herdr-gated (13 lines)
+identical: --list-scheduled tests/fm-lint.test.sh tests/fm-captain-hold-lifecycle.test.sh tests/fm-brief.test.sh tests/fm-muse-harness.test.sh (4 lines)
+--list-lanes identical: yes

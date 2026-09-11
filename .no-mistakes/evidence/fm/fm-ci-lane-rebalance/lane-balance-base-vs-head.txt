@@ -1,0 +1,6 @@
+== Lane membership sums using the measured CI hints from head b92e741 ==
+base 8facd7c   portable-parallel-1: 11 scripts, packed_ms=624299 (10.4 min), unhinted=0
+base 8facd7c   portable-parallel-2: 13 scripts, packed_ms=204269 (3.4 min), unhinted=0
+head b92e741   portable-parallel-1: 11 scripts, packed_ms=414269 (6.9 min), unhinted=0
+head b92e741   portable-parallel-2: 13 scripts, packed_ms=414299 (6.9 min), unhinted=0
+CI job cap: timeout-minutes: 10 (600000 ms), including setup/installs

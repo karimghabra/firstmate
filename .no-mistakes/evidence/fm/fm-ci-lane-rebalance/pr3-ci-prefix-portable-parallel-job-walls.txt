@@ -1,0 +1,2 @@
+run 34572974900 (PR #3, pre-fix lanes)  Behavior portable parallel 1   cancelled  job_wall=616s (cap 600s)
+run 34572974900 (PR #3, pre-fix lanes)  Behavior portable parallel 2   success    job_wall=215s (cap 600s)

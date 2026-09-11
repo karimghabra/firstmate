@@ -1,0 +1,4 @@
+run 34575386704  Behavior portable parallel 2   success  job_wall=351s (cap 600s)
+run 34575386704  Behavior portable parallel 1   success  job_wall=434s (cap 600s)
+run 34581493312  Behavior portable parallel 2   success  job_wall=414s (cap 600s)
+run 34581493312  Behavior portable parallel 1   success  job_wall=426s (cap 600s)

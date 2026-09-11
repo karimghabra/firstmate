@@ -1,0 +1,83 @@
+=== M0 control: head b92e741 unmodified ===
+$ bin/fm-test-run.sh --check-coverage
+FM_TEST_COVERAGE ok total=195 parallel=24 parallel_max_ms=414299 parallel_imbalance_ms=30 parallel_unhinted=0 serial=158 serial_shards=5 serial_unhinted=12 herdr=13
+  exit=0
+$ tests/fm-lanes-only.test.sh   (the 4 lane/scheduling tests from tests/fm-test-run.test.sh)
+  ok - proven-isolated scheduling ignores parallel hints
+  ok - family, all, changed, and script selections ignore parallel hints
+  ok - portable shard union, disjointness, and coverage guard hold
+  ok - portable parallel lanes are fully hinted and packed within 5% of each other
+  exit=0
+
+=== M1 regression repro: restore the base (pre-fix) lane split that got lane 1 cancelled at the 10-min cap ===
+$ bin/fm-test-run.sh --check-coverage
+FM_TEST_COVERAGE ok total=195 parallel=24 parallel_max_ms=624299 parallel_imbalance_ms=420030 parallel_unhinted=0 serial=158 serial_shards=5 serial_unhinted=12 herdr=13
+  exit=0
+$ tests/fm-lanes-only.test.sh   (the 4 lane/scheduling tests from tests/fm-test-run.test.sh)
+  ok - proven-isolated scheduling ignores parallel hints
+  ok - family, all, changed, and script selections ignore parallel hints
+  not ok - portable-parallel-1 membership must be stored longest-measured-first
+  exit=1
+
+=== M2 guard: a proven-isolated member loses its measured hint (fm-brief) ===
+$ bin/fm-test-run.sh --check-coverage
+FM_TEST_COVERAGE ok total=195 parallel=24 parallel_max_ms=414299 parallel_imbalance_ms=1655 parallel_unhinted=1 serial=158 serial_shards=5 serial_unhinted=12 herdr=13
+  exit=0
+$ tests/fm-lanes-only.test.sh   (the 4 lane/scheduling tests from tests/fm-test-run.test.sh)
+  ok - proven-isolated scheduling ignores parallel hints
+  ok - family, all, changed, and script selections ignore parallel hints
+  not ok - portable-parallel-1 membership must be stored longest-measured-first
+  exit=1
+
+=== M3 guard: small lopsided move (grok-harness 6.5s lane1->lane2, still in LPT order) ===
+$ bin/fm-test-run.sh --check-coverage
+FM_TEST_COVERAGE ok total=195 parallel=24 parallel_max_ms=420862 parallel_imbalance_ms=13156 parallel_unhinted=0 serial=158 serial_shards=5 serial_unhinted=12 herdr=13
+  exit=0
+$ tests/fm-lanes-only.test.sh   (the 4 lane/scheduling tests from tests/fm-test-run.test.sh)
+  ok - proven-isolated scheduling ignores parallel hints
+  ok - family, all, changed, and script selections ignore parallel hints
+  not ok - portable-parallel-2 membership must be stored longest-measured-first
+  exit=1
+
+  (mutation applied: occurrences=2)
+=== M4 guard: parallel hints leak into every --list-scheduled selection ===
+$ bin/fm-test-run.sh --check-coverage
+FM_TEST_COVERAGE ok total=195 parallel=24 parallel_max_ms=414299 parallel_imbalance_ms=30 parallel_unhinted=0 serial=158 serial_shards=5 serial_unhinted=12 herdr=13
+  exit=0
+$ tests/fm-lanes-only.test.sh   (the 4 lane/scheduling tests from tests/fm-test-run.test.sh)
+  not ok - proven-isolated scheduling must break serial-default ties by path
+  exit=1
+
+=== M2b guard: fm-backend-herdr loses its measured hint (27s serial fallback keeps LPT order intact) ===
+$ bin/fm-test-run.sh --check-coverage
+FM_TEST_COVERAGE ok total=195 parallel=24 parallel_max_ms=414269 parallel_imbalance_ms=22114 parallel_unhinted=1 serial=158 serial_shards=5 serial_unhinted=12 herdr=13
+  exit=0
+$ tests/fm-lanes-only.test.sh   (the 4 lane/scheduling tests from tests/fm-test-run.test.sh)
+  ok - proven-isolated scheduling ignores parallel hints
+  ok - family, all, changed, and script selections ignore parallel hints
+  ok - portable shard union, disjointness, and coverage guard hold
+  not ok - 1 proven-isolated scripts have no measured parallel hint, so the lanes are packed on a guess
+  exit=1
+
+=== M3b guard: lopsided but LPT-ordered move (cd-pretool 17s lane1->lane2, ~34s imbalance > 5%) ===
+$ bin/fm-test-run.sh --check-coverage
+FM_TEST_COVERAGE ok total=195 parallel=24 parallel_max_ms=431263 parallel_imbalance_ms=33958 parallel_unhinted=0 serial=158 serial_shards=5 serial_unhinted=12 herdr=13
+  exit=0
+$ tests/fm-lanes-only.test.sh   (the 4 lane/scheduling tests from tests/fm-test-run.test.sh)
+  ok - proven-isolated scheduling ignores parallel hints
+  ok - family, all, changed, and script selections ignore parallel hints
+  ok - portable shard union, disjointness, and coverage guard hold
+  not ok - parallel lanes differ by 33958ms against a 431263ms worst lane, more than 5%
+  exit=1
+
+=== M3c boundary: small LPT-ordered move (grok 6.5s lane1->lane2, ~13s imbalance, inside the 5% tolerance) ===
+$ bin/fm-test-run.sh --check-coverage
+FM_TEST_COVERAGE ok total=195 parallel=24 parallel_max_ms=420862 parallel_imbalance_ms=13156 parallel_unhinted=0 serial=158 serial_shards=5 serial_unhinted=12 herdr=13
+  exit=0
+$ tests/fm-lanes-only.test.sh   (the 4 lane/scheduling tests from tests/fm-test-run.test.sh)
+  ok - proven-isolated scheduling ignores parallel hints
+  ok - family, all, changed, and script selections ignore parallel hints
+  ok - portable shard union, disjointness, and coverage guard hold
+  ok - portable parallel lanes are fully hinted and packed within 5% of each other
+  exit=0
+
