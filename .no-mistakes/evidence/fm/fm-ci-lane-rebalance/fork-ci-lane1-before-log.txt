@@ -1,0 +1,9 @@
+2026-09-11T07:08:52.8561854Z FM_TEST_END 2026-09-11T07:08:52Z tests/fm-x-mode.test.sh exit=0 duration_ms=30807 gate_skip=false
+2026-09-11T07:09:09.7758657Z FM_TEST_END 2026-09-11T07:09:09Z tests/fm-cd-pretool-check.test.sh exit=0 duration_ms=16887 gate_skip=false
+2026-09-11T07:14:31.6936788Z FM_TEST_END 2026-09-11T07:14:31Z tests/fm-captain-hold-lifecycle.test.sh exit=0 duration_ms=321884 gate_skip=false
+2026-09-11T07:14:49.2925169Z ok - a plain script list defaults to bounded automatic concurrency without an automatic timeout
+2026-09-11T07:16:03.1470568Z ok - --per-script-timeout-secs turns a hung script into a bounded failure
+2026-09-11T07:16:07.5109396Z FM_TEST_END 2026-09-11T07:16:07Z tests/fm-test-run.test.sh exit=0 duration_ms=95781 gate_skip=false
+2026-09-11T07:16:09.8305597Z FM_TEST_END 2026-09-11T07:16:09Z tests/fm-composer-ghost.test.sh exit=0 duration_ms=2284 gate_skip=false
+2026-09-11T07:16:16.7400010Z FM_TEST_END 2026-09-11T07:16:16Z tests/fm-grok-harness.test.sh exit=0 duration_ms=6872 gate_skip=false
+2026-09-11T07:18:18.7461042Z ##[error]The operation was canceled.

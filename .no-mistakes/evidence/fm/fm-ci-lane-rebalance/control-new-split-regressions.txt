@@ -1,0 +1,13 @@
+## Control: unmodified target runner in the same scratch driver (expect ok)
+$ test_portable_shard_union_and_coverage_guard
+ok - portable shard union, disjointness, and coverage guard hold
+exit=0
+$ test_portable_parallel_lanes_stay_duration_balanced
+ok - portable parallel lanes are fully hinted and packed within 5% of each other
+exit=0
+$ test_list_scheduled_proven_isolated_uses_serial_weights
+ok - proven-isolated scheduling ignores parallel hints
+exit=0
+$ test_list_scheduled_non_lane_selections_use_serial_weights
+ok - family, all, changed, and script selections ignore parallel hints
+exit=0

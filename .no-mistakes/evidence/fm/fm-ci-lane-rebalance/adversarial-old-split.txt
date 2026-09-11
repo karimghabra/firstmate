@@ -1,0 +1,4 @@
+## Adversarial: new hint table + OLD pre-fix lane membership (what PR #3 ran)
+$ bin/fm-test-run.sh --check-coverage
+FM_TEST_COVERAGE ok total=194 parallel=24 parallel_max_ms=624299 parallel_imbalance_ms=420030 parallel_unhinted=0 serial=157 serial_shards=5 serial_unhinted=11 herdr=13
+exit=0

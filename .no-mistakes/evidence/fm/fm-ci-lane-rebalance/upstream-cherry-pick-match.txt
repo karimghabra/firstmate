@@ -1,0 +1,7 @@
+## Upstream kunchenguid/firstmate@869ae90 vs fork b92e741 — normalized patch comparison (hunk bodies)
+upstream files: 4, local files: 4
+diff --git a/.github/workflows/ci.yml b/.github/workflows/ci.yml
+diff --git a/bin/fm-test-run.sh b/bin/fm-test-run.sh
+diff --git a/docs/fm-test-portable-shards.md b/docs/fm-test-portable-shards.md
+diff --git a/tests/fm-test-run.test.sh b/tests/fm-test-run.test.sh
+RESULT: patch content identical

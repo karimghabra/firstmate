@@ -1,0 +1,7 @@
+## Adversarial: new regressions vs OLD lane split (expect FAIL)
+$ test_portable_shard_union_and_coverage_guard
+not ok - portable-parallel-1 membership must be stored longest-measured-first
+exit=1
+$ test_portable_parallel_lanes_stay_duration_balanced
+not ok - parallel lanes differ by 420030ms against a 624299ms worst lane, more than 5%
+exit=1

@@ -1,0 +1,19 @@
+## Adversarial: NEW split with the fm-lint.test.sh parallel hint removed
+$ bin/fm-test-run.sh --check-coverage
+FM_TEST_COVERAGE ok total=194 parallel=24 parallel_max_ms=414299 parallel_imbalance_ms=164292 parallel_unhinted=1 serial=157 serial_shards=5 serial_unhinted=11 herdr=13
+exit=0
+$ bin/fm-test-run.sh --list-scheduled --lane portable-parallel-1   (fm-lint falls back to its serial weight)
+tests/fm-pr-merge.test.sh
+tests/fm-test-run.test.sh
+tests/fm-lint.test.sh
+tests/fm-cd-pretool-check.test.sh
+tests/fm-pi-primary-types.test.sh
+tests/fm-grok-harness.test.sh
+tests/fm-composer-lib.test.sh
+tests/fm-review-diff.test.sh
+tests/fm-tmux-submit-busy.test.sh
+tests/fm-composer-ghost.test.sh
+tests/fm-brief.test.sh
+$ test_portable_parallel_lanes_stay_duration_balanced
+not ok - 1 proven-isolated scripts have no measured parallel hint, so the lanes are packed on a guess
+exit=1

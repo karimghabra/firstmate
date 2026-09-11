@@ -1,0 +1,15 @@
+## Non-parallel-lane selections: --list-scheduled output, base runner (8facd7c) vs target runner (b92e741), same test inventory
+identical  --list-scheduled --all (194 scripts)
+identical  --list-scheduled --proven-isolated (24 scripts)
+identical  --list-scheduled --family pure-contract-unit (35 scripts)
+identical  --list-scheduled --lane portable-serial (157 scripts)
+identical  --list-scheduled --lane portable-serial-1of5 (31 scripts)
+identical  --list-scheduled --lane portable-serial-2of5 (31 scripts)
+identical  --list-scheduled --lane portable-serial-3of5 (32 scripts)
+identical  --list-scheduled --lane portable-serial-4of5 (31 scripts)
+identical  --list-scheduled --lane portable-serial-5of5 (32 scripts)
+identical  --list-scheduled --lane real-herdr-gated (13 scripts)
+
+## Parallel lanes: --list membership is a repartition of the same 24-script set
+2cc152cbe917cd41328646552a6e99e0301325ca7dbeb86cbe892f426f352334  -
+2cc152cbe917cd41328646552a6e99e0301325ca7dbeb86cbe892f426f352334  -
