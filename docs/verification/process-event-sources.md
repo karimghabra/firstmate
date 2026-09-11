@@ -80,9 +80,10 @@ $ for i in 1 2 3; do quota-axi --json | jq -r '.generatedAt + "  five_hour=" + (
 ```
 
 So a refresh watch that fires whenever the observed boundary is strictly later than the recorded one reports a turnover that never happened; an early build of `bin/fm-procevent-quota.sh --refresh` did exactly that against this account within three live polls.
-That is why the fire condition requires the boundary to advance by at least `--min-advance` seconds (default 300) and the recorded boundary to have elapsed by the snapshot's own `generatedAt`.
+That is why the fire condition requires the recorded boundary to have elapsed by the snapshot's own `generatedAt`, and a window that still reports a boundary ahead of that instant to have advanced by a fixed floor of at least 300 seconds.
 A real turnover advances by the window's whole length - 18000 seconds for the `five_hour` window above - so the floor rejects the jitter with several orders of magnitude to spare.
-`tests/fm-procevent-quota.test.sh` pins both tests with scripted snapshots, including this exact jitter shape.
+A window that reset and has not been used since reports no `resetsAt` at all (quota-axi's own pace code describes a Claude `five_hour` window before its first request this way), so once the recorded boundary has elapsed that shape, or a boundary already behind `generatedAt`, counts as a turnover without the floor.
+`tests/fm-procevent-quota.test.sh` pins each of these with scripted snapshots, including this jitter shape and the resetless one.
 
 ## The loss limitation this runner cannot close
 

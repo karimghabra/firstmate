@@ -61,7 +61,8 @@ For the opposite edge - a quota window turning over, so a fleet that stopped dis
 bin/fm-procevent-quota.sh arm --refresh [--interval <secs>] [--provider <provider>]
 ```
 
-It pins one window, records that window's reset boundary durably, and wakes when the boundary has elapsed, the window reports a materially later one, and headroom is back.
+It pins the binding window - the one whose exhaustion stopped dispatch, read from `quotaSemantics.effectiveAvailability` - records that window's reset boundary durably, and wakes when that boundary has elapsed, the window has turned over, and headroom is back.
+A window that refreshes sooner without being binding never wakes it.
 Arm it whenever quota exhaustion is what stopped work, because nothing else notices the refresh and queued work simply waits.
 The wake is only a wake: what to dispatch on a refreshed window is your judgment about the queue, and is never bound into the watch.
 

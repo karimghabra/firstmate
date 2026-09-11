@@ -239,27 +239,37 @@ ok "poll preserves unknown headroom under known semantics"
 
 REFRESH_LAB="$LAB/refresh"
 mkdir -p "$REFRESH_LAB"
+# The refresh watch's durable baseline is persisted state this adapter owns.
+BASELINE="$REFRESH_LAB/state/quota-refresh/quota-refresh-claude.baseline"
 
-# claude_snapshot <five_hour-resetsAt> <five_hour-percentRemaining>
-# One schema-five snapshot whose claude provider carries a soon-resetting
-# session window and a far-off weekly window.
-# Boundaries sit in the past so the elapsed-boundary requirement is met by the
-# wall clock, and the weekly sibling resets later so auto-selection still has a
-# wrong answer available to pick.
-claude_snapshot() {
-  printf '{"schemaVersion":5,"providers":[{"provider":"claude","windows":[{"id":"five_hour","label":"session","kind":"session","resetsAt":"%s","percentRemaining":%s},{"id":"seven_day","label":"week","kind":"weekly","resetsAt":"2025-06-17T19:00:00Z","percentRemaining":90}],"quotaSemantics":{"status":"known","effectiveAvailability":[{"scope":"all_models","status":"known","effectivePercentRemaining":%s,"runway":{"status":"through_reset"}}]}}]}\n' "$1" "$2" "$2"
-}
-
-# claude_generated_snapshot <generatedAt> <five_hour-resetsAt> <five_hour-percentRemaining>
-# The same shape carrying quota-axi's own snapshot instant, which is what the
-# elapsed-boundary test reads in preference to this host's clock.
-claude_generated_snapshot() {
-  printf '{"schemaVersion":5,"generatedAt":"%s","providers":[{"provider":"claude","windows":[{"id":"five_hour","resetsAt":"%s","percentRemaining":%s}],"quotaSemantics":{"status":"known","effectiveAvailability":[{"scope":"all_models","status":"known","effectivePercentRemaining":%s,"runway":{"status":"through_reset"}}]}}]}\n' "$1" "$2" "$3" "$3"
+# claude_snap <generatedAt> <five_hour-resetsAt> <five_hour-%> [<seven_day-resetsAt> <seven_day-%>]
+# One schema-five claude snapshot carrying quota-axi's own snapshot instant,
+# which is what the elapsed-boundary test reads in preference to this host's
+# clock. A resetsAt of `-` omits the field, which is how quota-axi reports a
+# window that reset and has not been used since. effectiveAvailability is
+# derived the way quota-axi derives it: the lowest windows are limiting, and a
+# window at zero makes the runway exhausted_now.
+claude_snap() {
+  jq -nc --arg gen "$1" --arg r5 "$2" --argjson p5 "$3" \
+    --arg r7 "${4:-2030-06-17T19:00:00Z}" --argjson p7 "${5:-90}" '
+    def win($id; $r; $p):
+      {id: $id, percentRemaining: $p} + (if $r == "-" then {} else {resetsAt: $r} end);
+    [win("five_hour"; $r5; $p5), win("seven_day"; $r7; $p7)] as $w
+    | ([$w[].percentRemaining] | min) as $min
+    | {schemaVersion: 5, generatedAt: $gen,
+       providers: [{provider: "claude", windows: $w,
+         quotaSemantics: {status: "known", effectiveAvailability: [
+           {scope: "all_models", status: "known", effectivePercentRemaining: $min,
+            limitingWindowIds: [$w[] | select(.percentRemaining == $min) | .id],
+            runway: (if $min == 0
+                     then {status: "exhausted_now",
+                           limitingWindowId: ([$w[] | select(.percentRemaining == 0) | .id] | first)}
+                     else {status: "through_reset"} end)}]}}]}'
 }
 
 # claude_windows_snapshot <windows-json>
-# The same provider shape with a caller-supplied windows array, for readings the
-# adapter must treat as unknown rather than as a turnover.
+# A claude snapshot with a caller-supplied windows array and no generatedAt, for
+# readings the adapter must treat as unknown rather than as a turnover.
 claude_windows_snapshot() {
   printf '{"schemaVersion":5,"providers":[{"provider":"claude","windows":%s,"quotaSemantics":{"status":"known","effectiveAvailability":[{"scope":"all_models","status":"known","effectivePercentRemaining":50,"runway":{"status":"through_reset"}}]}}]}\n' "$1"
 }
@@ -278,7 +288,7 @@ refresh_poll() { # <script-file> [extra poll args...]
   bound env FM_HOME="$REFRESH_LAB/home" FM_STATE_OVERRIDE="$REFRESH_LAB/state" \
     QUOTA_AXI_COUNT="$COUNT" QUOTA_AXI_SCRIPT="$script" PATH="$FAKEBIN:$PATH" \
     "$BIN/fm-procevent-quota.sh" poll --refresh --interval 0.01 --provider claude \
-    --window '' --restore 25 --timeout 1 "$@"
+    --window '' --timeout 1 "$@"
 }
 
 refresh_arm() { # <script-file> [extra arm args...]
@@ -296,39 +306,86 @@ refresh_state() { # <subcommand> [args...]
 
 reset_refresh_home() { rm -rf "${REFRESH_LAB:?}/home" "${REFRESH_LAB:?}/state"; }
 
-printf '%s\n' "$help" | grep -Fq 'fm-procevent-quota.sh arm --refresh [--interval <secs>] [--provider <provider>] [--window <window-id>] [--restore <percent>]' \
+detail_of() { printf '%s\n' "$1" | sed -n 's/^detail: //p'; }
+
+printf '%s\n' "$help" | grep -Fq 'fm-procevent-quota.sh arm --refresh [--interval <secs>] [--provider <provider>] [--window <window-id>]' \
   || fail "help omitted the refresh arm usage"
 ok "help documents the refresh watch"
 
-# A boundary that actually turns over fires, and the auto-selected window is the
-# soonest-resetting one rather than the far-off weekly window.
+claude_snap 2025-01-10T21:00:00Z 2025-01-10T21:50:00Z 4 > "$REFRESH_LAB/before"
+claude_snap 2025-01-11T01:00:00Z 2025-01-11T02:50:00Z 80 > "$REFRESH_LAB/after"
+
+# A boundary that actually turns over fires, on the binding window.
 reset_refresh_home
-{ claude_snapshot 2025-01-10T21:50:00Z 4
-  claude_snapshot 2025-01-11T02:50:00Z 100
+{ claude_snap 2025-01-10T21:00:00Z 2025-01-10T21:50:00Z 4
+  claude_snap 2025-01-10T21:51:00Z 2025-01-11T02:50:00Z 100
 } > "$REFRESH_LAB/turnover"
 out=$(refresh_poll "$REFRESH_LAB/turnover")
 printf '%s\n' "$out" | grep -qx 'status: refreshed' || fail "a window turnover did not wake as refreshed"
 printf '%s\n' "$out" | grep -qx 'quota: quota-refresh-claude' || fail "refresh watch used the wrong source id"
 printf '%s\n' "$out" | grep -qx 'condition_polls: 2' || fail "refresh fired on the wrong poll"
-detail=$(printf '%s\n' "$out" | sed -n 's/^detail: //p')
+detail=$(detail_of "$out")
 printf '%s\n' "$detail" | jq -e '
   .provider == "claude" and
   .window == "five_hour" and
   .previous.resetsAt == "2025-01-10T21:50:00Z" and
   .previous.percentRemaining == 4 and
   .current.resetsAt == "2025-01-11T02:50:00Z" and
-  .current.percentRemaining == 100 and
-  .boundaryAdvancedSeconds == 18000
+  .current.percentRemaining == 100
 ' >/dev/null || fail "refresh detail did not describe the turnover: $detail"
-ok "refresh fires on a crossed reset boundary and names the soonest window"
+ok "refresh fires on a crossed reset boundary of the binding window"
+
+# An idle fleet: the exhausted window resets and nothing uses it, so quota-axi
+# reports it with no resetsAt at all. That is the turnover the watch exists for.
+# Poll 2 carries the same resetless shape before the recorded boundary, so a
+# watch that skipped the elapsed test would fire there instead.
+reset_refresh_home
+{ claude_snap 2025-01-10T21:00:00Z 2025-01-10T21:50:00Z 0
+  claude_snap 2025-01-10T21:49:00Z - 100
+  claude_snap 2025-01-10T21:51:00Z - 100
+} > "$REFRESH_LAB/resetless"
+out=$(refresh_poll "$REFRESH_LAB/resetless")
+printf '%s\n' "$out" | grep -qx 'status: refreshed' || fail "a reset window with no new boundary did not wake"
+printf '%s\n' "$out" | grep -qx 'condition_polls: 3' \
+  || fail "a resetless reading fired before the recorded boundary elapsed"
+detail=$(detail_of "$out")
+printf '%s\n' "$detail" | jq -e '
+  .window == "five_hour" and .current.resetsAt == null and .current.percentRemaining == 100
+' >/dev/null || fail "resetless refresh detail was wrong: $detail"
+[ ! -e "$BASELINE" ] || fail "a resetless refresh left a baseline that would replay it"
+ok "refresh fires when the binding window resets with no new boundary yet"
+
+# The binding window is the one whose exhaustion stops dispatch, not the one
+# that resets soonest. five_hour turns over at poll 2 with full headroom, but
+# seven_day is exhausted, so nothing can resume until seven_day turns over.
+reset_refresh_home
+{ claude_snap 2025-01-10T21:00:00Z 2025-01-10T21:50:00Z 70 2025-01-13T19:00:00Z 0
+  claude_snap 2025-01-10T21:51:00Z 2025-01-11T02:50:00Z 100 2025-01-13T19:00:00Z 0
+  claude_snap 2025-01-13T19:01:00Z 2025-01-14T00:00:00Z 100 2025-01-20T19:00:00Z 100
+} > "$REFRESH_LAB/binding"
+out=$(refresh_poll "$REFRESH_LAB/binding")
+printf '%s\n' "$out" | grep -qx 'status: refreshed' || fail "binding script never reached its turnover"
+printf '%s\n' "$out" | grep -qx 'condition_polls: 3' \
+  || fail "a sooner non-binding window turnover fired the refresh watch"
+detail=$(detail_of "$out")
+printf '%s\n' "$detail" | jq -e '.window == "seven_day"' >/dev/null \
+  || fail "the refresh watch did not report the binding window: $detail"
+# When several windows are exhausted together, headroom returns only once the
+# last of them turns over, so that is the one pinned.
+reset_refresh_home
+claude_snap 2025-01-10T21:00:00Z 2025-01-10T21:50:00Z 0 2025-01-13T19:00:00Z 0 > "$REFRESH_LAB/both"
+refresh_arm "$REFRESH_LAB/both" >/dev/null || fail "arming with two exhausted windows failed"
+grep -qx 'window: seven_day' "$BASELINE" \
+  || fail "tied binding windows did not pin the one resetting last"
+ok "refresh tracks the binding window rather than the soonest reset"
 
 # Headroom rising steeply inside the SAME window is not a refresh. Poll 2 alone
 # would fire a watch that only compared percentages.
 reset_refresh_home
-{ claude_snapshot 2025-01-10T21:50:00Z 4
-  claude_snapshot 2025-01-10T21:50:00Z 95
-  claude_snapshot 2025-01-10T21:50:00Z 99
-  claude_snapshot 2025-01-11T02:50:00Z 100
+{ claude_snap 2025-01-10T21:00:00Z 2025-01-10T21:50:00Z 4
+  claude_snap 2025-01-10T21:10:00Z 2025-01-10T21:50:00Z 95
+  claude_snap 2025-01-10T21:20:00Z 2025-01-10T21:50:00Z 99
+  claude_snap 2025-01-10T21:51:00Z 2025-01-11T02:50:00Z 100
 } > "$REFRESH_LAB/fluctuation"
 out=$(refresh_poll "$REFRESH_LAB/fluctuation")
 printf '%s\n' "$out" | grep -qx 'status: refreshed' || fail "fluctuation script never reached its turnover"
@@ -339,11 +396,8 @@ ok "refresh ignores headroom fluctuation inside the recorded window"
 # A boundary crossed while nothing was polling is still detected, because the
 # recorded baseline is durable rather than re-established per poll.
 reset_refresh_home
-claude_snapshot 2025-01-10T21:50:00Z 4 > "$REFRESH_LAB/before"
 refresh_arm "$REFRESH_LAB/before" >/dev/null || fail "arming the refresh watch failed"
-refresh_state baseline --provider claude | grep -qx 'window: five_hour' \
-  || fail "arm did not record the window baseline"
-claude_snapshot 2025-01-11T02:50:00Z 100 > "$REFRESH_LAB/after"
+grep -qx 'window: five_hour' "$BASELINE" || fail "arm did not record the window baseline"
 out=$(refresh_poll "$REFRESH_LAB/after")
 printf '%s\n' "$out" | grep -qx 'status: refreshed' \
   || fail "a boundary crossed while nothing polled was not detected"
@@ -351,15 +405,15 @@ printf '%s\n' "$out" | grep -qx 'condition_polls: 1' \
   || fail "the missed turnover was not detected on the very first poll"
 ok "refresh detects a boundary crossed while nothing was polling"
 
-# Unknown and unreadable readings never fire. Polls 2 and 3 both carry an
-# advanced-looking boundary, so a watch that skipped either validation would
-# fire before poll 4.
+# Unknown and unreadable readings never fire. Polls 2 and 3 both carry full
+# headroom after the recorded boundary, so a watch that skipped either
+# validation would fire before poll 4.
 reset_refresh_home
 refresh_arm "$REFRESH_LAB/before" >/dev/null || fail "arming for the unknown-reading case failed"
 { claude_windows_snapshot '[]'
   claude_windows_snapshot '[{"id":"five_hour","resetsAt":"whenever","percentRemaining":100}]'
   claude_windows_snapshot '[{"id":"five_hour","resetsAt":"2025-01-11T02:50:00Z","percentRemaining":"100"}]'
-  claude_snapshot 2025-01-11T02:50:00Z 100
+  claude_snap 2025-01-10T21:51:00Z 2025-01-11T02:50:00Z 100
 } > "$REFRESH_LAB/unknown"
 out=$(refresh_poll "$REFRESH_LAB/unknown")
 printf '%s\n' "$out" | grep -qx 'status: refreshed' || fail "unknown-reading script never reached its turnover"
@@ -370,17 +424,17 @@ ok "refresh never fires on an unknown or unreadable window reading"
 # Prove each unknown reading above is genuinely rejected on its own, not just
 # outrun by the poll order.
 reset_refresh_home
-refresh_arm "$REFRESH_LAB/before" >/dev/null || fail "arming for the per-reading case failed"
 for unreadable in \
   '[]' \
   '[{"id":"five_hour","resetsAt":"whenever","percentRemaining":100}]' \
   '[{"id":"five_hour","resetsAt":"2025-01-11T02:50:00Z","percentRemaining":"100"}]' \
   '[{"id":"five_hour","resetsAt":"2025-01-11T02:50:00Z"}]' \
+  '[{"id":"five_hour","percentRemaining":null}]' \
   '[{"id":"seven_day","resetsAt":"2025-01-11T02:50:00Z","percentRemaining":100}]'
 do
   refresh_arm "$REFRESH_LAB/before" >/dev/null || fail "re-arming for $unreadable failed"
   { claude_windows_snapshot "$unreadable"
-    claude_snapshot 2025-01-11T02:50:00Z 100
+    claude_snap 2025-01-10T21:51:00Z 2025-01-11T02:50:00Z 100
   } > "$REFRESH_LAB/single-unknown"
   out=$(refresh_poll "$REFRESH_LAB/single-unknown")
   printf '%s\n' "$out" | grep -qx 'condition_polls: 2' \
@@ -391,9 +445,9 @@ ok "each unreadable window shape is rejected individually"
 # A boundary that advanced without materially restoring headroom keeps waiting,
 # and the recorded boundary stays put so the restored reading still fires.
 reset_refresh_home
-{ claude_snapshot 2025-01-10T21:50:00Z 4
-  claude_snapshot 2025-01-11T02:50:00Z 5
-  claude_snapshot 2025-01-11T02:50:00Z 60
+{ claude_snap 2025-01-10T21:00:00Z 2025-01-10T21:50:00Z 4
+  claude_snap 2025-01-10T21:51:00Z 2025-01-11T02:50:00Z 5
+  claude_snap 2025-01-10T21:52:00Z 2025-01-11T02:50:00Z 60
 } > "$REFRESH_LAB/starved"
 out=$(refresh_poll "$REFRESH_LAB/starved")
 printf '%s\n' "$out" | grep -qx 'status: refreshed' || fail "starved script never reached restored headroom"
@@ -402,70 +456,80 @@ printf '%s\n' "$out" | grep -qx 'condition_polls: 3' \
 ok "refresh waits for materially restored headroom, then still fires"
 
 # quota-axi recomputes resetsAt on every call, and the observed jitter crosses
-# whole seconds. A bare strictly-later comparison reported a turnover that never
-# happened, so the boundary must move by more than the jitter floor.
+# whole seconds. Here the recorded boundary was a jittered-early reading, so
+# poll 2 is past it by the snapshot clock while the window it reports still
+# lies one second ahead. Only the advance floor tells that apart from a real
+# turnover; a bare strictly-later comparison fires on poll 2.
 reset_refresh_home
-{ claude_snapshot 2025-01-10T21:49:59Z 37
-  claude_snapshot 2025-01-10T21:50:00Z 36
-  claude_snapshot 2025-01-10T21:50:00Z 99
-  claude_snapshot 2025-01-11T02:50:00Z 100
+{ claude_snap 2025-01-10T21:00:00Z 2025-01-10T21:49:59Z 37
+  claude_snap 2025-01-10T21:49:59.500Z 2025-01-10T21:50:00Z 36
+  claude_snap 2025-01-10T21:51:00Z - 100
 } > "$REFRESH_LAB/jitter"
 out=$(refresh_poll "$REFRESH_LAB/jitter")
 printf '%s\n' "$out" | grep -qx 'status: refreshed' || fail "jitter script never reached its turnover"
-printf '%s\n' "$out" | grep -qx 'condition_polls: 4' \
+printf '%s\n' "$out" | grep -qx 'condition_polls: 3' \
   || fail "sub-second resetsAt jitter fired the refresh watch"
 ok "refresh ignores quota-axi's own resetsAt recomputation jitter"
 
 # A boundary that has not elapsed yet is not a turnover, however far ahead the
 # newly reported one sits.
 reset_refresh_home
-{ claude_generated_snapshot 2025-01-10T18:00:00Z 2030-01-10T21:50:00Z 4
-  claude_generated_snapshot 2025-01-10T19:00:00Z 2030-01-11T02:50:00Z 100
-  claude_generated_snapshot 2030-01-11T00:00:00Z 2030-01-11T02:50:00Z 100
+{ claude_snap 2025-01-10T18:00:00Z 2025-01-10T21:50:00Z 4
+  claude_snap 2025-01-10T19:00:00Z 2025-01-11T02:50:00Z 100
+  claude_snap 2025-01-10T21:51:00Z 2025-01-11T02:50:00Z 100
 } > "$REFRESH_LAB/notyet"
 out=$(refresh_poll "$REFRESH_LAB/notyet")
 printf '%s\n' "$out" | grep -qx 'status: refreshed' || fail "not-yet script never reached its turnover"
 printf '%s\n' "$out" | grep -qx 'condition_polls: 3' \
   || fail "refresh fired before the recorded boundary had elapsed"
-detail=$(printf '%s\n' "$out" | sed -n 's/^detail: //p')
-printf '%s\n' "$detail" | jq -e '.minAdvanceSeconds == 300' >/dev/null \
-  || fail "refresh detail omitted the advance floor it applied: $detail"
 ok "refresh waits for the recorded boundary to actually elapse"
 
-# The advance floor is configurable, and a watch armed with a smaller one sees
-# the same jitter as a turnover - which is what makes the default load-bearing.
-reset_refresh_home
-{ claude_snapshot 2025-01-10T21:49:59Z 37
-  claude_snapshot 2025-01-10T21:50:00Z 36
-} > "$REFRESH_LAB/tiny"
-out=$(refresh_poll "$REFRESH_LAB/tiny" --min-advance 1)
-printf '%s\n' "$out" | grep -qx 'condition_polls: 2' \
-  || fail "--min-advance 1 did not lower the advance floor"
-ok "the advance floor is configurable"
-
-# Firing advances the recorded boundary, so re-arming without retiring watches
-# the next turnover instead of replaying the one already reported.
+# Firing advances the recorded boundary, so polling again watches the next
+# turnover instead of replaying the one already reported.
 reset_refresh_home
 out=$(refresh_poll "$REFRESH_LAB/turnover")
 printf '%s\n' "$out" | grep -qx 'condition_polls: 2' || fail "replay setup did not fire as expected"
-{ claude_snapshot 2025-01-11T02:50:00Z 100
-  claude_snapshot 2025-01-11T07:50:00Z 100
+{ claude_snap 2025-01-10T22:00:00Z 2025-01-11T02:50:00Z 100
+  claude_snap 2025-01-11T02:51:00Z 2025-01-11T07:50:00Z 100
 } > "$REFRESH_LAB/replay"
 out=$(refresh_poll "$REFRESH_LAB/replay")
 printf '%s\n' "$out" | grep -qx 'status: refreshed' || fail "replay script never reached its next turnover"
 printf '%s\n' "$out" | grep -qx 'condition_polls: 2' \
   || fail "an already-reported refresh was replayed instead of advancing the boundary"
-detail=$(printf '%s\n' "$out" | sed -n 's/^detail: //p')
+detail=$(detail_of "$out")
 printf '%s\n' "$detail" | jq -e '.current.resetsAt == "2025-01-11T07:50:00Z"' >/dev/null \
   || fail "the replayed wake reported the wrong boundary: $detail"
 ok "a fired refresh advances the recorded boundary"
+
+# A baseline left behind by an earlier watch never stands in for the window this
+# watch asked for. The five_hour baseline from the turnover above would fire on
+# poll 2; the requested seven_day window only turns over on poll 3.
+{ claude_snap 2025-01-11T03:00:00Z 2025-01-11T07:50:00Z 100 2025-01-13T19:00:00Z 40
+  claude_snap 2025-01-11T07:51:00Z 2025-01-11T12:50:00Z 100 2025-01-13T19:00:00Z 40
+  claude_snap 2025-01-13T19:01:00Z 2025-01-14T00:00:00Z 100 2025-01-20T19:00:00Z 100
+} > "$REFRESH_LAB/stale"
+out=$(refresh_poll "$REFRESH_LAB/stale" --window seven_day)
+printf '%s\n' "$out" | grep -qx 'condition_polls: 3' \
+  || fail "a stale baseline for another window drove the refresh watch"
+detail=$(detail_of "$out")
+printf '%s\n' "$detail" | jq -e '.window == "seven_day"' >/dev/null \
+  || fail "the refresh watch did not watch the requested window: $detail"
+# Arming starts a fresh baseline even when quota-axi cannot be read at arm time,
+# so the first poll pins the window this watch asks for instead of reusing one.
+[ -f "$BASELINE" ] || fail "stale-baseline setup left no baseline to discard"
+printf 'not json\n' > "$REFRESH_LAB/garbage"
+out=$(refresh_arm "$REFRESH_LAB/garbage") || fail "arming with an unreadable snapshot failed"
+printf '%s\n' "$out" | grep -qx 'baseline: deferred to the first poll' \
+  || fail "arm did not report the deferred baseline: $out"
+[ ! -e "$BASELINE" ] || fail "a deferred arm kept an earlier watch's baseline"
+ok "a baseline from another watch is never reused"
 
 # A snapshot this adapter cannot read is an error outcome, not a refresh.
 reset_refresh_home
 rm -f "$COUNT"
 out=$(env FM_HOME="$REFRESH_LAB/home" FM_STATE_OVERRIDE="$REFRESH_LAB/state" \
   QUOTA_AXI_MALFORMED=schema QUOTA_AXI_COUNT="$COUNT" PATH="$FAKEBIN:$PATH" \
-  "$BIN/fm-procevent-quota.sh" poll --refresh --interval 1 --provider claude --window '' --restore 25 --timeout 1)
+  "$BIN/fm-procevent-quota.sh" poll --refresh --interval 1 --provider claude --window '' --timeout 1)
 printf '%s\n' "$out" | grep -qx 'status: error' || fail "a malformed snapshot did not report an error"
 printf '%s\n' "$out" | grep -qx 'condition_polls: 1' || fail "a malformed snapshot did not stop immediately"
 ok "refresh reports an unreadable snapshot as an error rather than a refresh"
@@ -475,14 +539,14 @@ ok "refresh reports an unreadable snapshot as an error rather than a refresh"
 reset_refresh_home
 refresh_arm "$REFRESH_LAB/before" >/dev/null || fail "first refresh arm failed"
 refresh_arm "$REFRESH_LAB/before" >/dev/null || fail "second refresh arm failed"
-[ -n "$(refresh_state baseline --provider claude)" ] || fail "re-arming lost the baseline"
+[ -f "$BASELINE" ] || fail "re-arming lost the baseline"
 out=$(refresh_state retire --refresh --provider claude)
 [ "$out" = "retired: quota-refresh-claude" ] || fail "first refresh retire reported: $out"
 out=$(refresh_state retire --refresh --provider claude)
 [ "$out" = "retired: quota-refresh-claude" ] || fail "second refresh retire reported: $out"
-[ -z "$(refresh_state baseline --provider claude)" ] || fail "retire left the baseline behind"
+[ ! -e "$BASELINE" ] || fail "retire left the baseline behind"
 refresh_arm "$REFRESH_LAB/after" >/dev/null || fail "re-arming after retire failed"
-refresh_state baseline --provider claude | grep -qx 'resets_at: 2025-01-11T02:50:00Z' \
+grep -qx 'resets_at: 2025-01-11T02:50:00Z' "$BASELINE" \
   || fail "re-arming after retire did not re-establish the baseline"
 ok "refresh arm and retire are idempotent"
 
@@ -502,15 +566,13 @@ if err=$(refresh_arm "$REFRESH_LAB/before" --threshold 10 2>&1); then
 fi
 printf '%s\n' "$err" | grep -Fq 'error: --threshold belongs to the falling-edge watch' \
   || fail "--threshold with --refresh returned: $err"
-for bad in --restore --window; do
-  rm -f "$COUNT"
-  if err=$(env FM_HOME="$REFRESH_LAB/home" FM_STATE_OVERRIDE="$REFRESH_LAB/state" \
-    QUOTA_AXI_COUNT="$COUNT" QUOTA_AXI_SCRIPT="$REFRESH_LAB/before" PATH="$FAKEBIN:$PATH" \
-    "$BIN/fm-procevent-quota.sh" arm --provider claude "$bad" 25 2>&1); then
-    fail "$bad was accepted without --refresh"
-  fi
-  [ "$err" = "error: $bad needs --refresh" ] || fail "$bad without --refresh returned: $err"
-done
+rm -f "$COUNT"
+if err=$(env FM_HOME="$REFRESH_LAB/home" FM_STATE_OVERRIDE="$REFRESH_LAB/state" \
+  QUOTA_AXI_COUNT="$COUNT" QUOTA_AXI_SCRIPT="$REFRESH_LAB/before" PATH="$FAKEBIN:$PATH" \
+  "$BIN/fm-procevent-quota.sh" arm --provider claude --window five_hour 2>&1); then
+  fail "--window was accepted without --refresh"
+fi
+[ "$err" = "error: --window needs --refresh" ] || fail "--window without --refresh returned: $err"
 if err=$(refresh_arm "$REFRESH_LAB/before" --window ninety_day 2>&1); then
   fail "an unknown explicit window unexpectedly armed a watch"
 fi
