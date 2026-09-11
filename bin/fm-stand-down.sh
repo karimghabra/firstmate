@@ -21,9 +21,13 @@
 # --release retires it, which is what resuming or landing the work calls for; a
 # relaunch (bin/fm-spawn.sh --relaunch) retires it on its own.
 #
-# Recording a stand-down changes no backlog state. The item stays in flight
-# because the work is still open, which is exactly the distinction teardown could
-# not express - AGENTS.md section 7 keeps teardown for landed work only.
+# Recording a stand-down changes no backlog state and lands, discards, or unblocks
+# nothing. The item stays in flight because the work is still open, which is
+# exactly the distinction teardown could not express - AGENTS.md section 7 keeps
+# teardown for landed work only. This is not a cleanup shortcut and not a way to
+# quieten a task that is actually stuck: a wedged-but-running worker is refused
+# here and still needs recovery. bin/fm-stand-down-lib.sh's header is the full
+# list of what this does not do, and of the one part no tool can enforce.
 set -u
 
 SCRIPT_DIR="$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)"
@@ -50,8 +54,12 @@ Usage:
 
 --reason refuses while the agent reads positively alive; stop it first with
 bin/fm-control.sh <task-id> exit, then record why. --release retires the record,
-and bin/fm-spawn.sh --relaunch retires it on its own. No backlog state changes:
-the item stays in flight because the work is still open.
+and bin/fm-spawn.sh --relaunch retires it on its own.
+
+It records no completion, discards no work, and is not a cleanup shortcut: the
+item stays in flight because the work is still open, and unlanded work stays
+unlanded. A wedged-but-running worker cannot be quietened with it - recording is
+refused while the agent reads alive, and that worker still needs recovery.
 EOF
 }
 

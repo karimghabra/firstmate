@@ -53,8 +53,18 @@ bin/fm-stand-down.sh <task-id> --reason "<why it was stopped>"
 ```
 
 The digest then reports that endpoint as stood down with the reason rather than as dead, so it stops arriving as a recovery trigger every session, and `bin/fm-crew-state.sh <id>` reports it as paused from the stood-down source.
-Nothing else moves: the item stays in flight because the work is still open, the worker's own status log is untouched, and unlanded work is still unlanded.
-The command refuses while the agent is still running, so stop it first with `bin/fm-control.sh <task-id> exit` and then record why.
+
+Be clear with yourself about what you have and have not just done:
+
+- You have recorded NO completion. There is no backlog transition at all; the item stays in flight because the work is still open.
+- You have landed, discarded, and unblocked nothing. The branch is untouched, unlanded work is still unlanded, and this task still has to be finished or landed like any other open item.
+- You have not spoken for the worker. Its status log keeps exactly what it last wrote.
+- This is not a cleanup shortcut. If the work is landed, tear the task down; if it is not, all this changes is how the missing agent is reported.
+
+And never reach for it to quieten a task that is actually stuck.
+The command refuses while the agent reads alive, so a wedged-but-running worker cannot be silenced this way - stop it first with `bin/fm-control.sh <task-id> exit`, and only then, and only if the stop was deliberate, record why.
+No tool can read intent: a crash and a deliberate stop both leave a dead endpoint, so the reason you write IS the claim that this stop was on purpose.
+A worker that actually died is a failure to recover or report, not a stand-down.
 
 Retire the record when the work resumes or lands - `bin/fm-stand-down.sh <task-id> --release`, which `bin/fm-control.sh <task-id> relaunch` does for you - and use `--show` to read one back.
 A stood-down task is still yours to finish: revisit it whenever the decision it waits on arrives, exactly as you would any other open item.

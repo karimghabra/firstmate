@@ -93,39 +93,52 @@ test_record_show_release_round_trip() {
   pass "record, show, and release round-trip through the stored record"
 }
 
-# Recording changes the ENDPOINT's story and nothing else. The work stays open
-# and unlanded, which is the whole distinction teardown could not express, so a
-# stand-down must never touch the worker's own log or invent a completion.
+# Recording changes the ENDPOINT's story and NOTHING else. The work stays open and
+# unlanded, which is the whole distinction teardown could not express, so a
+# stand-down must never invent a completion, move the work, or speak for the
+# worker. This pins that as a whole-directory claim rather than a per-file one:
+# the only thing that may appear is the record itself.
 test_recording_touches_no_other_record() {
-  local d before
+  local d before_meta before_files after_files
   d=$(new_case leaves-records-alone)
   printf 'working: both branches pushed, waiting to land\n' > "$d/state/stood.status"
-  before=$(cat "$d/state/stood.meta")
+  before_meta=$(cat "$d/state/stood.meta")
+  before_files=$(cd "$d/state" && ls -A | sort)
   run_stand_down "$d" stood --reason "stopped on purpose" >/dev/null \
     || fail "recording was refused over a stopped agent"
-  assert_equals "$before" "$(cat "$d/state/stood.meta")" \
+
+  assert_equals "$before_meta" "$(cat "$d/state/stood.meta")" \
     "the task record is untouched by a stand-down"
   assert_grep "both branches pushed, waiting to land" "$d/state/stood.status" \
     "the worker's own status log is left exactly as the worker wrote it"
   assert_equals "1" "$(wc -l < "$d/state/stood.status")" \
     "no line is appended to the worker's log on its behalf"
-  pass "recording a stand-down leaves the task record and the worker's log untouched"
+  # Nothing else is created, so no completion, transition, or lifecycle record
+  # can be hiding behind the one file this is allowed to write.
+  after_files=$(cd "$d/state" && ls -A | sort)
+  assert_equals "$(printf '%s\nstood.stood-down' "$before_files" | sort)" "$after_files" \
+    "recording a stand-down wrote something other than its own record"
+  pass "recording a stand-down writes only its own record: no completion, no transition, no word put in the worker's mouth"
 }
 
 # --- the boundaries ---------------------------------------------------------
 
-# The one refusal that matters: a stand-down describes an agent that is ALREADY
-# stopped. If it could be recorded over a running agent it would become a way to
-# silence a live worker's alarm, which is the opposite of what it is for.
+# The one refusal that matters, and the reason it matters: a genuinely STUCK
+# crewmate is alive - looping, hung, waiting on nothing - and it is alarming
+# because it needs recovery. If a stand-down could be recorded over a running
+# agent it would become a way to silence exactly that alarm, which is the
+# opposite of what this record is for. A stand-down describes an agent that is
+# ALREADY stopped, so the live case is refused and stays alarming.
 test_refuses_to_record_over_a_live_agent() {
   local d out rc
   d=$(new_case live-agent)
-  out=$(FM_FAKE_TMUX_ALIVE=1 run_stand_down "$d" stood --reason "trying to silence a live worker" 2>&1) \
+  out=$(FM_FAKE_TMUX_ALIVE=1 run_stand_down "$d" stood --reason "trying to silence a wedged worker" 2>&1) \
     && rc=0 || rc=$?
   expect_code 1 "$rc" "recording over a live agent"
   assert_contains "$out" "still running" "the refusal names the reason"
+  assert_contains "$out" "exit" "the refusal names how to stop the agent first"
   assert_absent "$(fm_stand_down_path "$d/state" stood)" "a refused recording writes nothing"
-  pass "recording is refused while the agent is still running"
+  pass "a live - and so possibly wedged - worker cannot be quietened with a stand-down"
 }
 
 # An unreachable backend is not evidence the agent is alive, so it must not block

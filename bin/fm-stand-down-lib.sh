@@ -14,19 +14,42 @@
 # intent is what makes "stopped on purpose, still open" a state a supervisor can
 # read instead of a contradiction it has to re-derive every session.
 #
-# WHAT IT IS NOT. It is not a claim about the worker: the status log stays exactly
-# what the worker last wrote, untouched. It is not a backlog transition: the item
-# stays in flight, because the work is still open. It is not a pause: a `paused:`
-# wait clears on its own, and a stand-down clears only when someone resumes or
-# lands the work. And it is not authority to skip anything - unlanded work is
-# still unlanded, and teardown's landed-work test is untouched.
+# WHAT IT IS NOT. This is new surface on a safety path, so read this list before
+# reaching for it, and do not let its convenience widen past it:
 #
-# WHY IT CANNOT HIDE A REAL FAILURE. Every reader gates the record on positive
-# evidence that the endpoint is not alive. A stand-down record beside a live agent
-# is ignored, never honored, so a record left behind by a resumed task cannot
-# silence that task's next genuine death; bin/fm-spawn.sh's relaunch path retires
-# it outright for the same reason. An unreachable or unreadable endpoint is not
-# positive evidence of anything and keeps its existing unknown verdict.
+#   - It DOES NOT record a completion. It writes no backlog transition at all:
+#     the item stays in flight, because the work is still open. Recording a Done
+#     the work never reached, to quieten an alarm, is exactly the trade this
+#     record exists so that nobody has to make.
+#   - It DOES NOT discard, land, or unblock any work. Unlanded work stays
+#     unlanded, the branch is untouched, and teardown's landed-work proofs are
+#     unchanged - a stood-down task still has to be finished or landed like any
+#     other open item.
+#   - It DOES NOT speak for the worker. The status log keeps exactly what the
+#     worker last wrote; nothing is appended on its behalf.
+#   - It IS NOT a cleanup shortcut, and it is not teardown's little brother. If
+#     the work is landed, tear the task down. If it is not, this record changes
+#     only how the missing agent is REPORTED.
+#   - It IS NOT a declared pause. A `paused:` wait clears on its own; a
+#     stand-down clears only when someone resumes or lands the work.
+#
+# AND IT MUST NOT QUIETEN A TASK THAT IS ACTUALLY STUCK. Two things enforce that,
+# and one is on the operator:
+#
+#   - Enforced: a stand-down is refused while the agent reads positively alive,
+#     so a wedged-but-running worker cannot be silenced with it - that worker is
+#     still alarming and still needs recovery. Readers additionally gate the
+#     record on positive evidence the endpoint is gone, so a record beside a live
+#     agent is ignored rather than honored, a resumed task's leftover record
+#     cannot silence its next genuine death, an unreachable endpoint keeps its
+#     unknown verdict, an active run step still outranks it, and
+#     bin/fm-spawn.sh's relaunch path retires it outright.
+#   - Not enforceable here: no tool can read INTENT. An agent that crashed and
+#     one the captain stopped both leave a dead endpoint, so the record asserts
+#     something only the person writing it knows. That is why the reason is
+#     required and stored: it is the claim, in someone's own words, that this
+#     stop was deliberate. Recording one for a worker that actually died is
+#     mislabeling a failure, not using this feature.
 #
 # Sourced by bin/fm-stand-down.sh, bin/fm-crew-state.sh, bin/fm-session-start.sh,
 # bin/fm-teardown.sh, and bin/fm-spawn.sh.
