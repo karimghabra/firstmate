@@ -168,7 +168,29 @@ case "${1:-}" in
 esac
 exit 0
 SH
-  chmod +x "$fb/no-mistakes" "$fb/tmux" "$fb/herdr"
+  # A fake `gh` serving FM_FAKE_GH_PR_JSON as `gh pr view --json` output. It
+  # evaluates the caller's own --jq program with the real jq, so the forge
+  # rollup parse under test is the shipped program, not a canned answer. No
+  # fixture means the read fails, as an unreachable forge does. Every call is
+  # logged to FM_FAKE_GH_LOG as one line (subcommand and target) when set, so a
+  # case can pin the call budget.
+  cat > "$fb/gh" <<'SH'
+#!/usr/bin/env bash
+set -u
+[ -n "${FM_FAKE_GH_LOG:-}" ] && printf '%s %s %s\n' "${1:-}" "${2:-}" "${3:-}" >> "$FM_FAKE_GH_LOG"
+[ "${1:-} ${2:-}" = "pr view" ] || exit 1
+[ -n "${FM_FAKE_GH_PR_JSON:-}" ] || { printf 'fake gh: no fixture\n' >&2; exit 1; }
+expr=
+while [ $# -gt 0 ]; do
+  case "$1" in
+    --jq|-q) expr=$2; shift 2 ;;
+    *) shift ;;
+  esac
+done
+[ -n "$expr" ] || { printf '%s\n' "$FM_FAKE_GH_PR_JSON"; exit 0; }
+printf '%s\n' "$FM_FAKE_GH_PR_JSON" | jq -r "$expr"
+SH
+  chmod +x "$fb/no-mistakes" "$fb/tmux" "$fb/herdr" "$fb/gh"
   printf '%s\n' "$fb"
 }
 
@@ -220,9 +242,12 @@ reset_fakes() {
   FM_FAKE_HERDR_AGENT_STATUS=""
   FM_FAKE_CI_LOGS=""
   FM_FAKE_DAEMON_DOWN=0
+  FM_FAKE_GH_PR_JSON=""
+  FM_FAKE_GH_LOG=""
+  FM_CREW_STATE_NOW=""
   export FM_FAKE_AXI_STATUS FM_FAKE_AXI_STATUS_RUN FM_FAKE_RUNS_LIST FM_FAKE_BUSY FM_FAKE_BUSY_TEXT FM_FAKE_TMUX_MISSING FM_FAKE_TMUX_UNREADABLE
   export FM_FAKE_HERDR_BUSY FM_FAKE_HERDR_MISSING FM_FAKE_HERDR_READ_FAIL FM_FAKE_HERDR_HUSK FM_FAKE_HERDR_AGENT_STATUS FM_FAKE_CI_LOGS
-  export FM_FAKE_DAEMON_DOWN
+  export FM_FAKE_DAEMON_DOWN FM_FAKE_GH_PR_JSON FM_FAKE_GH_LOG FM_CREW_STATE_NOW
 }
 
 # --- run-object fixtures (TOON, as `no-mistakes axi status` emits) -----------
@@ -498,6 +523,97 @@ run:
     push,completed,0,0
     ci,fixing,0,0
 EOF
+}
+
+# A run waiting in its ci step exactly as the real v1.72.0 `axi status` renders
+# it after a long wait: full head_sha, the PR, and an active_steps row whose
+# last activity went quiet because the monitor logs only when what it sees
+# changes (the PR 6 reading, 2026-09-11).
+run_ci_waiting_quiet() {  # <branch> [<pr-url>]
+  cat <<EOF
+run:
+  id: "01RUN"
+  branch: $1
+  status: running
+  head: "${FM_FAKE_RUN_HEAD:0:8}"
+  head_sha: "${FM_FAKE_RUN_HEAD}"
+  pr: "${2:-https://github.com/o/r/pull/6}"
+  findings: none
+  steps[4]{step,status,findings,duration_ms}:
+    intent,completed,0,0
+    review,completed,0,0
+    push,completed,0,0
+    ci,running,0,0
+  active_steps[1]{step,status,active_for,round_active_for,last_activity,agent_pid,round}:
+    ci,running,25m3s,"","quiet 24m25s ago: log: CI checks running, waiting for results...","",""
+EOF
+}
+
+# The monitor's own log for that wait: it said it was waiting once, and has
+# said nothing since.
+CI_WAITING_LOG=$(cat <<'EOF'
+monitoring CI for PR #6 (timeout: 168h0m0s)...
+no CI checks reported yet, waiting for checks to register...
+CI checks running, waiting for results...
+EOF
+)
+
+# `gh pr view --json headRefOid,statusCheckRollup` output for <head>. Each
+# check is "name|status|completedAt" for an Actions check run, or
+# "ctx:name|state|startedAt" for a legacy commit status.
+gh_rollup_json() {  # <head> <check>...
+  local head=$1 sep='' check name rest status at
+  shift
+  printf '{"headRefOid":"%s","statusCheckRollup":[' "$head"
+  for check in "$@"; do
+    name=${check%%|*}; rest=${check#*|}; status=${rest%%|*}; at=${rest#*|}
+    case "$name" in
+      ctx:*)
+        printf '%s{"__typename":"StatusContext","context":"%s","state":"%s","startedAt":"%s"}' \
+          "$sep" "${name#ctx:}" "$status" "$at" ;;
+      *)
+        if [ "$status" = COMPLETED ]; then
+          printf '%s{"__typename":"CheckRun","name":"%s","status":"COMPLETED","conclusion":"SUCCESS","startedAt":"2026-09-11T17:07:06Z","completedAt":"%s"}' \
+            "$sep" "$name" "$at"
+        else
+          printf '%s{"__typename":"CheckRun","name":"%s","status":"%s","conclusion":"","startedAt":"2026-09-11T17:07:06Z","completedAt":"0001-01-01T00:00:00Z"}' \
+            "$sep" "$name" "$status"
+        fi ;;
+    esac
+    sep=,
+  done
+  printf ']}\n'
+}
+
+# PR 6's fourteen checks as GitHub recorded them, with the two slow serial
+# lanes and the aggregate that waits on them either still running or settled.
+# The last one settled at 17:30:54Z.
+pr6_checks() {  # <running|settled>
+  local tail_status=COMPLETED
+  [ "$1" = running ] && tail_status=IN_PROGRESS
+  printf '%s\n' \
+    "PR must be raised via no-mistakes|COMPLETED|2026-09-11T17:07:08Z" \
+    "Repo invariants|COMPLETED|2026-09-11T17:07:13Z" \
+    "Test coverage guard|COMPLETED|2026-09-11T17:07:16Z" \
+    "Stock macOS Bash snapshot compatibility|COMPLETED|2026-09-11T17:11:32Z" \
+    "Behavior portable parallel 1|COMPLETED|2026-09-11T17:12:26Z" \
+    "Behavior portable parallel 2|COMPLETED|2026-09-11T17:13:39Z" \
+    "Behavior tests (Herdr)|COMPLETED|2026-09-11T17:17:35Z" \
+    "Lint|COMPLETED|2026-09-11T17:18:19Z" \
+    "Behavior portable serial 4|COMPLETED|2026-09-11T17:19:17Z" \
+    "Behavior portable serial 2|COMPLETED|2026-09-11T17:20:15Z" \
+    "Behavior portable serial 3|COMPLETED|2026-09-11T17:21:33Z" \
+    "Behavior portable serial 5|$tail_status|2026-09-11T17:30:31Z" \
+    "Behavior portable serial 1|$tail_status|2026-09-11T17:30:44Z" \
+    "Behavior timing aggregate|$tail_status|2026-09-11T17:30:54Z"
+}
+
+# The forge cases evaluate the shipped jq program through the fake gh, so
+# they need the real jq; a host without it says so rather than passing.
+need_jq() {  # <case-name>
+  command -v jq >/dev/null 2>&1 && return 0
+  printf 'skip: %s (jq not found; the fake gh runs the real --jq program with it)\n' "$1"
+  return 1
 }
 
 # ---------------------------------------------------------------------------
@@ -925,6 +1041,265 @@ test_top_level_fixing_done_log_stays_working() {
   assert_contains "$out" "validating (fixing)" "top-level fixing keeps fixing detail"
   assert_not_contains "$out" "state: done" "top-level fixing must not read as stale checks-green done"
   pass "top-level fixing is not overridden by a stale done log"
+}
+
+# --- (c2) forge cross-check for a waiting ci monitor -----------------------
+# Replay of firstmate PR 6, 2026-09-11. The pipeline's ci step read
+# `ci,running,25m3s` with "quiet 24m25s ago: CI checks running, waiting for
+# results...", and nothing in that report could tell a healthy wait from a
+# monitor that had stopped: the monitor logs only when what it sees changes.
+# In fact the checks genuinely ran 23m52s and the reading came 69 seconds after
+# the last one settled, inside the monitor's 120-second poll. The current-state
+# line must now carry the forge's evidence either way, and must still never
+# read anything but working until the pipeline itself says otherwise.
+
+pr6_rollup() {  # <running|settled>
+  local checks=() c
+  while IFS= read -r c; do checks+=("$c"); done <<EOF
+$(pr6_checks "$1")
+EOF
+  gh_rollup_json "$FM_FAKE_RUN_HEAD" "${checks[@]}"
+}
+
+# Sets CI_CASE to a case dir holding a crew whose run waits in its ci step.
+# Called directly rather than in a command substitution, so the fakes it
+# sets (and make_repo_on_branch's run head) reach the helper under test.
+CI_CASE=
+ci_forge_case() {  # <name> <branch>
+  CI_CASE=$(new_case "$1")
+  make_repo_on_branch "$CI_CASE/wt" "$2"
+  make_fakebin "$CI_CASE" >/dev/null
+  fm_write_meta "$CI_CASE/state/$1.meta" "window=fm:fm-$1" "worktree=$CI_CASE/wt" "kind=ship"
+  FM_FAKE_AXI_STATUS="$(run_ci_waiting_quiet "$2")"
+  FM_FAKE_CI_LOGS=$CI_WAITING_LOG
+  FM_FAKE_GH_LOG="$CI_CASE/gh.calls"
+  : > "$FM_FAKE_GH_LOG"
+}
+
+gh_call_count() {  # <case-dir>
+  awk 'END { print NR + 0 }' "$1/gh.calls"
+}
+
+test_ci_waiting_names_the_checks_still_running() {
+  reset_fakes
+  need_jq "ci waiting names pending checks" || return 0
+  local d out
+  ci_forge_case ci-forge-waiting fm/feat-cifw
+  d=$CI_CASE
+  FM_FAKE_GH_PR_JSON=$(pr6_rollup running)
+  FM_CREW_STATE_NOW=$(fm_utc_iso_to_epoch 2026-09-11T17:25:00Z)
+  out=$(run_crew_state "$d" ci-forge-waiting)
+  assert_contains "$out" "state: working" "a ci monitor waiting on running checks stays working"
+  assert_contains "$out" "source: run-step" "the waiting read stays run-step sourced"
+  assert_contains "$out" "waiting on 3 of 14 checks: Behavior portable serial 1, Behavior portable serial 5, Behavior timing aggregate" \
+    "the detail names exactly the checks the forge still shows running"
+  assert_not_contains "$out" "behind" "checks still running is never a behind monitor"
+  assert_equals 1 "$(gh_call_count "$d")" "one forge read per current-state read"
+  assert_equals "pr view https://github.com/o/r/pull/6" "$(cat "$d/gh.calls")" "the forge read targets the run's own PR"
+  pass "a waiting ci monitor names the checks the forge still shows running"
+}
+
+test_ci_waiting_caps_the_named_checks() {
+  reset_fakes
+  need_jq "ci waiting caps names" || return 0
+  local d out
+  ci_forge_case ci-forge-cap fm/feat-cicap
+  d=$CI_CASE
+  FM_FAKE_GH_PR_JSON=$(gh_rollup_json "$FM_FAKE_RUN_HEAD" \
+    "a|IN_PROGRESS|" "b|QUEUED|" "c|IN_PROGRESS|" "d|WAITING|" "e|IN_PROGRESS|" "f|COMPLETED|2026-09-11T17:07:08Z")
+  out=$(run_crew_state "$d" ci-forge-cap)
+  assert_contains "$out" "waiting on 5 of 6 checks: a, b, c +2 more" "a long pending list is capped with a count"
+  pass "the pending-check list is bounded"
+}
+
+test_ci_settled_inside_the_poll_window_is_not_behind() {
+  reset_fakes
+  need_jq "ci settled inside poll window" || return 0
+  local d out
+  ci_forge_case ci-forge-settling fm/feat-cisettle
+  d=$CI_CASE
+  FM_FAKE_GH_PR_JSON=$(pr6_rollup settled)
+  # The moment firstmate read PR 6: 69 seconds after the last check settled.
+  FM_CREW_STATE_NOW=$(fm_utc_iso_to_epoch 2026-09-11T17:32:03Z)
+  out=$(run_crew_state "$d" ci-forge-settling)
+  assert_contains "$out" "state: working" "settled checks do not make firstmate call the change ready"
+  assert_contains "$out" "all 14 checks settled 69s ago, within the monitor's poll window" \
+    "a monitor between polls is reported as exactly that"
+  assert_not_contains "$out" "behind" "a monitor inside its poll window is not behind"
+  assert_not_contains "$out" "checks green" "the forge read never supplies the checks-green verdict"
+  pass "checks settled inside the monitor's poll window read as a healthy wait"
+}
+
+test_ci_monitor_behind_after_checks_settled() {
+  reset_fakes
+  need_jq "ci monitor behind" || return 0
+  local d out
+  ci_forge_case ci-forge-behind fm/feat-cibehind
+  d=$CI_CASE
+  FM_FAKE_GH_PR_JSON=$(pr6_rollup settled)
+  FM_CREW_STATE_NOW=$(fm_utc_iso_to_epoch 2026-09-11T17:40:00Z)
+  out=$(run_crew_state "$d" ci-forge-behind)
+  assert_contains "$out" "state: working" "a behind monitor is detection only; the state stays working"
+  assert_contains "$out" "source: run-step" "the pipeline's run-step remains the authority"
+  assert_contains "$out" "pipeline monitor behind: all 14 checks settled 9m ago, not yet observed" \
+    "a monitor still waiting long after every check settled is named behind"
+  assert_not_contains "$out" "state: done" "a behind monitor must never read as ready"
+  assert_not_contains "$out" "checks green" "a behind monitor must never read as checks green"
+  # The same observation one second inside the bound is still a healthy wait.
+  FM_CREW_STATE_NOW=$(( $(fm_utc_iso_to_epoch 2026-09-11T17:30:54Z) + 240 ))
+  out=$(run_crew_state "$d" ci-forge-behind)
+  assert_contains "$out" "within the monitor's poll window" "the bound itself is still inside the window"
+  FM_CREW_STATE_NOW=$(( $(fm_utc_iso_to_epoch 2026-09-11T17:30:54Z) + 241 ))
+  out=$(run_crew_state "$d" ci-forge-behind)
+  assert_contains "$out" "pipeline monitor behind" "one second past twice the longest poll is behind"
+  pass "a ci monitor that has not observed long-settled checks is named behind"
+}
+
+test_ci_behind_needs_the_monitor_to_claim_waiting() {
+  reset_fakes
+  need_jq "ci behind needs waiting claim" || return 0
+  local d out
+  ci_forge_case ci-forge-rerun-wait fm/feat-cirerunwait
+  d=$CI_CASE
+  # The monitor legitimately waits with every check terminal when it is waiting
+  # for the forge to re-run what its last repair targeted.
+  FM_FAKE_CI_LOGS=$(printf '%s\n' "$CI_WAITING_LOG" \
+    "issues detected: 1 failing check" \
+    "fix already attempted for these issues, waiting for CI re-run...")
+  FM_FAKE_GH_PR_JSON=$(pr6_rollup settled)
+  FM_CREW_STATE_NOW=$(fm_utc_iso_to_epoch 2026-09-11T17:40:00Z)
+  out=$(run_crew_state "$d" ci-forge-rerun-wait)
+  assert_contains "$out" "all 14 checks settled 9m ago" "the settled fact is still reported"
+  assert_not_contains "$out" "behind" "a monitor waiting for a re-run is not claiming to wait for results"
+  assert_contains "$out" "state: working" "the state stays working"
+  pass "behind is named only while the monitor still says it waits for results"
+}
+
+test_ci_same_name_rerun_in_flight_stays_pending() {
+  reset_fakes
+  need_jq "ci rerun in flight" || return 0
+  local d out
+  ci_forge_case ci-forge-rerun fm/feat-cirerun
+  d=$CI_CASE
+  FM_FAKE_GH_PR_JSON=$(gh_rollup_json "$FM_FAKE_RUN_HEAD" \
+    "Lint|COMPLETED|2026-09-11T17:18:19Z" \
+    "PR must be raised via no-mistakes|COMPLETED|2026-09-11T17:07:08Z" \
+    "PR must be raised via no-mistakes|IN_PROGRESS|")
+  FM_CREW_STATE_NOW=$(fm_utc_iso_to_epoch 2026-09-11T17:40:00Z)
+  out=$(run_crew_state "$d" ci-forge-rerun)
+  assert_contains "$out" "waiting on 1 of 2 checks: PR must be raised via no-mistakes" \
+    "an older completed run never hides a same-name run still in flight"
+  assert_not_contains "$out" "behind" "a rerun in flight is not settled"
+  pass "a same-name rerun still running keeps its check pending"
+}
+
+test_ci_legacy_commit_status_counts() {
+  reset_fakes
+  need_jq "ci legacy commit status" || return 0
+  local d out
+  ci_forge_case ci-forge-status fm/feat-cistatus
+  d=$CI_CASE
+  FM_FAKE_GH_PR_JSON=$(gh_rollup_json "$FM_FAKE_RUN_HEAD" \
+    "Lint|COMPLETED|2026-09-11T17:18:19Z" "ctx:vercel|PENDING|2026-09-11T17:08:00Z")
+  out=$(run_crew_state "$d" ci-forge-status)
+  assert_contains "$out" "waiting on 1 of 2 checks: vercel" "a pending commit status is still pending"
+  FM_FAKE_GH_PR_JSON=$(gh_rollup_json "$FM_FAKE_RUN_HEAD" \
+    "Lint|COMPLETED|2026-09-11T17:18:19Z" "ctx:vercel|SUCCESS|2026-09-11T17:31:00Z")
+  FM_CREW_STATE_NOW=$(fm_utc_iso_to_epoch 2026-09-11T17:40:00Z)
+  out=$(run_crew_state "$d" ci-forge-status)
+  assert_contains "$out" "all 2 checks settled 9m ago, not yet observed" \
+    "a terminal commit status settles at the time it was posted"
+  pass "legacy commit statuses count by their own state and time"
+}
+
+test_ci_forge_head_moved_is_not_compared() {
+  reset_fakes
+  need_jq "ci forge head moved" || return 0
+  local d out
+  ci_forge_case ci-forge-moved fm/feat-cimoved
+  d=$CI_CASE
+  FM_FAKE_GH_PR_JSON=$(gh_rollup_json 0123456789abcdef0123456789abcdef01234567 \
+    "Lint|COMPLETED|2026-09-11T17:18:19Z")
+  FM_CREW_STATE_NOW=$(fm_utc_iso_to_epoch 2026-09-11T17:40:00Z)
+  out=$(run_crew_state "$d" ci-forge-moved)
+  assert_contains "$out" "forge PR head 01234567 is not the run's head ${FM_FAKE_RUN_HEAD:0:8}; checks not compared" \
+    "another head's checks are never judged against this run"
+  assert_not_contains "$out" "behind" "a moved head cannot make the monitor behind"
+  pass "checks on a PR head the run is not watching are not compared"
+}
+
+test_ci_forge_unreadable_adds_no_progress() {
+  reset_fakes
+  local d out
+  ci_forge_case ci-forge-unreadable fm/feat-ciunread
+  d=$CI_CASE
+  # No gh fixture: the read fails as an unreachable forge does.
+  out=$(run_crew_state "$d" ci-forge-unreadable)
+  assert_contains "$out" "state: working" "an unreadable forge leaves the pipeline's verdict alone"
+  assert_contains "$out" "forge checks unreadable" "an unreadable forge says so rather than going silent"
+  assert_not_contains "$out" "waiting on" "an unreadable forge claims nothing about pending checks"
+  pass "an unreadable forge is reported, never read as progress"
+}
+
+test_ci_forge_not_consulted_off_the_waiting_path() {
+  reset_fakes
+  local d out
+  # Checks already green by the monitor's own log: nothing to cross-check.
+  ci_forge_case ci-forge-green fm/feat-cifgreen
+  d=$CI_CASE
+  FM_FAKE_CI_LOGS=$(printf '%s\n' "$CI_WAITING_LOG" "all CI checks passed - still monitoring until merged or closed")
+  out=$(run_crew_state "$d" ci-forge-green)
+  assert_contains "$out" "checks green" "the monitor's own green verdict still decides"
+  assert_equals 0 "$(gh_call_count "$d")" "no forge read once the monitor reports green"
+  # A repair round in the ci step: the quiet belongs to the repair agent.
+  ci_forge_case ci-forge-fixing fm/feat-cifxing
+  d=$CI_CASE
+  FM_FAKE_AXI_STATUS="$(run_ci_fixing fm/feat-cifxing)"
+  out=$(run_crew_state "$d" ci-forge-fixing)
+  assert_equals 0 "$(gh_call_count "$d")" "no forge read during a ci repair round"
+  # A merge request on another forge: no gh read and no annotation.
+  ci_forge_case ci-forge-gitlab fm/feat-cigitlab
+  d=$CI_CASE
+  FM_FAKE_AXI_STATUS="$(run_ci_waiting_quiet fm/feat-cigitlab https://gitlab.example.com/g/p/-/merge_requests/3)"
+  out=$(run_crew_state "$d" ci-forge-gitlab)
+  assert_equals 0 "$(gh_call_count "$d")" "no gh read for a non-GitHub PR"
+  assert_not_contains "$out" "forge" "a non-GitHub PR carries no forge annotation"
+  pass "the forge is read only while a GitHub ci monitor still waits"
+}
+
+# A drive call killed at the harness's ten-minute cap while the run waits on a
+# 24-minute CI: the pipeline is alive, and the ci row's quiet is how a healthy
+# monitor looks. Before, any ci wait past the quiet warning read as not-alive.
+test_quiet_ci_wait_with_forge_evidence_is_alive() {
+  reset_fakes
+  need_jq "quiet ci wait alive" || return 0
+  local d out
+  ci_forge_case ci-forge-alive fm/feat-cialive
+  d=$CI_CASE
+  printf 'blocked: no-mistakes axi run timed out after 10m\n' > "$d/state/ci-forge-alive.status"
+  FM_FAKE_GH_PR_JSON=$(pr6_rollup running)
+  FM_CREW_STATE_NOW=$(fm_utc_iso_to_epoch 2026-09-11T17:25:00Z)
+  out=$(run_crew_state "$d" ci-forge-alive)
+  assert_contains "$out" "status-log superseded: run alive, not a daemon failure (steer reattach)" \
+    "a scheduled ci wait proven by the forge is alive"
+  # The same claim once the monitor is behind: no longer evidence of life.
+  FM_FAKE_GH_PR_JSON=$(pr6_rollup settled)
+  FM_CREW_STATE_NOW=$(fm_utc_iso_to_epoch 2026-09-11T17:40:00Z)
+  out=$(run_crew_state "$d" ci-forge-alive)
+  assert_contains "$out" "status-log superseded by active run" "a behind monitor keeps the plain reading"
+  assert_not_contains "$out" "run alive" "a behind monitor is not proof the run is alive"
+  # And with the daemon probe failing, a quiet row proves nothing.
+  FM_FAKE_GH_PR_JSON=$(pr6_rollup running)
+  FM_CREW_STATE_NOW=$(fm_utc_iso_to_epoch 2026-09-11T17:25:00Z)
+  FM_FAKE_DAEMON_DOWN=1
+  out=$(run_crew_state "$d" ci-forge-alive)
+  assert_not_contains "$out" "run alive" "a down daemon is never read as a live ci wait"
+  # Without forge evidence at all, the quiet ci row stays no evidence.
+  FM_FAKE_DAEMON_DOWN=0
+  FM_FAKE_GH_PR_JSON=
+  out=$(run_crew_state "$d" ci-forge-alive)
+  assert_not_contains "$out" "run alive" "an unreadable forge is not evidence of a scheduled wait"
+  pass "a quiet ci wait reads alive only on positive evidence"
 }
 
 # (d) terminal run-step is authoritative
@@ -2445,6 +2820,17 @@ test_ci_ready_done_log_relapse_stays_working
 test_ci_fixing_after_green_stays_working
 test_top_level_fixing_ci_running_after_green_stays_working
 test_top_level_fixing_done_log_stays_working
+test_ci_waiting_names_the_checks_still_running
+test_ci_waiting_caps_the_named_checks
+test_ci_settled_inside_the_poll_window_is_not_behind
+test_ci_monitor_behind_after_checks_settled
+test_ci_behind_needs_the_monitor_to_claim_waiting
+test_ci_same_name_rerun_in_flight_stays_pending
+test_ci_legacy_commit_status_counts
+test_ci_forge_head_moved_is_not_compared
+test_ci_forge_unreadable_adds_no_progress
+test_ci_forge_not_consulted_off_the_waiting_path
+test_quiet_ci_wait_with_forge_evidence_is_alive
 test_terminal_passed
 test_terminal_failed
 test_terminal_failed_ci_orphan_after_green_reads_done
