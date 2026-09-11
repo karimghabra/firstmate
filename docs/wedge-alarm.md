@@ -3,7 +3,6 @@
 The away-mode sub-supervisor (`bin/fm-supervise-daemon.sh`) buffers escalations and injects them into Firstmate's own pane.
 When injection cannot confirm a submit past `FM_MAX_DEFER_SECS`, `inject_wedge_alarm` raises a loud, rate-limited alarm through every configured channel.
 It reports a stall that has already begun, and off macOS with no configured channel only the durable marker records it.
-A supervisor pane whose composer the daemon cannot confirm at all is refused before the daemon takes over, by the delivery proof in `bin/fm-supervisor-target-lib.sh`, rather than left to this alarm.
 The active alert is pane-independent because a tmux status-line flash has no cross-backend equivalent and cannot reach an unattended captain reliably.
 The durable marker and tmux flash remain as additional signals.
 

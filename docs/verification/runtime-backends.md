@@ -333,7 +333,7 @@ All six installed harnesses' real idle composers reached a proven `empty` (Claud
 The strict blank-row posture held live (a blank shell row deferred injection), and a zellij pane changing for reasons unrelated to submission never confirmed a delivery, replacing the retired content-diff heuristic's false positive.
 Kimi was not installed on the verification machine; its bordered shape is pinned by the portable byte-capture regressions in `tests/fm-composer-lib.test.sh`, which also carry the other five adapters' capability profiles for every harness under both a UTF-8 locale and `LC_ALL=C`.
 This guard is the refresh command after an upgrade to any matrix-covered harness; rerun it and update the versions above rather than trusting this table across releases.
-Known staleness: on 2026-08-23 the steering-inbox doorbell run observed grok 1.0.5's idle composer classifying `unknown` (and sometimes pending-family), never `empty`, so the grok row above is stale for 1.0.5 and owes a refresh; steering is unaffected because the send path's composer check is advisory, but empty-requiring consumers (away-daemon injection and its launch delivery proof, spawn readiness) should not trust the 1.0.0 grok result.
+Known staleness: on 2026-08-23 the steering-inbox doorbell run observed grok 1.0.5's idle composer classifying `unknown` (and sometimes pending-family), never `empty`, so the grok row above is stale for 1.0.5 and owes a refresh; steering is unaffected because the send path's composer check is advisory, but empty-requiring consumers (away-daemon injection, spawn readiness) should not trust the 1.0.0 grok result.
 Cursor is deliberately outside this cursor-anchored empty-composer matrix because its terminal cursor is parked outside the composer; tmux's Cursor-specific, process-identity-gated cursorless fallback is covered by the [Cursor Agent CLI](#cursor-agent-cli) section's separate live evidence and drift guard.
 
 `zellij action dump-screen --pane-id <id> --ansi` was verified at zellij 0.44.0 to preserve ANSI styling (real Claude Code rendered inside a zellij pane dumped `ESC[m` `❯` U+00A0 for its idle composer row), which is the capability the zellij composer classifier reads.
@@ -1047,43 +1047,30 @@ Observed guarantees: `fm-afk-launch.sh start` refused on the Pi primary and `con
 The fixture captures submitted input through Pi's `input` extension hook, so the lab agent directory needs no provider credentials.
 The daemon injection transport into a live composer keeps its coverage in `tests/fm-afk-inject-herdr-e2e.test.sh` for the harnesses that still run the daemon, and the dedicated Herdr daemon workspace topology is covered by `tests/fm-afk-launch.test.sh` and preserves the captain tab's pane count.
 
-#### Delivery proof against real Claude panes
+#### Claude away posture without a daemon
 
-The daemon delivers only by typing into a composer the shared classifier reads as exactly `empty`, so `fm_supervisor_delivery_proof` (`bin/fm-supervisor-target-lib.sh`) gates both launch paths and the daemon's own startup.
-It was exercised on 2026-09-11 against real Claude Code 2.1.268 panes on Herdr 0.7.4 (Linux under WSL2), from an isolated home holding a confirmed posture record, reading the panes only.
-A Claude session with a name draws that name into its composer's top rule, which the shared classifier does not recognize as a composer border, so the cursorless Herdr read of that composer is `unknown` on every attempt; an unnamed session of the same release reads `empty`, including mid-turn.
-The daemon-running harness is forced for the two proof runs so the Claude refusal does not pre-empt the proof.
+The away daemon is not launched on Claude, observed 2026-09-11 on Claude Code 2.1.268 and Herdr 0.7.4 (Linux under WSL2) from an isolated home holding a confirmed posture record:
 
 ```sh
 FM_HOME="$ISO" FM_STATE_OVERRIDE="$ISO/state" bin/fm-afk-launch.sh start-native
-env -u CLAUDECODE GROK_AGENT=1 FM_HOME="$ISO" FM_STATE_OVERRIDE="$ISO/state" \
-  FM_SUPERVISOR_TARGET="$NAMED_CLAUDE_PANE" FM_SUPERVISOR_BACKEND=herdr \
-  bin/fm-afk-launch.sh start-native
-env -u CLAUDECODE GROK_AGENT=1 FM_HOME="$ISO" FM_STATE_OVERRIDE="$ISO/state" \
-  FM_SUPERVISOR_TARGET="$UNNAMED_CLAUDE_PANE" FM_SUPERVISOR_BACKEND=herdr \
-  bin/fm-afk-launch.sh start-native
-FM_HOME="$ISO" FM_STATE_OVERRIDE="$ISO/state" FM_SUPERVISOR_TARGET="$NAMED_CLAUDE_PANE" \
-  FM_SUPERVISOR_BACKEND=herdr FM_SUPERVISOR_DELIVERY_PROOF_ATTEMPTS=2 bin/fm-afk-start.sh
 ```
-
-Observed output, pane targets elided:
 
 ```text
 fm-afk-launch: the away daemon is not launched on claude; its own supervision cycle keeps running under the away-posture record, which is the whole entry there (run bin/fm-afk-launch.sh confirm and stop)
 exit=1
-fm-afk-launch: REFUSED: the away daemon cannot confirm the supervisor composer at <named> (harness grok, backend herdr, verdict unknown); it delivers escalations only by typing into an affirmatively empty composer, so launching it would switch off the ordinary supervision cycle and strand every escalation until the captain returns
-fm-afk-launch: no away daemon was launched and no daemon state was written: the away-posture record stands and the ordinary supervision cycle keeps owning supervision; tell the captain the away daemon did not start and why
-exit=4
-exit=0
-afk: starting supervise daemon in foreground; keep this command as a tracked background session
-error: away-mode daemon refused to start: it cannot confirm the supervisor composer at '<named>' (harness claude, backend herdr, verdict unknown), so no escalation could ever be delivered there; the ordinary supervision cycle keeps owning supervision
-exit=1
 ```
 
-Neither refusal left `state/.afk`, a daemon lock, or a daemon record, and the unnamed pane's run wrote the `none - native` record that `stop` then cleared.
-The attempt-count override used in the last command has since been removed and the refusal wording has since changed: without the override the proof takes its fixed five reads, and the recorded exit codes, verdicts, and state guarantees are unchanged because the named pane read `unknown` on every attempt, with the current wording pinned by `tests/fm-afk-launch.test.sh` and `tests/fm-daemon.test.sh`.
-The daemon entry ran as a Claude Code tracked background job, and its refusal reached the session as that job's completion notification, the path every harness-native daemon launch reports through, with no dependence on the daemon log or the wedge alarm.
-The portable regressions are `tests/fm-afk-launch.test.sh` (real tmux panes) and `tests/fm-daemon.test.sh`; the classifier's live idle-composer guard, `tests/fm-composer-matrix-live-e2e.test.sh`, is what proves each daemon-running harness's idle composer still passes the proof after an upgrade.
+Why the daemon could never deliver to the incident's session was observed at 2026-09-11T16:44Z on the same versions, reading real Claude panes only:
+
+```sh
+bash -c '. bin/fm-backend.sh; fm_backend_composer_state herdr "$1"' _ <pane>
+```
+
+For a Claude session whose name is drawn into its composer's top rule (the captured top rule is a run of `─` ending in ` FIRSTMATE ─`), it printed `unknown` while `herdr pane list` reported that pane's `agent_status` as `done`, that is idle.
+For an unnamed Claude session whose top rule is a plain rule, it printed `empty` while that pane's `agent_status` was `working`, that is mid-turn.
+Injection requires `empty`, so the daemon could never type into the named session even when idle.
+The daemon remains unproven on harnesses whose idle composer the shared classifier cannot read as `empty`; grok's known staleness under [Composer classification matrix](#composer-classification-matrix) is the other current case.
+The portable regression for the Claude refusal is `tests/fm-afk-launch.test.sh`.
 
 ## Zellij
 

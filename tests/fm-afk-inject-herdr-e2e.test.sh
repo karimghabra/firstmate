@@ -473,15 +473,16 @@ test_scenario_c() {
 # state/.subsuper-inject-wedged) while preserving the buffered escalation, and
 # must never crash or hot-loop. Exercises fm_backend_composer_state(herdr, ...)
 # reporting "pending" indefinitely through the REAL structural border reader.
-# The daemon starts against the idle composer, because its startup delivery
-# proof refuses a composer it cannot confirm empty; the stuck text arrives
-# afterwards, which is when a real composer wedges.
 
 test_scenario_d_max_defer() {
   reset_state
   afk_enter "$STATE_DIR"
   local log_start=0
   [ ! -f "$STATE_DIR/.supervise-daemon.log" ] || log_start=$(wc -l < "$STATE_DIR/.supervise-daemon.log")
+  # Persistent-pending composer: type real text and never submit it, so every
+  # composer read is genuinely "pending" against the real herdr binary.
+  fm_backend_herdr_send_literal "$SUPERVISOR_TARGET" "stuck-in-the-box"
+  sleep 0.5
 
   PATH="$HERDR_SHIM_DIR:$PATH" \
   HERDR_SESSION="$SESSION" \
@@ -501,11 +502,6 @@ test_scenario_d_max_defer() {
   nohup "$DAEMON" >"$STATE_DIR/daemon.out" 2>"$STATE_DIR/daemon.err" &
   DAEMON_PID=$!
   wait_daemon_started "Scenario D daemon" "$log_start"
-
-  # Persistent-pending composer: type real text and never submit it, so every
-  # later composer read is genuinely "pending" against the real herdr binary.
-  fm_backend_herdr_send_literal "$SUPERVISOR_TARGET" "stuck-in-the-box"
-  sleep 0.5
 
   echo "needs-decision: pick A or B" > "$STATE_DIR/fake-c1.status"
 

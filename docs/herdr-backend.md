@@ -307,7 +307,6 @@ The pane-independent max-defer alert is configured in [`wedge-alarm.md`](wedge-a
 
 Harnesses with native tracked background execution can run the daemon in their terminal.
 Pi, pi-signed, and Claude do not launch the away daemon; their ordinary supervision session continues under the posture record.
-Every launch first requires the supervisor composer to read `empty` through the shared classifier, so a pane the daemon could never type into is refused before any away-mode state is written.
 For another harness without native tracked background execution, `bin/fm-afk-launch.sh` creates a dedicated unfocused Herdr workspace, runs the daemon there with an explicit supervisor target and backend, records the exact daemon pane, and closes only that pane on stop.
 It never splits the captain's active tab and never uses shell `&`.
 Recovery reconciles only the recorded exact id.

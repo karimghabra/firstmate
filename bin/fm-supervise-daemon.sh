@@ -21,14 +21,6 @@
 # state/.subsuper-escalations and are flushed on the next "while you were out"
 # catch-up or when afk is re-entered.
 #
-# DELIVERY PROOF AT STARTUP. The daemon owns supervision only after proving it
-# can reach the supervisor pane: fm_supervisor_delivery_proof
-# (bin/fm-supervisor-target-lib.sh) must read that pane's composer as exactly
-# empty. Every startup refusal - that proof, an unsupported supervisor backend,
-# or a missing target - exits non-zero naming the reason and clears state/.afk,
-# so a daemon that cannot run never leaves the ordinary supervision cycle
-# switched off.
-#
 # IN-BAND OPERATIONAL INPUT. bin/fm-operational-input.sh constructs every
 # current daemon injection as the typed away-supervisor kind after the stable
 # FM_OPERATIONAL_PREFIX. A human cannot type its leading U+2063 from a normal
@@ -191,11 +183,9 @@ FM_HOME="${FM_HOME:-${FM_ROOT_OVERRIDE:-$FM_ROOT}}"
 . "$FM_DAEMON_DIR/fm-afk-contract.sh"
 
 # Supervisor-pane discovery (FM_SUPERVISOR_TARGET_DEFAULT,
-# FM_SUPERVISOR_BACKEND_DEFAULT, FM_SUPERVISOR_SUPPORTED_BACKENDS,
-# discover_supervisor_target, discover_supervisor_backend) and the delivery
-# proof (fm_supervisor_delivery_proof). Shared with the script-owned away
-# launcher (bin/fm-afk-launch.sh) so the captain-pane resolution and the proof
-# that the daemon can reach it each have exactly one owner.
+# FM_SUPERVISOR_BACKEND_DEFAULT, discover_supervisor_target,
+# discover_supervisor_backend). Shared with the script-owned away launcher
+# (bin/fm-afk-launch.sh) so the captain-pane resolution has exactly one owner.
 # shellcheck source=bin/fm-supervisor-target-lib.sh
 . "$FM_DAEMON_DIR/fm-supervisor-target-lib.sh"
 
@@ -205,6 +195,14 @@ FM_HOME="${FM_HOME:-${FM_ROOT_OVERRIDE:-$FM_ROOT}}"
 . "$FM_DAEMON_DIR/fm-busy-lib.sh"
 
 # --- tunables ---------------------------------------------------------------
+# Supervisor backends this daemon knows how to inject into today. zellij, orca,
+# and cmux are real backends elsewhere in firstmate (bin/fm-backend.sh) but this
+# daemon has no verified composer/busy primitives wired up for them yet - see
+# docs/herdr-backend.md and AGENTS.md section 4's
+# harness-verification discipline. Selecting one refuses loudly at startup
+# instead of silently running tmux primitives against a pane that is not a tmux
+# pane.
+FM_SUPERVISOR_SUPPORTED_BACKENDS="tmux herdr"
 INJECT_SKIP_DEFAULT="heartbeat"
 STALE_ESCALATE_SECS_DEFAULT=240
 ESCALATE_BATCH_SECS_DEFAULT=90
@@ -1568,23 +1566,6 @@ fm_super_main() {
     log "warn: could not record this daemon's process identity; the turn-end guard cannot recognize away-mode supervision"
   fi
 
-  # A daemon that refuses to start must not leave state/.afk behind. That flag
-  # is what switches the ordinary supervision cycle off in favor of this daemon
-  # (the watcher goes one-shot and every harness turn-end rewake stands down),
-  # so leaving it with no daemon running stops supervision until the captain
-  # returns. This process holds the singleton lock, so no other daemon owns the
-  # flag; the away-posture record (state/.afk-contract) is left untouched.
-  startup_refuse() {  # <stderr-line> <log-line>
-    echo "$1" >&2
-    log "$2"
-    if [ -e "$STATE/.afk" ] && rm -f "$STATE/.afk" 2>/dev/null; then
-      log "startup refused: cleared state/.afk so the ordinary supervision cycle keeps owning supervision"
-    fi
-    fm_lock_release "$LOCK" 2>/dev/null || true
-    rm -f "$PIDFILE" 2>/dev/null || true
-    exit 1
-  }
-
   # --- auto-discover the supervisor BACKEND (tmux vs herdr) first -----------
   # Priority: FM_SUPERVISOR_BACKEND override > $TMUX_PANE (tmux) > $HERDR_ENV=1
   # (herdr) > tmux fallback. Resolved before the target below, since target
@@ -1614,8 +1595,11 @@ fm_super_main() {
   # harness-verification discipline). This is the clear refusal the task calls
   # for, instead of a confusing "does not resolve to a tmux pane" error.
   if ! fm_backend_list_contains "$FM_SUPERVISOR_SUPPORTED_BACKENDS" "$BACKEND"; then
-    startup_refuse "error: away-mode daemon does not support supervisor backend '$BACKEND' yet (supported: $FM_SUPERVISOR_SUPPORTED_BACKENDS); set FM_SUPERVISOR_BACKEND=tmux|herdr and FM_SUPERVISOR_TARGET to run firstmate's own pane under a supported backend" \
-      "startup failed: unsupported supervisor backend '$BACKEND' (source=$backend_source)"
+    echo "error: away-mode daemon does not support supervisor backend '$BACKEND' yet (supported: $FM_SUPERVISOR_SUPPORTED_BACKENDS); set FM_SUPERVISOR_BACKEND=tmux|herdr and FM_SUPERVISOR_TARGET to run firstmate's own pane under a supported backend" >&2
+    log "startup failed: unsupported supervisor backend '$BACKEND' (source=$backend_source)"
+    fm_lock_release "$LOCK" 2>/dev/null || true
+    rm -f "$PIDFILE" 2>/dev/null || true
+    exit 1
   fi
 
   # --- auto-discover the supervisor target (the pane running firstmate) -----
@@ -1649,19 +1633,11 @@ fm_super_main() {
   # backend=tmux this runs the exact same `tmux display-message -p -t "$TARGET"
   # '#{pane_id}'` call as before.
   if ! fm_backend_target_exists "$BACKEND" "$TARGET"; then
-    startup_refuse "error: supervisor target '$TARGET' does not resolve to a $BACKEND pane; set FM_SUPERVISOR_TARGET" \
-      "startup failed: target '$TARGET' not found (backend=$BACKEND)"
-  fi
-
-  # --- prove delivery before owning supervision -----------------------------
-  # fm_supervisor_delivery_proof owns the rationale. The launcher runs the same
-  # proof before it writes any away-mode state; this repeats it for a daemon
-  # started any other way, so no launch path can hand supervision to a daemon
-  # that could never type an escalation into this pane.
-  local proof
-  if ! proof=$(fm_supervisor_delivery_proof "$BACKEND" "$TARGET"); then
-    startup_refuse "error: away-mode daemon refused to start: it cannot prove it could deliver an escalation to this session on this harness, so it was not started (harness $(fm_daemon_primary_harness), backend $BACKEND, target '$TARGET', verdict ${proof:-unknown}); the ordinary supervision cycle is still running and keeps supervising, and away mode's hold-for-return record is unaffected" \
-      "startup refused: supervisor composer at '$TARGET' not confirmable (verdict=${proof:-unknown}, backend=$BACKEND)"
+    echo "error: supervisor target '$TARGET' does not resolve to a $BACKEND pane; set FM_SUPERVISOR_TARGET" >&2
+    log "startup failed: target '$TARGET' not found (backend=$BACKEND)"
+    fm_lock_release "$LOCK" 2>/dev/null || true
+    rm -f "$PIDFILE" 2>/dev/null || true
+    exit 1
   fi
 
   local afk_status="off"

@@ -2,7 +2,7 @@
 name: afk
 description: >-
   Enter the away posture when the captain invokes /afk, says they are going afk, `state/.afk-contract` or `state/.afk` exists, an incoming message starts with `FM_INJECT_MARK`, or any `state/.subsuper-*` marker is involved.
-  It reads the captain's away words back as a mandate, writes the durable away-posture record after their go, announces hold-for-return only at entry, keeps the one supervision session running in the away posture (no daemon on Pi or Claude; on the other harnesses the daemon still delivers batched digests for now, and only after proving it can reach the session), and on the first unmarked message renders the return brief from durable records before ordinary work resumes.
+  It reads the captain's away words back as a mandate, writes the durable away-posture record after their go, announces hold-for-return only at entry, keeps the one supervision session running in the away posture (no daemon on Pi or Claude; on the other harnesses the daemon still delivers batched digests for now), and on the first unmarked message renders the return brief from durable records before ordinary work resumes.
 user-invocable: true
 metadata:
   internal: true
@@ -47,14 +47,11 @@ Hold-for-return is the default and the only reach profile this release records: 
    - **Every other harness** (codex, opencode, omp, kimi, cursor): run `bin/fm-afk-launch.sh start`.
      It is the single owner of the daemon terminal: it creates a NON-VISIBLE tracked terminal for the current backend and passes the captain pane in as `FM_SUPERVISOR_TARGET` so the daemon injects into the captain, not its own new pane (docs/herdr-backend.md "Away-mode supervisor support").
    Both daemon paths require the already-confirmed record and share `bin/fm-afk-start.sh` as the daemon entry.
-   Both first prove the daemon could deliver to this session (`fm_supervisor_delivery_proof` in `bin/fm-supervisor-target-lib.sh`), and the daemon repeats that proof at its own startup.
-   **Exit 4** means that proof failed: no daemon was launched and no daemon state was written, so the posture stands exactly as on Pi and the ordinary supervision cycle keeps owning supervision.
-   This is deliberate, not a malfunction: on grok, and on any harness whose supervisor composer cannot be proven empty, `/afk` now refuses the away daemon and says why, while the ordinary supervision cycle keeps running and the hold-for-return record stands.
-   Grok is the currently recorded case; the dated evidence is the known-staleness note under "Composer classification matrix" in `docs/verification/runtime-backends.md`.
-   Stop there, do not run `stop`, and tell the captain in the entry reply, in `AGENTS.md` section 9 language, that the away-mode helper could not start and why, and that supervision continues exactly as it does while they are present.
+   On these harnesses the daemon still launches, but it remains unproven where the supervisor composer cannot be read as `empty` at idle: there it would buffer escalations it can never inject.
+   Grok is the currently recorded case; the evidence is the known-staleness note under "Composer classification matrix" in `docs/verification/runtime-backends.md`.
    The daemon is **presence-gated**: it injects escalations only while `state/.afk` exists, and stays quiet otherwise.
 5. **Do not separately arm `fm-watch.sh` where the daemon runs.** The daemon manages the watcher as its child; the singleton lock no-ops a stray arm harmlessly.
-   On Pi and Claude, and after an exit-4 refusal, nothing changes about arming: the supervision session's own cycle continues.
+   On Pi and Claude nothing changes about arming: the supervision session's own cycle continues.
 
 ## While away
 
@@ -92,7 +89,7 @@ This release records clauses and does not execute them.
 
 ## The daemon, where it still runs
 
-On the harnesses that still launch the daemon (every verified harness except Pi, pi-signed, and Claude), the mechanics below are unchanged, and none of them runs until the delivery proof in phase 4 has passed.
+On the harnesses that still launch the daemon (every verified harness except Pi, pi-signed, and Claude), the mechanics below are unchanged.
 
 ### Operational prefix contract
 
@@ -127,7 +124,7 @@ If that submit cannot be confirmed, it raises a loud, rate-limited wedge alarm:
 an ERROR in the daemon log, a durable
 `state/.subsuper-inject-wedged` marker (the return brief's health line carries it), a tmux status-line flash when applicable, and a configurable backend-independent active alert.
 `docs/wedge-alarm.md` owns the alert channel setup, and `docs/verification/supervision.md` "Wedge-alarm channels" owns active evidence.
-The alarm reaches a person only through a configured active channel, and off macOS none exists by default, so it is not what keeps an unconfirmable composer from stalling supervision: the phase 4 delivery proof refuses such a pane before the daemon takes over, and this alarm covers only a composer that stops confirming later.
+The alarm reaches a person only through a configured active channel, and off macOS none exists by default, so it does not keep a composer that never reads `empty` from stalling supervision unseen.
 
 ### Submit model
 
@@ -239,7 +236,6 @@ Always exit through `bin/fm-afk-launch.sh stop`, which keeps `state/.afk` presen
 
 These properties must hold:
 
-- The daemon owns supervision only after the delivery proof passes, and every startup refusal clears `state/.afk`, so the ordinary supervision cycle is never switched off for a daemon that cannot reach the session or is not running.
 - Nothing is lost after queue publication.
   The daemon leaves every presented wake durable until routing completes and post-handling acknowledgement succeeds, so interruption replays the same work to the daemon or its successor.
 - Wedge detection is bounded-latency, not lossy.
