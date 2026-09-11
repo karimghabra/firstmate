@@ -63,10 +63,12 @@ Be clear with yourself about what you have and have not just done:
 
 And never reach for it to quieten a task that is actually stuck.
 The command refuses while the agent reads alive, so a wedged-but-running worker cannot be silenced this way - stop it first with `bin/fm-control.sh <task-id> exit`, and only then, and only if the stop was deliberate, record why.
+That refusal needs a backend that can prove whether an agent is alive, which today means tmux and herdr; on any other backend recording is refused outright rather than written with a guard that silently never ran, so such a task stays on the ordinary recovery path.
 No tool can read intent: a crash and a deliberate stop both leave a dead endpoint, so the reason you write IS the claim that this stop was on purpose.
 A worker that actually died is a failure to recover or report, not a stand-down.
 
-Retire the record when the work resumes or lands - `bin/fm-stand-down.sh <task-id> --release`, which `bin/fm-control.sh <task-id> relaunch` does for you - and use `--show` to read one back.
+Retire the record when the work resumes or lands - `bin/fm-stand-down.sh <task-id> --release`, which `bin/fm-control.sh <task-id> relaunch` does for you; retiring works on every backend.
+To read a record back, the record is a plain file at `state/<task-id>.stood-down` carrying its epoch and reason, which is where to look when the endpoint is unreachable and `bin/fm-crew-state.sh <id>` can only report `unknown`.
 A stood-down task is still yours to finish: revisit it whenever the decision it waits on arrives, exactly as you would any other open item.
 
 ## A live crewmate claiming the pipeline is dead

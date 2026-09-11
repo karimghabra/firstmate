@@ -11,7 +11,8 @@
 #
 # These cases pin the command surface and, more importantly, the boundaries that
 # keep a quietening record from being able to quieten the wrong thing: it refuses
-# to be recorded over a live agent, a malformed record is never honored, and
+# to be recorded over a live agent, it refuses outright where the backend cannot
+# prove whether an agent is alive, a malformed record is never honored, and
 # releasing or relaunching retires it. How each READER gates on proven death is
 # pinned where that reader lives (tests/fm-crew-state.test.sh case (m)).
 set -u
@@ -75,21 +76,16 @@ list_dir_entries() {  # <dir>
 
 # --- the round trip ---------------------------------------------------------
 
-test_record_show_release_round_trip() {
-  local d out rc
+test_record_release_round_trip() {
+  local d out
   d=$(new_case round-trip)
 
-  out=$(run_stand_down "$d" stood --show) && rc=0 || rc=$?
-  expect_code 1 "$rc" "--show on a task that is not stood down"
-  assert_contains "$out" "not stood down" "--show says so plainly"
+  fm_stand_down_read "$d/state" stood && fail "a task with no record read as stood down"
 
   out=$(run_stand_down "$d" stood --reason "captain stopped it; work pushed, not landed") \
     || fail "recording a stand-down over a stopped agent was refused"
   assert_contains "$out" "stood down" "recording reports what it recorded"
   assert_contains "$out" "work pushed, not landed" "recording echoes the reason"
-
-  out=$(run_stand_down "$d" stood --show) || fail "--show failed after recording"
-  assert_contains "$out" "work pushed, not landed" "--show reports the recorded reason"
 
   fm_stand_down_read "$d/state" stood || fail "the recorded file did not read back"
   assert_equals "captain stopped it; work pushed, not landed" "$FM_STAND_DOWN_REASON" \
@@ -101,7 +97,7 @@ test_record_show_release_round_trip() {
 
   out=$(run_stand_down "$d" stood --release) || fail "--release on an absent record must be a no-op, not an error"
   assert_contains "$out" "not stood down" "a second --release is a quiet no-op"
-  pass "record, show, and release round-trip through the stored record"
+  pass "record and release round-trip through the stored record"
 }
 
 # Recording changes the ENDPOINT's story and NOTHING else. The work stays open and
@@ -171,6 +167,35 @@ SH
   pass "an unreachable backend does not block recording a stand-down"
 }
 
+# The live-agent refusal above is only a guarantee where the backend can actually
+# answer "is an agent running here". zellij, orca, and cmux have no recovery-grade
+# classifier, so that guard would pass silently on a genuinely wedged worker and
+# report a check that never ran. Recording is refused outright there instead -
+# while retiring an existing record, which quietens nothing new, stays available
+# on every backend.
+test_refuses_to_record_where_liveness_cannot_be_proven() {
+  local d out rc record
+  d=$(new_case unverified-backend)
+  fm_write_meta "$d/state/stood.meta" "window=fm:fm-stood" "kind=ship" "backend=cmux" \
+    "worktree=$d/wt"
+
+  out=$(run_stand_down "$d" stood --reason "stopped on purpose" 2>&1) && rc=0 || rc=$?
+  expect_code 1 "$rc" "recording on a backend with no recovery-grade classifier"
+  assert_contains "$out" "cmux" "the refusal names the backend that cannot answer"
+  assert_contains "$out" "still alive" "the refusal says what cannot be proven"
+  assert_contains "$out" "tmux and herdr" "the refusal names the backends that can"
+  assert_absent "$(fm_stand_down_path "$d/state" stood)" "a refused recording writes nothing"
+
+  # Retiring is not gated: a record made before a backend switch, or by any other
+  # route, must still be removable wherever it exists.
+  record=$(fm_stand_down_path "$d/state" stood)
+  printf 'recorded=%s\nreason=recorded earlier\n' "$(date +%s)" > "$record"
+  run_stand_down "$d" stood --release >/dev/null \
+    || fail "--release must not need a backend that can prove liveness"
+  assert_absent "$record" "--release retired the record on an unverifiable backend"
+  pass "a backend that cannot prove an agent stopped cannot carry a new stand-down, but can still shed one"
+}
+
 test_refuses_an_unknown_task() {
   local d out rc
   d=$(new_case unknown-task)
@@ -201,7 +226,7 @@ test_refuses_a_missing_or_conflicting_verb() {
   expect_code 2 "$rc" "no verb at all"
   run_stand_down "$d" stood --nonsense >/dev/null 2>&1 && rc=0 || rc=$?
   expect_code 2 "$rc" "an unknown argument"
-  run_stand_down "$d" 'bad id/../..' --show >/dev/null 2>&1 && rc=0 || rc=$?
+  run_stand_down "$d" 'bad id/../..' --release >/dev/null 2>&1 && rc=0 || rc=$?
   expect_code 2 "$rc" "an invalid task id"
   pass "a missing verb, an unknown argument, and an invalid id are all refused"
 }
@@ -237,9 +262,10 @@ test_a_malformed_record_is_never_honored() {
   pass "a malformed, empty, or symlinked record is never honored"
 }
 
-test_record_show_release_round_trip
+test_record_release_round_trip
 test_recording_touches_no_other_record
 test_refuses_to_record_over_a_live_agent
+test_refuses_to_record_where_liveness_cannot_be_proven
 test_records_when_the_backend_cannot_answer
 test_refuses_an_unknown_task
 test_refuses_an_unsafe_reason

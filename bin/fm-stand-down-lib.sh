@@ -36,9 +36,15 @@
 # AND IT MUST NOT QUIETEN A TASK THAT IS ACTUALLY STUCK. Two things enforce that,
 # and one is on the operator:
 #
-#   - Enforced: a stand-down is refused while the agent reads positively alive,
-#     so a wedged-but-running worker cannot be silenced with it - that worker is
-#     still alarming and still needs recovery. Readers additionally gate the
+#   - Enforced where liveness can be PROVEN: a stand-down is refused while the
+#     agent reads positively alive, so a wedged-but-running worker cannot be
+#     silenced with it - that worker is still alarming and still needs recovery.
+#     Only a backend with a recovery-grade agent-state classifier can answer
+#     that question (bin/fm-control-lib.sh owns the table; tmux and herdr have
+#     one), so on every other backend recording is refused OUTRIGHT rather than
+#     written with no check behind it: a record whose guard silently never ran
+#     would claim a safety that was never checked. Retiring and reading a record
+#     stay available on every backend. Readers additionally gate the
 #     record on positive evidence the endpoint is gone, so a record beside a live
 #     agent is ignored rather than honored, a resumed task's leftover record
 #     cannot silence its next genuine death, an unreachable endpoint keeps its
