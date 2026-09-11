@@ -1,0 +1,18 @@
+== scenario: new-occurrence   (wall clock 2026-09-11T21:45:05Z)
+== real forge: head=ed077e1e checks=14 pending=0 last_completed=2026-09-11T17:30:54Z
+== stubbed run record (what the pipeline reported):
+     active_steps[1]{step,status,active_for,round_active_for,last_activity,agent_pid,round}:
+       ci,running,25m3s,"","quiet 24m25s ago: log: CI checks running, waiting for results...","",""
+# occurrence A: run head b432757b, PR 5
+$ fm-inactive-reconcile.sh scan --startup
+actionable: pipeline ci monitor behind: child=crew every check settled at 2026-09-11T15:36:48Z but the ci step still says it is waiting; the task stays working, so look before acting (not a readiness signal)
+   queued ci-monitor-behind wakes: 1
+$ fm-inactive-reconcile.sh scan --startup   # same occurrence again
+   queued ci-monitor-behind wakes: 1
+# occurrence B: task advanced to run head ed077e1e, PR 6 (checks settled later)
+$ fm-inactive-reconcile.sh scan --startup
+actionable: pipeline ci monitor behind: child=crew every check settled at 2026-09-11T17:30:54Z but the ci step still says it is waiting; the task stays working, so look before acting (not a readiness signal)
+   queued ci-monitor-behind wakes: 2   terminal outcomes: 0   markers: 2
+$ fm-crew-state.sh crew
+state: working · source: run-step · validating (running) · pipeline monitor behind: all 14 checks settled at 2026-09-11T17:30:54Z (254m ago), not yet observed
+(forge calls: 4)

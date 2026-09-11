@@ -1,0 +1,8 @@
+== scenario: head-moved   (wall clock 2026-09-11T21:42:46Z)
+== real forge: head=ed077e1e checks=14 pending=0 last_completed=2026-09-11T17:30:54Z
+== stubbed run record (what the pipeline reported):
+     active_steps[1]{step,status,active_for,round_active_for,last_activity,agent_pid,round}:
+       ci,running,25m3s,"","quiet 24m25s ago: log: CI checks running, waiting for results...","",""
+$ fm-crew-state.sh crew
+state: working · source: run-step · validating (running) · forge PR head 01234567 is not the run's head ed077e1e; checks not compared
+(forge calls: 1)

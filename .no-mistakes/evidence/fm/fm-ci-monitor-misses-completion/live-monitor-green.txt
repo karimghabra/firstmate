@@ -1,0 +1,8 @@
+== scenario: monitor-green   (wall clock 2026-09-11T21:42:52Z)
+== real forge: head=ed077e1e checks=14 pending=0 last_completed=2026-09-11T17:30:54Z
+== stubbed run record (what the pipeline reported):
+     active_steps[1]{step,status,active_for,round_active_for,last_activity,agent_pid,round}:
+       ci,running,25m3s,"","quiet 24m25s ago: log: CI checks running, waiting for results...","",""
+$ fm-crew-state.sh crew
+state: done · source: run-step · checks green: PR ready for review (still monitoring for merge/close)
+(forge calls: 0)

@@ -1,0 +1,13 @@
+== scenario: wake-negative   (wall clock 2026-09-11T21:44:06Z)
+== real forge: head=ed077e1e checks=14 pending=0 last_completed=2026-09-11T17:30:54Z
+== stubbed run record (what the pipeline reported):
+     active_steps[1]{step,status,active_for,round_active_for,last_activity,agent_pid,round}:
+       ci,running,25m3s,"","quiet 24m25s ago: log: CI checks running, waiting for results...","",""
+# monitor waiting for a CI re-run (not claiming to wait for results)
+$ fm-inactive-reconcile.sh scan --startup
+   queued ci-monitor-behind wakes: 0   terminal outcomes: 0
+$ fm-crew-state.sh crew
+state: working · source: run-step · validating (running) · all 14 checks settled 253m ago
+# checks inside the poll window (behind bound raised past the real settle age)
+$ FM_CREW_STATE_CI_BEHIND_SECS=100000000 fm-inactive-reconcile.sh scan --startup
+   queued ci-monitor-behind wakes: 0   terminal outcomes: 0

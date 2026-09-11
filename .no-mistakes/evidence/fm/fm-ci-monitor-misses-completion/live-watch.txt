@@ -1,0 +1,13 @@
+== scenario: watch   (wall clock 2026-09-11T21:46:51Z)
+== real forge: head=ed077e1e checks=14 pending=0 last_completed=2026-09-11T17:30:54Z
+== stubbed run record (what the pipeline reported):
+     active_steps[1]{step,status,active_for,round_active_for,last_activity,agent_pid,round}:
+       ci,running,25m3s,"","quiet 24m25s ago: log: CI checks running, waiting for results...","",""
+$ fm-watch.sh     # real watcher, FM_POLL=1; runs the inactive scan on its poll
+   watcher exit: 0
+   | check: inactive-outcome
+   queued ci-monitor-behind wakes: 1   terminal outcomes: 0
+   queue row: 1789163215	1	check	ci-monitor-behind:b090650e341d5283fddd296998472ee6	pipeline ci monitor behind: child=crew every check settled at 2026-09-11T17:30:54Z but the ci step still says it is waiting; the task stays working, so look before acting (not a readiness signal)
+$ fm-crew-state.sh crew
+state: working · source: run-step · validating (running) · pipeline monitor behind: all 14 checks settled at 2026-09-11T17:30:54Z (256m ago), not yet observed
+(forge calls: 3)

@@ -1,0 +1,21 @@
+== scenario: wake   (wall clock 2026-09-11T21:45:21Z)
+== real forge: head=ed077e1e checks=14 pending=0 last_completed=2026-09-11T17:30:54Z
+== stubbed run record (what the pipeline reported):
+     active_steps[1]{step,status,active_for,round_active_for,last_activity,agent_pid,round}:
+       ci,running,25m3s,"","quiet 24m25s ago: log: CI checks running, waiting for results...","",""
+$ fm-inactive-reconcile.sh scan --startup      # 1st scan, monitor behind
+actionable: pipeline ci monitor behind: child=crew every check settled at 2026-09-11T17:30:54Z but the ci step still says it is waiting; the task stays working, so look before acting (not a readiness signal)
+   queued ci-monitor-behind wakes: 1   terminal outcomes: 0
+$ fm-crew-state.sh crew
+state: working · source: run-step · validating (running) · pipeline monitor behind: all 14 checks settled at 2026-09-11T17:30:54Z (254m ago), not yet observed
+$ fm-inactive-reconcile.sh scan --startup      # 2nd scan, same occurrence (age moved on)
+   queued ci-monitor-behind wakes: 1   terminal outcomes: 0
+$ fm-wake-drain.sh                            # the supervisor reads its wake
+1789163122	1	check	ci-monitor-behind:50acb82a39db0b81d3bf2255df4765b2	pipeline ci monitor behind: child=crew every check settled at 2026-09-11T17:30:54Z but the ci step still says it is waiting; the task stays working, so look before acting (not a readiness signal)
+$ fm-wake-drain.sh --ack-through 1 ...     # supervisor acknowledges
+   queued ci-monitor-behind wakes: 0
+$ fm-inactive-reconcile.sh scan --startup      # 3rd scan after the wake was handled
+   queued ci-monitor-behind wakes: 0   terminal outcomes: 0   markers: 1
+$ fm-crew-state.sh crew
+state: working · source: run-step · validating (running) · pipeline monitor behind: all 14 checks settled at 2026-09-11T17:30:54Z (255m ago), not yet observed
+(forge calls: 5)

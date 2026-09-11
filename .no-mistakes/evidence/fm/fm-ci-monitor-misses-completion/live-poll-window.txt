@@ -1,0 +1,13 @@
+== scenario: poll-window   (wall clock 2026-09-11T21:42:39Z)
+== real forge: head=ed077e1e checks=14 pending=0 last_completed=2026-09-11T17:30:54Z
+== stubbed run record (what the pipeline reported):
+     active_steps[1]{step,status,active_for,round_active_for,last_activity,agent_pid,round}:
+       ci,running,25m3s,"","quiet 24m25s ago: log: CI checks running, waiting for results...","",""
+# clock pinned to firstmate reading PR 6: 2026-09-11T17:32:03Z (69s after last settle)
+$ FM_CREW_STATE_NOW=<17:32:03Z> fm-crew-state.sh crew
+state: working · source: run-step · validating (running) · all 14 checks settled 69s ago, within the monitor's poll window
+$ FM_CREW_STATE_NOW=<settle+240s> fm-crew-state.sh crew
+state: working · source: run-step · validating (running) · all 14 checks settled 4m ago, within the monitor's poll window
+$ FM_CREW_STATE_NOW=<settle+241s> fm-crew-state.sh crew
+state: working · source: run-step · validating (running) · pipeline monitor behind: all 14 checks settled at 2026-09-11T17:30:54Z (4m ago), not yet observed
+(forge calls: 3)

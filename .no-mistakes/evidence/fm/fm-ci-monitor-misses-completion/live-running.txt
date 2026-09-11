@@ -1,0 +1,10 @@
+== scenario: running   (wall clock 2026-09-11T21:45:01Z)
+== real forge: head=3c6aef0b checks=3 pending=2 last_completed=2026-09-11T21:44:33Z
+== stubbed run record (what the pipeline reported):
+     active_steps[1]{step,status,active_for,round_active_for,last_activity,agent_pid,round}:
+       ci,running,25m3s,"","quiet 24m25s ago: log: CI checks running, waiting for results...","",""
+$ fm-crew-state.sh crew
+state: working · source: run-step · validating (running) · waiting on 2 of 3 checks: Backend, Frontend
+$ fm-inactive-reconcile.sh scan --startup
+   queued ci-monitor-behind wakes: 0   terminal outcomes: 0
+(forge calls: 2)

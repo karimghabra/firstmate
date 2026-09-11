@@ -1,0 +1,23 @@
+######## BASE 609dd58 (before the change): behind
+== scenario: behind   (wall clock 2026-09-11T21:47:09Z)
+== real forge: head=ed077e1e checks=14 pending=0 last_completed=2026-09-11T17:30:54Z
+== stubbed run record (what the pipeline reported):
+     active_steps[1]{step,status,active_for,round_active_for,last_activity,agent_pid,round}:
+       ci,running,25m3s,"","quiet 24m25s ago: log: CI checks running, waiting for results...","",""
+$ fm-crew-state.sh crew
+state: working · source: run-step · validating (running)
+(forge calls: 0)
+######## BASE 609dd58 (before the change): watch
+== scenario: watch   (wall clock 2026-09-11T21:47:12Z)
+== real forge: head=ed077e1e checks=14 pending=0 last_completed=2026-09-11T17:30:54Z
+== stubbed run record (what the pipeline reported):
+     active_steps[1]{step,status,active_for,round_active_for,last_activity,agent_pid,round}:
+       ci,running,25m3s,"","quiet 24m25s ago: log: CI checks running, waiting for results...","",""
+$ fm-watch.sh     # real watcher, FM_POLL=1; runs the inactive scan on its poll
+   watcher exit: 124
+   | Terminated
+   queued ci-monitor-behind wakes: 0   terminal outcomes: 0
+grep: /tmp/fm-live-pr6.dnmlp6/state/.wake-queue: No such file or directory
+$ fm-crew-state.sh crew
+state: working · source: run-step · validating (running)
+(forge calls: 0)
