@@ -1,0 +1,53 @@
+Source: read-only query of the running no-mistakes v1.72.0 daemon's state DB (~/.no-mistakes/state.sqlite),
+step_rounds.repo_config_yaml = the repo config the daemon actually resolved for the run's Review round.
+
+=== PR 3 run (fm/fm-agents-md-scaffold-scope) - the 2026-09-11 incident, before this change
+run=01M27J3PJGC4TE9T9N1M2YHTKC trusted_config_sha=8facd7c38e064bcc495bb040daf472b1732cd0ec
+auto_fix:
+    lint: null
+    test: null
+    review: null
+    document: null
+    ci: null
+    babysit: null
+    rebase: null
+ci:
+    rerun_transient: null
+    revalidate_repairs: null
+disable_project_settings: true
+per-step auto_fix_limit captured so far:
+   ('intent', 'completed', None, 0)
+   ('rebase', 'completed', 3, 0)
+   ('review', 'completed', None, 0)
+   ('test', 'completed', 3, 0)
+   ('document', 'completed', 3, 0)
+   ('lint', 'completed', 3, 0)
+   ('push', 'completed', None, 0)
+   ('pr', 'completed', None, 0)
+   ('ci', 'failed', 3, 0)
+
+=== THIS run (fm/fm-ci-autofix-unsupervised @ 79767636) - after this change
+run=01M28FR20GFTZ5MH6WGV3RYXME trusted_config_sha=11556d1e91e14a73eb1b72334fd73905c03e269b
+auto_fix:
+    lint: null
+    test: null
+    review: null
+    document: null
+    ci: 0
+    babysit: null
+    rebase: null
+ci:
+    rerun_transient: null
+    revalidate_repairs: null
+disable_project_settings: true
+per-step auto_fix_limit captured so far:
+   ('intent', 'completed', None, 0)
+   ('rebase', 'completed', 3, 0)
+   ('review', 'completed', None, 0)
+   ('test', 'running', 3, 0)
+   ('document', 'pending', None, 0)
+   ('lint', 'pending', None, 0)
+   ('push', 'pending', None, 0)
+   ('pr', 'pending', None, 0)
+   ('ci', 'pending', None, 0)
+

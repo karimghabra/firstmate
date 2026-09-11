@@ -1,0 +1,6 @@
+$ bash tests/fm-nm-test-contract.test.sh   # tracked .no-mistakes.yaml at 7976763
+ok - no-mistakes does not configure commands.test
+ok - no-mistakes gate agents run without project settings
+ok - no-mistakes never starts a CI repair round on its own
+ok - no-mistakes revalidates every CI repair from Review
+exit=0

@@ -1,0 +1,19 @@
+run:
+  id: "01M28FR20GFTZ5MH6WGV3RYXME"
+  branch: fm/fm-ci-autofix-unsupervised
+  status: running
+  head: "79767636"
+  head_sha: 79767636216a0b2b61e97e3e9e9339bd3bfbb4e5
+  findings: none
+  steps[9]{step,status,findings,duration_ms}:
+    intent,completed,0,17
+    rebase,completed,0,954
+    review,completed,0,280079
+    test,running,0,0
+    document,pending,0,0
+    lint,pending,0,0
+    push,pending,0,0
+    pr,pending,0,0
+    ci,pending,0,0
+  active_steps[1]{step,status,active_for,round_active_for,last_activity,agent_pid,round}:
+    test,running,2m58s,2m58s,"0s ago: claude producing output","876402",starting

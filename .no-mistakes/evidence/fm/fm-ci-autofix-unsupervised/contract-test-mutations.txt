@@ -1,0 +1,88 @@
+=== case: pre-fix config from base 11556d1 (regression reproduction)
+    config under test (auto_fix / ci / disable_project_settings / commands.test, as parsed by Ruby YAML):
+      auto_fix=nil ci=nil disable_project_settings=true commands.test=nil
+    ok - no-mistakes does not configure commands.test
+    ok - no-mistakes gate agents run without project settings
+    not ok - auto_fix.ci must be the integer 0 so a red check parks for a decision instead of launching a CI repair agent (expected '0', got 'absent')
+    exit=1
+=== case: auto_fix.ci removed (inherits operator global default 3)
+    config under test (auto_fix / ci / disable_project_settings / commands.test, as parsed by Ruby YAML):
+      auto_fix=nil ci={"revalidate_repairs"=>true} disable_project_settings=true commands.test=nil
+    ok - no-mistakes does not configure commands.test
+    ok - no-mistakes gate agents run without project settings
+    not ok - auto_fix.ci must be the integer 0 so a red check parks for a decision instead of launching a CI repair agent (expected '0', got 'absent')
+    exit=1
+=== case: auto_fix.ci raised to 3
+    config under test (auto_fix / ci / disable_project_settings / commands.test, as parsed by Ruby YAML):
+      auto_fix={"ci"=>3} ci={"revalidate_repairs"=>true} disable_project_settings=true commands.test=nil
+    ok - no-mistakes does not configure commands.test
+    ok - no-mistakes gate agents run without project settings
+    not ok - auto_fix.ci must be the integer 0 so a red check parks for a decision instead of launching a CI repair agent (expected '0', got '3')
+    exit=1
+=== case: auto_fix.ci quoted string "0"
+    config under test (auto_fix / ci / disable_project_settings / commands.test, as parsed by Ruby YAML):
+      auto_fix={"ci"=>"0"} ci={"revalidate_repairs"=>true} disable_project_settings=true commands.test=nil
+    ok - no-mistakes does not configure commands.test
+    ok - no-mistakes gate agents run without project settings
+    not ok - auto_fix.ci must be the integer 0 so a red check parks for a decision instead of launching a CI repair agent (expected '0', got '"0"')
+    exit=1
+=== case: auto_fix.ci null
+    config under test (auto_fix / ci / disable_project_settings / commands.test, as parsed by Ruby YAML):
+      auto_fix={"ci"=>nil} ci={"revalidate_repairs"=>true} disable_project_settings=true commands.test=nil
+    ok - no-mistakes does not configure commands.test
+    ok - no-mistakes gate agents run without project settings
+    not ok - auto_fix.ci must be the integer 0 so a red check parks for a decision instead of launching a CI repair agent (expected '0', got 'nil')
+    exit=1
+=== case: auto_fix.ci replaced by legacy auto_fix.babysit: 0
+    config under test (auto_fix / ci / disable_project_settings / commands.test, as parsed by Ruby YAML):
+      auto_fix={"babysit"=>0} ci={"revalidate_repairs"=>true} disable_project_settings=true commands.test=nil
+    ok - no-mistakes does not configure commands.test
+    ok - no-mistakes gate agents run without project settings
+    not ok - auto_fix.ci must be the integer 0 so a red check parks for a decision instead of launching a CI repair agent (expected '0', got 'absent')
+    exit=1
+=== case: ci.revalidate_repairs false
+    config under test (auto_fix / ci / disable_project_settings / commands.test, as parsed by Ruby YAML):
+      auto_fix={"ci"=>0} ci={"revalidate_repairs"=>false} disable_project_settings=true commands.test=nil
+    ok - no-mistakes does not configure commands.test
+    ok - no-mistakes gate agents run without project settings
+    ok - no-mistakes never starts a CI repair round on its own
+    not ok - ci.revalidate_repairs must be boolean true so every CI repair re-passes Review before it is published (expected 'true', got 'false')
+    exit=1
+=== case: ci.revalidate_repairs quoted "true"
+    config under test (auto_fix / ci / disable_project_settings / commands.test, as parsed by Ruby YAML):
+      auto_fix={"ci"=>0} ci={"revalidate_repairs"=>"true"} disable_project_settings=true commands.test=nil
+    ok - no-mistakes does not configure commands.test
+    ok - no-mistakes gate agents run without project settings
+    ok - no-mistakes never starts a CI repair round on its own
+    not ok - ci.revalidate_repairs must be boolean true so every CI repair re-passes Review before it is published (expected 'true', got '"true"')
+    exit=1
+=== case: ci block removed
+    config under test (auto_fix / ci / disable_project_settings / commands.test, as parsed by Ruby YAML):
+      auto_fix={"ci"=>0} ci=nil disable_project_settings=true commands.test=nil
+    ok - no-mistakes does not configure commands.test
+    ok - no-mistakes gate agents run without project settings
+    ok - no-mistakes never starts a CI repair round on its own
+    not ok - ci.revalidate_repairs must be boolean true so every CI repair re-passes Review before it is published (expected 'true', got 'absent')
+    exit=1
+=== case: disable_project_settings removed
+    config under test (auto_fix / ci / disable_project_settings / commands.test, as parsed by Ruby YAML):
+      auto_fix={"ci"=>0} ci={"revalidate_repairs"=>true} disable_project_settings=absent commands.test=nil
+    ok - no-mistakes does not configure commands.test
+    not ok - disable_project_settings must be boolean true so gate agents never adopt the fleet-captain identity (expected 'true', got 'absent')
+    exit=1
+=== case: disable_project_settings: "yes" string
+    config under test (auto_fix / ci / disable_project_settings / commands.test, as parsed by Ruby YAML):
+      auto_fix={"ci"=>0} ci={"revalidate_repairs"=>true} disable_project_settings="yes" commands.test=nil
+    ok - no-mistakes does not configure commands.test
+    not ok - disable_project_settings must be boolean true so gate agents never adopt the fleet-captain identity (expected 'true', got '"yes"')
+    exit=1
+=== case: commands.test added
+    config under test (auto_fix / ci / disable_project_settings / commands.test, as parsed by Ruby YAML):
+      auto_fix={"ci"=>0} ci={"revalidate_repairs"=>true} disable_project_settings=true commands.test="bash tests/run.sh"
+    not ok - commands.test must be absent or empty so Test stays intent-targeted; got: "bash tests/run.sh"
+    exit=1
+=== case: unparseable YAML
+    config under test (auto_fix / ci / disable_project_settings / commands.test, as parsed by Ruby YAML):
+      <parse error>
+    not ok - failed to parse .no-mistakes.yaml as YAML
+    exit=1
