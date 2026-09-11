@@ -1,0 +1,47 @@
+=== Daemon-running harness (grok marker) still launches the real daemon: TARGET ===
+
+$ GROK_AGENT=1 bin/fm-harness.sh
+grok
+
+$ env -u CLAUDECODE GROK_AGENT=1 /tmp/fm-afk-claude-live/daemon-home/bin/fm-afk-launch.sh confirm
+Away posture confirmed at 2026-09-11T17:00:36Z: hold-for-return only. No phone channel is configured; anything that needs you waits for your return. No mandate clauses recorded. Forbidden, destructive, irreversible, and security-sensitive actions are never pre-authorizable regardless of clause text, and no recorded clause is authority by itself. Expected return: not given. Spend cap: 4 concurrent workers.
+[exit 0]
+
+$ env -u CLAUDECODE GROK_AGENT=1 FM_SUPERVISOR_TARGET=%0 FM_SUPERVISOR_BACKEND=tmux /tmp/fm-afk-claude-live/daemon-home/bin/fm-afk-launch.sh start
+fm-afk-launch: daemon launched in detached tmux session 'fm-afk-daemon-1751244192-1971008-5349-1789146036', supervising %0
+[exit 0]
+--- state of /tmp/fm-afk-claude-live/daemon-home ---
+  state/.afk                     PRESENT
+  state/.afk-contract            PRESENT
+  state/.afk-daemon-terminal     PRESENT
+  state/.supervise-daemon.lock   PRESENT
+  supervise-daemon processes for this home: 1971135 
+  daemon terminal record: tmux	fm-afk-daemon-1751244192-1971008-5349-1789146036	
+  tmux sessions on private server: captain fm-afk-daemon-1751244192-1971008-5349-1789146036 
+--- daemon log head ---
+  | [2026-09-11T10:00:37-0700] daemon starting (pid 1971135); target=%0; target_source=FM_SUPERVISOR_TARGET; backend=tmux; backend_source=FM_SUPERVISOR_BACKEND; afk=on; inject_skip='heartbeat'; stale_escalate=240s; batch=90s
+
+=== Adversarial: a Claude refusal while a LIVE daemon owns state/.afk ===
+
+$ /tmp/fm-afk-claude-live/daemon-home/bin/fm-afk-launch.sh start-native
+fm-afk-launch: the away daemon is not launched on claude; its own supervision cycle keeps running under the away-posture record, which is the whole entry there (run bin/fm-afk-launch.sh confirm and stop)
+[exit 1]
+--- state of /tmp/fm-afk-claude-live/daemon-home ---
+  state/.afk                     PRESENT
+  state/.afk-contract            PRESENT
+  state/.afk-daemon-terminal     PRESENT
+  state/.supervise-daemon.lock   PRESENT
+  supervise-daemon processes for this home: 1971135 
+
+=== Return: stop shuts the daemon down in order ===
+
+$ env -u CLAUDECODE GROK_AGENT=1 FM_SUPERVISOR_TARGET=%0 FM_SUPERVISOR_BACKEND=tmux /tmp/fm-afk-claude-live/daemon-home/bin/fm-afk-launch.sh stop
+fm-afk-launch: away-mode daemon did not exit after SIGTERM; preserving lifecycle state
+[exit 1]
+--- state of /tmp/fm-afk-claude-live/daemon-home ---
+  state/.afk                     PRESENT
+  state/.afk-contract            PRESENT
+  state/.afk-daemon-terminal     PRESENT
+  state/.supervise-daemon.lock   PRESENT
+  supervise-daemon processes for this home: 1971135 
+  tmux sessions on private server: captain fm-afk-daemon-1751244192-1971008-5349-1789146036 

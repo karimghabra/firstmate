@@ -1,0 +1,40 @@
+=== /afk on a Claude Code primary at BASE c08b78282148fd8d8bc790b97a11fc9c958e385a (before the fix) ===
+
+$ bin/fm-harness.sh   # harness this session is detected as
+claude
+
+$ /tmp/fm-afk-claude-live/base-home/bin/fm-afk-launch.sh propose
+Away posture read-back (proposed, not yet confirmed):
+  reach: hold-for-return only. No phone channel is configured; anything that needs you waits for your return.
+    (none)
+    (none)
+Say go to confirm; restate any refused clause first if you want it recorded.
+[exit 0]
+
+$ /tmp/fm-afk-claude-live/base-home/bin/fm-afk-launch.sh confirm
+Away posture confirmed at 2026-09-11T16:59:17Z: hold-for-return only. No phone channel is configured; anything that needs you waits for your return. No mandate clauses recorded. Forbidden, destructive, irreversible, and security-sensitive actions are never pre-authorizable regardless of clause text, and no recorded clause is authority by itself. Expected return: not given. Spend cap: 4 concurrent workers.
+[exit 0]
+
+$ /tmp/fm-afk-claude-live/base-home/bin/fm-afk-launch.sh start-native
+[exit 0]
+
+$ /tmp/fm-afk-claude-live/base-home/bin/fm-afk-launch.sh start
+fm-afk-launch: could not resolve the captain supervisor pane (set FM_SUPERVISOR_TARGET)
+[exit 1]
+--- state of /tmp/fm-afk-claude-live/base-home ---
+  state/.afk                     PRESENT
+  state/.afk-contract            PRESENT
+  state/.afk-daemon-terminal     PRESENT
+  state/.supervise-daemon.lock   absent
+  supervise-daemon processes for this home: 
+
+=== Stop-hook rewake under the away-posture record (BASE) ===
+
+$ printf '{"session_id":"lab","stop_hook_active":false}' | bin/fm-claude-stop-autoarm.sh   # Claude Stop asyncRewake
+  hook already exited before any watcher armed
+[Stop hook exit 0]  (2 = rewake delivered to Claude as "Stop hook feedback"; 0 = silent, no rewake)
+--- Stop hook stderr (what Claude would be woken with) ---
+--- wake queue ---
+  | (empty)
+--- epoch ledger ---
+  | (none)

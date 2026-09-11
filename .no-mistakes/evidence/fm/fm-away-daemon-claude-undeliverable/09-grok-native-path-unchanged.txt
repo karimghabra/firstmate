@@ -1,0 +1,11 @@
+=== grok native path (TARGET) ===
+$ fm-harness.sh -> grok
+$ fm-afk-launch.sh start-native
+[exit 0]
+state: .afk .afk-contract .afk-daemon-terminal 
+terminal record: none - native
+$ fm-afk-launch.sh stop   # rollback
+fm-afk-launch: away-posture record archived at /tmp/fm-afk-claude-live/grok-native-home/state/afk-contracts/1789146243.afk-contract
+fm-afk-launch: away mode stopped; daemon terminal torn down, .afk cleared, and the posture record archived
+[exit 0]
+state: 

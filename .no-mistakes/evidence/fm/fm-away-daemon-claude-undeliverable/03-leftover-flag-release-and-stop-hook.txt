@@ -1,0 +1,64 @@
+=== A state/.afk left by an older (pre-fix) Claude launch, no daemon running ===
+
+$ /tmp/fm-afk-claude-live/leftover-home/bin/fm-afk-launch.sh propose
+Away posture read-back (proposed, not yet confirmed):
+  reach: hold-for-return only. No phone channel is configured; anything that needs you waits for your return.
+    (none)
+    (none)
+Say go to confirm; restate any refused clause first if you want it recorded.
+[exit 0]
+
+$ /tmp/fm-afk-claude-live/leftover-home/bin/fm-afk-launch.sh confirm
+Away posture confirmed at 2026-09-11T16:59:25Z: hold-for-return only. No phone channel is configured; anything that needs you waits for your return. No mandate clauses recorded. Forbidden, destructive, irreversible, and security-sensitive actions are never pre-authorizable regardless of clause text, and no recorded clause is authority by itself. Expected return: not given. Spend cap: 4 concurrent workers.
+[exit 0]
+
+$ (pre-fix launcher) FM_HOME=<home> base/bin/fm-afk-launch.sh start-native
+[exit 0]
+--- state of /tmp/fm-afk-claude-live/leftover-home ---
+  state/.afk                     PRESENT
+  state/.afk-contract            PRESENT
+  state/.afk-daemon-terminal     PRESENT
+  state/.supervise-daemon.lock   absent
+  supervise-daemon processes for this home: 
+
+--- Stop hook with the leftover flag (before release) ---
+
+$ printf '{"session_id":"lab","stop_hook_active":false}' | bin/fm-claude-stop-autoarm.sh   # Claude Stop asyncRewake
+  hook already exited before any watcher armed
+[Stop hook exit 0]  (2 = rewake delivered to Claude as "Stop hook feedback"; 0 = silent, no rewake)
+--- Stop hook stderr (what Claude would be woken with) ---
+--- wake queue ---
+  | (empty)
+--- epoch ledger ---
+  | (none)
+
+=== Target launcher, as SKILL.md phase 4 instructs: start-native once ===
+
+$ /tmp/fm-afk-claude-live/leftover-home/bin/fm-afk-launch.sh start-native
+fm-afk-launch: the away daemon is not launched on claude; its own supervision cycle keeps running under the away-posture record, which is the whole entry there (run bin/fm-afk-launch.sh confirm and stop)
+fm-afk-launch: released a state/.afk that no running daemon owned, so the ordinary supervision cycle resumes
+[exit 1]
+--- state of /tmp/fm-afk-claude-live/leftover-home ---
+  state/.afk                     absent
+  state/.afk-contract            PRESENT
+  state/.afk-daemon-terminal     PRESENT
+  state/.supervise-daemon.lock   absent
+  supervise-daemon processes for this home: 
+
+--- Stop hook after the release ---
+
+$ printf '{"session_id":"lab","stop_hook_active":false}' | bin/fm-claude-stop-autoarm.sh   # Claude Stop asyncRewake
+  hook still running after arm; watcher beacon: fresh
+
+$ crewmate lab-crew posts: needs-decision: pick schema v1 or v2 for the export
+[Stop hook exit 2]  (2 = rewake delivered to Claude as "Stop hook feedback"; 0 = silent, no rewake)
+--- Stop hook stderr (what Claude would be woken with) ---
+  | firstmate watcher wake - one supervision event needs a handling turn now.
+  | signal: /tmp/fm-afk-claude-live/leftover-home/state/lab-crew.status
+  | Run bin/fm-wake-drain.sh first, handle the wake, then run its exact WAKE_ACK_REQUIRED --ack-through command. Until that post-handling acknowledgement, interruption leaves the wake durable for idempotent re-handling. This Stop hook owns watcher continuity: when the handling turn ends, the next needed cycle arms automatically - do NOT run bin/fm-watch-arm.sh after an ordinary wake.
+--- wake queue ---
+  | 1789146002	1	signal	lab-crew.status	needs-decision: /tmp/fm-afk-claude-live/leftover-home/state/lab-crew.status
+  | 1789146002	2	signal	lab-crew.status	needs-decision: /tmp/fm-afk-claude-live/leftover-home/state/lab-crew.status
+--- epoch ledger ---
+  | epoch=1 owner_pid=1957950 outcome=rewake updated_at=1789146002
+  | linux-starttime=8693039 cmdline-hex=62617368002f746d702f666d2d61666b2d636c617564652d6c6976652f6c6566746f7665722d686f6d652f62696e2f666d2d636c617564652d73746f702d6175746f61726d2e736800
