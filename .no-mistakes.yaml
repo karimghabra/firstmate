@@ -9,6 +9,17 @@
 # HEAD-continuity guard; see docs/architecture.md "No-mistakes gate authority boundary."
 disable_project_settings: true
 
+# Never let no-mistakes' unsupervised CI repair agent edit this repo's shared fleet
+# tooling: a red check or merge conflict parks at a gate for the driving worker.
+# auto_fix is read from the pushed branch, so the trusted-only ci block's
+# revalidate_repairs is the backstop that sends any CI repair back through Review.
+# See docs/architecture.md "No-mistakes gate authority boundary"; asserted by
+# tests/fm-nm-test-contract.test.sh.
+auto_fix:
+  ci: 0
+ci:
+  revalidate_repairs: true
+
 # Trusted documentation placement policy for the Document step.
 # The audience inventory and coding guideline own the detail; keep this as a
 # pointer so gate instructions cannot become a second prose policy.

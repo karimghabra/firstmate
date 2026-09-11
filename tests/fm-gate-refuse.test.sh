@@ -22,9 +22,8 @@
 # when it is itself executed inside the real no-mistakes gate (whose process has
 # NO_MISTAKES_GATE=1 and a gate-worktree cwd).
 #
-# Finally, assert firstmate's TRACKED .no-mistakes.yaml parses and sets
-# disable_project_settings: true (the trusted-only opt-out that neutralizes gate
-# agents' project instructions on the no-mistakes side).
+# The no-mistakes side of this boundary, the tracked .no-mistakes.yaml's
+# disable_project_settings: true, is pinned by tests/fm-nm-test-contract.test.sh.
 set -u
 
 # shellcheck source=tests/fixtures.sh
