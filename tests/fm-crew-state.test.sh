@@ -1141,7 +1141,7 @@ test_ci_monitor_behind_after_checks_settled() {
   out=$(run_crew_state "$d" ci-forge-behind)
   assert_contains "$out" "state: working" "a behind monitor is detection only; the state stays working"
   assert_contains "$out" "source: run-step" "the pipeline's run-step remains the authority"
-  assert_contains "$out" "pipeline monitor behind: all 14 checks settled 9m ago, not yet observed" \
+  assert_contains "$out" "pipeline monitor behind: all 14 checks settled at 2026-09-11T17:30:54Z (9m ago), not yet observed" \
     "a monitor still waiting long after every check settled is named behind"
   assert_not_contains "$out" "state: done" "a behind monitor must never read as ready"
   assert_not_contains "$out" "checks green" "a behind monitor must never read as checks green"
@@ -1207,7 +1207,7 @@ test_ci_legacy_commit_status_counts() {
     "Lint|COMPLETED|2026-09-11T17:18:19Z" "ctx:vercel|SUCCESS|2026-09-11T17:31:00Z")
   FM_CREW_STATE_NOW=$(fm_utc_iso_to_epoch 2026-09-11T17:40:00Z)
   out=$(run_crew_state "$d" ci-forge-status)
-  assert_contains "$out" "all 2 checks settled 9m ago, not yet observed" \
+  assert_contains "$out" "all 2 checks settled at 2026-09-11T17:31:00Z (9m ago), not yet observed" \
     "a terminal commit status settles at the time it was posted"
   pass "legacy commit statuses count by their own state and time"
 }
@@ -1267,39 +1267,85 @@ test_ci_forge_not_consulted_off_the_waiting_path() {
   pass "the forge is read only while a GitHub ci monitor still waits"
 }
 
-# A drive call killed at the harness's ten-minute cap while the run waits on a
-# 24-minute CI: the pipeline is alive, and the ci row's quiet is how a healthy
-# monitor looks. Before, any ci wait past the quiet warning read as not-alive.
-test_quiet_ci_wait_with_forge_evidence_is_alive() {
+# The behind reading reaches the supervisor through the REAL inactive scan over
+# the REAL helper: nothing while checks still run, one wake per occurrence
+# however often the scan passes or however the note's age moves, even after
+# that wake was handled, a new wake for a later settlement, and never anything
+# but a working task.
+CI_WAKE_SCAN_NOW=
+run_inactive_scan() {  # <case-dir>
+  PATH="$1/fakebin:$PATH" FM_HOME="$1" FM_STATE_OVERRIDE="$1/state" \
+    FM_INACTIVE_RECONCILE_SECS=60 FM_INACTIVE_RECONCILE_NOW="$CI_WAKE_SCAN_NOW" \
+    FM_INACTIVE_CREW_STATE_BIN="$CREW_STATE" "$ROOT/bin/fm-inactive-reconcile.sh" scan --startup
+}
+
+behind_wake_count() {  # <case-dir>
+  [ -f "$1/state/.wake-queue" ] || { printf '0\n'; return; }
+  grep -c $'\tcheck\tci-monitor-behind:' "$1/state/.wake-queue" || true
+}
+
+assert_still_working() {  # <case-dir> <id> <when>
+  local out
+  out=$(run_crew_state "$1" "$2")
+  assert_contains "$out" "state: working · source: run-step" "the task still reads working $3"
+  assert_equals 0 "$(find "$1/state/terminal-outcomes" -type f 2>/dev/null | wc -l | tr -d ' ')" \
+    "no terminal outcome is recorded $3"
+}
+
+drain_and_ack() {  # <case-dir>
+  local err seq generation
+  err="$1/drain.err"
+  FM_HOME="$1" FM_STATE_OVERRIDE="$1/state" "$ROOT/bin/fm-wake-drain.sh" >/dev/null 2> "$err"
+  seq=$(sed -n 's/^WAKE_ACK_REQUIRED:.*--ack-through \([0-9][0-9]*\) --recovery-generation .*/\1/p' "$err")
+  generation=$(sed -n 's/^WAKE_ACK_REQUIRED:.*--recovery-generation \([A-Za-z0-9._-][A-Za-z0-9._-]*\)$/\1/p' "$err")
+  [ -n "$seq" ] && [ -n "$generation" ] || fail "the wake drain did not ask for acknowledgement: $(cat "$err")"
+  FM_HOME="$1" FM_STATE_OVERRIDE="$1/state" "$ROOT/bin/fm-wake-drain.sh" \
+    --ack-through "$seq" --recovery-generation "$generation" >/dev/null 2>&1 \
+    || fail "the wake drain acknowledgement failed"
+}
+
+test_ci_monitor_behind_wakes_the_supervisor_once() {
   reset_fakes
-  need_jq "quiet ci wait alive" || return 0
+  need_jq "ci monitor behind wakes once" || return 0
   local d out
-  ci_forge_case ci-forge-alive fm/feat-cialive
+  ci_forge_case ci-behind-wake fm/feat-cibwake
   d=$CI_CASE
-  printf 'blocked: no-mistakes axi run timed out after 10m\n' > "$d/state/ci-forge-alive.status"
+  CI_WAKE_SCAN_NOW=$(( $(date +%s) + 3600 ))
   FM_FAKE_GH_PR_JSON=$(pr6_rollup running)
   FM_CREW_STATE_NOW=$(fm_utc_iso_to_epoch 2026-09-11T17:25:00Z)
-  out=$(run_crew_state "$d" ci-forge-alive)
-  assert_contains "$out" "status-log superseded: run alive, not a daemon failure (steer reattach)" \
-    "a scheduled ci wait proven by the forge is alive"
-  # The same claim once the monitor is behind: no longer evidence of life.
+  out=$(run_inactive_scan "$d")
+  assert_equals "" "$out" "a monitor still waiting on running checks is quiet"
+  assert_equals 0 "$(behind_wake_count "$d")" "checks still running never wake"
+  assert_still_working "$d" ci-behind-wake "while checks run"
+
   FM_FAKE_GH_PR_JSON=$(pr6_rollup settled)
   FM_CREW_STATE_NOW=$(fm_utc_iso_to_epoch 2026-09-11T17:40:00Z)
-  out=$(run_crew_state "$d" ci-forge-alive)
-  assert_contains "$out" "status-log superseded by active run" "a behind monitor keeps the plain reading"
-  assert_not_contains "$out" "run alive" "a behind monitor is not proof the run is alive"
-  # And with the daemon probe failing, a quiet row proves nothing.
-  FM_FAKE_GH_PR_JSON=$(pr6_rollup running)
-  FM_CREW_STATE_NOW=$(fm_utc_iso_to_epoch 2026-09-11T17:25:00Z)
-  FM_FAKE_DAEMON_DOWN=1
-  out=$(run_crew_state "$d" ci-forge-alive)
-  assert_not_contains "$out" "run alive" "a down daemon is never read as a live ci wait"
-  # Without forge evidence at all, the quiet ci row stays no evidence.
-  FM_FAKE_DAEMON_DOWN=0
-  FM_FAKE_GH_PR_JSON=
-  out=$(run_crew_state "$d" ci-forge-alive)
-  assert_not_contains "$out" "run alive" "an unreadable forge is not evidence of a scheduled wait"
-  pass "a quiet ci wait reads alive only on positive evidence"
+  out=$(run_inactive_scan "$d")
+  assert_contains "$out" "actionable: pipeline ci monitor behind: child=ci-behind-wake every check settled at 2026-09-11T17:30:54Z" \
+    "a behind monitor wakes the supervisor to look"
+  assert_contains "$out" "not a readiness signal" "the wake says it is not a readiness signal"
+  assert_equals 1 "$(behind_wake_count "$d")" "one wake for the occurrence"
+  assert_still_working "$d" ci-behind-wake "once the monitor is behind"
+
+  FM_CREW_STATE_NOW=$(fm_utc_iso_to_epoch 2026-09-11T17:55:00Z)
+  out=$(run_inactive_scan "$d")
+  assert_equals "" "$out" "a later scan of the same occurrence, with an older age, is quiet"
+  assert_equals 1 "$(behind_wake_count "$d")" "the queued wake is not repeated"
+  drain_and_ack "$d"
+  assert_equals 0 "$(behind_wake_count "$d")" "the handled wake left the queue"
+  out=$(run_inactive_scan "$d")
+  assert_equals "" "$out" "a handled occurrence never wakes again"
+  assert_equals 0 "$(behind_wake_count "$d")" "no repeat after the wake was handled"
+  assert_still_working "$d" ci-behind-wake "after the wake was handled"
+
+  FM_FAKE_GH_PR_JSON=$(gh_rollup_json "$FM_FAKE_RUN_HEAD" \
+    "Lint|COMPLETED|2026-09-11T17:18:19Z" "Behavior timing aggregate|COMPLETED|2026-09-11T17:50:00Z")
+  FM_CREW_STATE_NOW=$(fm_utc_iso_to_epoch 2026-09-11T18:00:00Z)
+  out=$(run_inactive_scan "$d")
+  assert_contains "$out" "every check settled at 2026-09-11T17:50:00Z" "a later settlement is a new occurrence"
+  assert_equals 1 "$(behind_wake_count "$d")" "the new occurrence wakes once"
+  assert_still_working "$d" ci-behind-wake "for the new occurrence"
+  pass "a behind ci monitor wakes the supervisor once per occurrence and the task stays working"
 }
 
 # (d) terminal run-step is authoritative
@@ -2830,7 +2876,7 @@ test_ci_legacy_commit_status_counts
 test_ci_forge_head_moved_is_not_compared
 test_ci_forge_unreadable_adds_no_progress
 test_ci_forge_not_consulted_off_the_waiting_path
-test_quiet_ci_wait_with_forge_evidence_is_alive
+test_ci_monitor_behind_wakes_the_supervisor_once
 test_terminal_passed
 test_terminal_failed
 test_terminal_failed_ci_orphan_after_green_reads_done

@@ -59,7 +59,9 @@
 #      forge call adds what it waits on ("waiting on 2 of 14 checks: ..."), or
 #      names it behind once every check settled more than twice its longest
 #      poll interval ago (nm_ci_forge_observe). That is detection only: the
-#      state stays working and never becomes a readiness or merge input. And a
+#      state stays working and never becomes a readiness or merge input;
+#      bin/fm-inactive-reconcile.sh wakes the supervisor to look at a behind
+#      monitor once per occurrence, keyed on the settled time it names. And a
 #      terminal FAILED run whose only failure is the ci monitor step, after
 #      every substantive step completed and the ci log's last marker reads
 #      checks green, also reads done (held-for-merge), never failed: a monitor
@@ -79,9 +81,7 @@
 #      claims are superseded BECAUSE THE RUN IS ALIVE when the run is
 #      running/fixing with recent reported activity: a killed or timed-out drive
 #      call is not daemon death, so that claim is answered by steering the crew
-#      to reattach, not by escalating. A ci wait is quiet by design, so its
-#      activity is instead the forge evidence above plus a live daemon probe
-#      (nm_ci_wait_is_scheduled).
+#      to reattach, not by escalating.
 #   4. No run for this crew (pre-validation, or kind=scout): fall back to the
 #      recorded backend's pane busy state, then the status log's last line only
 #      when its verb maps to a recognized run-state. Decision-only events such as
@@ -426,36 +426,11 @@ nm_steps_rows() {
 # than a second threshold invented in firstmate. Positive evidence is required:
 # an absent table is not recency, so a run record that merely still says
 # `running` while nothing executes it never reads as alive.
-# The ci monitor is the one step whose quiet is not a verdict: it logs only
-# when what it sees changes, so every wait for checks longer than the quiet
-# warning reads quiet while it polls on schedule. A quiet running ci row is
-# therefore judged on its own positive evidence (nm_ci_wait_is_scheduled)
-# instead, and every other row keeps the client's recency verdict.
 nm_run_activity_is_recent() {
-  local rows ci_rows
+  local rows
   rows=$(nm_active_steps_rows)
   [ -n "$rows" ] || return 1
-  if printf '%s\n' "$rows" | grep -vE "$NM_CI_ACTIVE_ROW_RE" | grep -q 'quiet'; then
-    return 1
-  fi
-  ci_rows=$(printf '%s\n' "$rows" | grep -E "$NM_CI_ACTIVE_ROW_RE" || true)
-  if printf '%s\n' "$ci_rows" | grep -q 'quiet'; then
-    nm_ci_wait_is_scheduled || return 1
-  fi
-  return 0
-}
-NM_CI_ACTIVE_ROW_RE='^[[:space:]]*"?ci"?[[:space:]]*,'
-
-# 0 when a quiet ci step is provably a scheduled wait rather than a stalled
-# monitor: the step is running (not a repair round), its latest statement is
-# that it is waiting, the forge shows it still has something to wait for or
-# settled within the monitor's poll window (nm_ci_forge_observe), and the
-# canonical daemon probe answers. Any missing piece is no evidence.
-nm_ci_wait_is_scheduled() {
-  [ "${CI_STEP_STATUS:-}" = running ] || return 1
-  case "$CI_FORGE_CLASS" in waiting|settling) ;; *) return 1 ;; esac
-  nm_ci_monitor_reports_waiting || return 1
-  ! nm_daemon_probe_down
+  ! printf '%s\n' "$rows" | grep -q 'quiet'
 }
 
 # 0 when a terminal FAILED run's only failure is the ci monitor step and the
@@ -635,17 +610,15 @@ NM_CI_FORGE_JQ='
 # so without this a healthy 24-minute wait and a monitor that stopped polling
 # read identically. One bounded read-only gh call; a PR on another forge, a
 # missing gh, or a failed read adds nothing that could read as progress.
-# Sets CI_FORGE_CLASS (waiting, settling, behind, settled, no-checks,
-# head-moved, unavailable, or empty when not applicable) and CI_FORGE_NOTE.
-CI_FORGE_CLASS=
+# A behind note names the settled time, which stays fixed for one occurrence
+# while its age does not, so a consumer can key that occurrence on it.
+# Sets CI_FORGE_NOTE, empty when not applicable.
 CI_FORGE_NOTE=
 nm_ci_forge_observe() {
   local pr_url run_head out forge_head total pending settled_at settled_epoch now age names name shown
-  CI_FORGE_CLASS=
   CI_FORGE_NOTE=
   pr_url=$(strip_quotes "$(nm_field pr)")
   fm_pr_url_parse "$pr_url" && [ "$FM_PR_PROVIDER" = github ] || return 0
-  CI_FORGE_CLASS=unavailable
   CI_FORGE_NOTE="forge checks unreadable"
   command -v gh >/dev/null 2>&1 || return 0
   run_head=$(strip_quotes "$(nm_field head_sha)")
@@ -674,24 +647,20 @@ EOF
   case "$forge_head" in
     "$run_head"*) [ -n "$run_head" ] || return 0 ;;
     *)
-      CI_FORGE_CLASS=head-moved
       CI_FORGE_NOTE="forge PR head ${forge_head:0:8} is not the run's head ${run_head:0:8}; checks not compared"
       return 0
       ;;
   esac
   if [ "$total" -eq 0 ]; then
-    CI_FORGE_CLASS=no-checks
     CI_FORGE_NOTE="forge reports no checks yet"
     return 0
   fi
   if [ "$pending" -gt 0 ]; then
     [ "$pending" -gt "$shown" ] && names="$names +$((pending - shown)) more"
-    CI_FORGE_CLASS=waiting
     CI_FORGE_NOTE="waiting on $pending of $total checks: $names"
     return 0
   fi
   settled_epoch=$(fm_utc_iso_to_epoch "$settled_at") || {
-    CI_FORGE_CLASS=settled
     CI_FORGE_NOTE="all $total checks settled"
     return 0
   }
@@ -700,13 +669,10 @@ EOF
   age=$((now - settled_epoch))
   [ "$age" -ge 0 ] || age=0
   if [ "$age" -le "$FM_CREW_STATE_CI_BEHIND_SECS" ]; then
-    CI_FORGE_CLASS=settling
     CI_FORGE_NOTE="all $total checks settled $(crew_state_age "$age") ago, within the monitor's poll window"
   elif nm_ci_monitor_reports_waiting; then
-    CI_FORGE_CLASS=behind
-    CI_FORGE_NOTE="pipeline monitor behind: all $total checks settled $(crew_state_age "$age") ago, not yet observed"
+    CI_FORGE_NOTE="pipeline monitor behind: all $total checks settled at $settled_at ($(crew_state_age "$age") ago), not yet observed"
   else
-    CI_FORGE_CLASS=settled
     CI_FORGE_NOTE="all $total checks settled $(crew_state_age "$age") ago"
   fi
 }
