@@ -60,10 +60,13 @@
 # process state/<id>.inbox/*.msg in order and acknowledge each by moving it to
 # handled/ (record, doorbell, and ladder owned by bin/fm-task-inbox-lib.sh).
 # Ship tasks include a project-memory section so durable project-intrinsic
-# learnings can be committed to AGENTS.md through the project's delivery path;
-# it carries the AGENTS.md authoring bar (widely useful knowledge only, pointers
-# over copied detail) and defers self-governance recognition and insertion to
-# fm-ensure-agents-md.sh's contract.
+# learnings can be committed to the project's agent guide through the
+# project's delivery path; it runs fm-ensure-agents-md.sh only when the task
+# produced such knowledge, records it in the guide the helper names at its
+# existing path, forbids relocating or restructuring an existing guide inside
+# the task, carries the authoring bar (widely useful knowledge only, pointers
+# over copied detail), and defers guide layout and self-governance recognition
+# and insertion to fm-ensure-agents-md.sh's contract.
 # Ship and scout briefs also inline a "Captain's standing orders" section
 # carrying the entire content of the active home's data/standing-orders.md,
 # verbatim, with nothing parsed, stripped, or added: the file IS the payload,
@@ -533,11 +536,12 @@ $ASK_USER_BLOCK
 $INBOX_SECTION
 
 # Project memory
-If \`AGENTS.md\` or \`CLAUDE.md\` already exists, or if this task produced durable project-intrinsic knowledge, run \`$FM_ROOT/bin/fm-ensure-agents-md.sh .\` in the worktree.
+If this task produced durable project-intrinsic knowledge, run \`$FM_ROOT/bin/fm-ensure-agents-md.sh .\` in the worktree and record that knowledge in the file its final \`guide:\` line names, at that existing path; if it reports a conflict instead, record the knowledge by hand in the guide file the project already uses.
+Never relocate, rename, merge, or restructure an existing \`AGENTS.md\` or \`CLAUDE.md\` in this task: a guide-layout change is a change of its own, never part of unrelated work.
 Record only project knowledge useful to almost every future session.
 For anything the codebase already shows, prefer a pointer to the authoritative file, command, or doc over copying the detail.
-If you touch a project \`AGENTS.md\`, follow \`$FM_ROOT/bin/fm-ensure-agents-md.sh\`'s self-governance contract in the same pass.
-Keep it proportionate: skip \`AGENTS.md\` edits for trivial tasks that produced no durable project knowledge.
+When you touch the project guide, follow \`$FM_ROOT/bin/fm-ensure-agents-md.sh\`'s self-governance contract in the same pass.
+Keep it proportionate: skip the helper and the guide entirely for tasks that produced no durable project knowledge.
 
 $DOD
 EOF
