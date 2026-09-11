@@ -352,7 +352,10 @@ detail=$(detail_of "$out")
 printf '%s\n' "$detail" | jq -e '
   .window == "five_hour" and .current.resetsAt == null and .current.percentRemaining == 100
 ' >/dev/null || fail "resetless refresh detail was wrong: $detail"
-[ ! -e "$BASELINE" ] || fail "a resetless refresh left a baseline that would replay it"
+claude_snap 2025-01-10T21:52:00Z - 100 > "$REFRESH_LAB/resetless-relaunch"
+out=$(refresh_poll "$REFRESH_LAB/resetless-relaunch")
+printf '%s\n' "$out" | grep -qx 'condition_polls: 1' \
+  || fail "a relaunched poll swallowed a resetless refresh whose capture was lost"
 ok "refresh fires when the binding window resets with no new boundary yet"
 
 # The binding window is the one whose exhaustion stops dispatch, not the one
@@ -484,26 +487,30 @@ printf '%s\n' "$out" | grep -qx 'condition_polls: 3' \
   || fail "refresh fired before the recorded boundary had elapsed"
 ok "refresh waits for the recorded boundary to actually elapse"
 
-# Firing advances the recorded boundary, so polling again watches the next
-# turnover instead of replaying the one already reported.
+# The runner captures a fired outcome only after the poll exits, so firing must
+# leave the recorded boundary in place: a poll relaunched after a lost capture
+# reports the same turnover again on its first poll instead of waiting for the
+# next one.
 reset_refresh_home
 out=$(refresh_poll "$REFRESH_LAB/turnover")
-printf '%s\n' "$out" | grep -qx 'condition_polls: 2' || fail "replay setup did not fire as expected"
+printf '%s\n' "$out" | grep -qx 'condition_polls: 2' || fail "relaunch setup did not fire as expected"
 { claude_snap 2025-01-10T22:00:00Z 2025-01-11T02:50:00Z 100
   claude_snap 2025-01-11T02:51:00Z 2025-01-11T07:50:00Z 100
-} > "$REFRESH_LAB/replay"
-out=$(refresh_poll "$REFRESH_LAB/replay")
-printf '%s\n' "$out" | grep -qx 'status: refreshed' || fail "replay script never reached its next turnover"
-printf '%s\n' "$out" | grep -qx 'condition_polls: 2' \
-  || fail "an already-reported refresh was replayed instead of advancing the boundary"
+} > "$REFRESH_LAB/relaunch"
+out=$(refresh_poll "$REFRESH_LAB/relaunch")
+printf '%s\n' "$out" | grep -qx 'status: refreshed' || fail "relaunch script never fired"
+printf '%s\n' "$out" | grep -qx 'condition_polls: 1' \
+  || fail "a relaunched poll swallowed a refresh whose capture was lost"
 detail=$(detail_of "$out")
-printf '%s\n' "$detail" | jq -e '.current.resetsAt == "2025-01-11T07:50:00Z"' >/dev/null \
-  || fail "the replayed wake reported the wrong boundary: $detail"
-ok "a fired refresh advances the recorded boundary"
+printf '%s\n' "$detail" | jq -e '
+  .previous.resetsAt == "2025-01-10T21:50:00Z" and
+  .current.resetsAt == "2025-01-11T02:50:00Z"
+' >/dev/null || fail "the relaunched wake reported the wrong turnover: $detail"
+ok "a relaunched refresh poll repeats an uncaptured wake rather than losing it"
 
 # A baseline left behind by an earlier watch never stands in for the window this
 # watch asked for. The five_hour baseline from the turnover above would fire on
-# poll 2; the requested seven_day window only turns over on poll 3.
+# poll 1; the requested seven_day window only turns over on poll 3.
 { claude_snap 2025-01-11T03:00:00Z 2025-01-11T07:50:00Z 100 2025-01-13T19:00:00Z 40
   claude_snap 2025-01-11T07:51:00Z 2025-01-11T12:50:00Z 100 2025-01-13T19:00:00Z 40
   claude_snap 2025-01-13T19:01:00Z 2025-01-14T00:00:00Z 100 2025-01-20T19:00:00Z 100

@@ -73,9 +73,10 @@
 #     out-of-range `percentRemaining` leaves the baseline untouched and keeps
 #     polling. A quota-axi failure or a malformed snapshot is reported as an
 #     error outcome exactly as the falling-edge watch reports it.
-#   * After firing, the baseline advances to the reported window when its
-#     boundary is still ahead and is discarded otherwise, so polling again
-#     watches the next turnover rather than replaying the one already reported.
+#   * Firing leaves the baseline untouched; only arm and retire replace or
+#     discard it. The runner captures the outcome only after the poll exits, so
+#     a poll relaunched after a lost capture reports the same turnover again
+#     rather than swallowing it.
 set -u
 
 SCRIPT_DIR="$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)"
@@ -624,14 +625,6 @@ poll_refresh() {
     printf 'status: refreshed\n'
     printf 'detail: %s\n' "$detail"
     printf 'condition_polls: %s\n' "$polls"
-    # Move the recorded boundary past this turnover only after the outcome is on
-    # the wire, so a crash here repeats a wake rather than swallowing one. A
-    # window with no boundary still ahead has nothing to advance to.
-    if [ -n "$W_EPOCH" ] && [ "$W_EPOCH" -gt "$now" ]; then
-      baseline_write "$CANONICAL_SOURCE_ID" "$W_PROVIDER" "$W_ID" "$W_RESETS" "$W_EPOCH" "$W_PERCENT" || :
-    else
-      rm -f -- "$(baseline_file "$CANONICAL_SOURCE_ID")"
-    fi
     exit 0
   done
 }
