@@ -1783,6 +1783,22 @@ status_span_has_actionable() {  # <status-file> <start-offset>
   status_span_first_actionable_record "$1" "${2:-0}" > /dev/null
 }
 
+# The shared parse behind every predicate below: one bin/fm-crew-state.sh read for
+# <id>, printed as "<state> <source>". Both fields are single tokens by that
+# script's own output contract, so a space separates them unambiguously. Returns 1
+# and prints nothing when the crew has no readable authoritative verdict, so every
+# caller treats an unreadable state as no evidence rather than as a verdict.
+# FM_CREW_STATE_BIN lets tests stub it.
+crew_state_fields() {  # <id>
+  local id=$1 line state src
+  [ -n "$id" ] || return 1
+  line=$("$FM_CREW_STATE_BIN" "$id" 2>/dev/null) || true
+  case "$line" in state:*) ;; *) return 1 ;; esac
+  state=${line#state: }; state=${state%% *}
+  src=${line#*source: }; src=${src%% *}
+  printf '%s %s' "$state" "$src"
+}
+
 # Classify WHY an idle/stale crew MIGHT be safely absorbed instead of surfaced,
 # from bin/fm-crew-state.sh's one authoritative current-state line
 # ("state: <s> · source: <src> · <detail>"). Prints exactly one token:
@@ -1798,16 +1814,12 @@ status_span_has_actionable() {  # <status-file> <start-offset>
 # that appended paused: but then STARTED a run reports working, never paused.
 # NOT a pure read: fm-crew-state.sh may make a bounded no-mistakes call, so callers
 # run it only on no-verb signal and first-sighting stale paths, never every wake.
-# FM_CREW_STATE_BIN lets tests stub the verdict.
 crew_absorb_class() {  # <id>
-  local id=$1 line state src
-  [ -n "$id" ] || { printf 'none'; return; }
-  line=$("$FM_CREW_STATE_BIN" "$id" 2>/dev/null) || true
-  case "$line" in state:*) ;; *) printf 'none'; return ;; esac
-  state=${line#state: }; state=${state%% *}
+  local id=$1 fields state src
+  fields=$(crew_state_fields "$id") || { printf 'none'; return; }
+  state=${fields%% *}; src=${fields#* }
   if [ "$state" = paused ]; then printf 'paused'; return; fi
   if [ "$state" = working ]; then
-    src=${line#*source: }; src=${src%% *}
     case "$src" in run-step|pane) printf 'working'; return ;; esac
   fi
   printf 'none'
@@ -1832,6 +1844,26 @@ crew_is_provably_working() {  # <id>
 # escalating a possible wedge.
 crew_is_paused() {  # <id>
   [ "$(crew_absorb_class "$1")" = paused ]
+}
+
+# 0 if crew <id>'s no-mistakes PIPELINE currently owns the work: the authoritative
+# current state is `working` attributed to the run-step source, not to the crew's
+# own pane. That is a strictly narrower claim than crew_is_provably_working, and
+# the distinction is the whole point: while a pipeline step runs, the daemon is
+# doing the work and the crew's pane is SUPPOSED to be idle, so an idle pane is
+# expected behavior rather than a missing heartbeat. A busy pane is deliberately
+# excluded - that is the agent itself working, which the stale path has already
+# ruled out by the time it asks, and which carries its own separate bound
+# (fm-watch.sh's BUSY_TURN_MAX_SECS).
+# The claim expires on its own the moment the pipeline stops owning the work: a
+# gate parks the run, a terminal step reports done or failed, and a probe-proven
+# dead daemon reads unknown, each of which answers 1 here and restores the
+# ordinary escalation schedule. That self-expiry is why this may bound a wedge
+# alarm without weakening it.
+crew_pipeline_owns_work() {  # <id>
+  local fields
+  fields=$(crew_state_fields "$1") || return 1
+  [ "$fields" = "working run-step" ]
 }
 
 # Directories excluded from the worktree write probe below, and the depth it walks.

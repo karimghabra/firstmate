@@ -343,6 +343,8 @@ PRIMARY_HARNESS=$("$SCRIPT_DIR/fm-harness.sh" 2>/dev/null || printf unknown)
 . "$SCRIPT_DIR/fm-wake-lib.sh"
 # shellcheck source=bin/fm-line-cap-lib.sh
 . "$SCRIPT_DIR/fm-line-cap-lib.sh"
+# shellcheck source=bin/fm-stand-down-lib.sh
+. "$SCRIPT_DIR/fm-stand-down-lib.sh"
 
 # One tasks-axi compatibility verdict per session start. The probe costs three
 # tasks-axi subprocesses and this digest needs the same answer twice - here for
@@ -844,6 +846,15 @@ for meta in "$STATE"/*.meta; do
     backend=$(fm_backend_of_meta "$meta")
     if fm_backend_target_exists "$backend" "${target:-$window}" "fm-$id"; then
       printf 'endpoint: alive (backend=%s window=%s)\n' "$backend" "$window"
+    elif fm_stand_down_read "$STATE" "$id"; then
+      # A dead endpoint is a recovery trigger (AGENTS.md section 5), and correctly
+      # so - except when the agent is gone by intent. This line is what separates
+      # the two, so a deliberate stop is not re-investigated on every session start
+      # for as long as the work stays open. It is read only on the not-alive
+      # branch, so a stale record cannot mask a live agent, and it says nothing
+      # about the WORK: the item is still in flight and still unlanded.
+      printf 'endpoint: stood down since %s, no agent by intent - not a recovery trigger (backend=%s window=%s): %s\n' \
+        "$(fm_stand_down_format_time "$FM_STAND_DOWN_RECORDED")" "$backend" "$window" "$FM_STAND_DOWN_REASON"
     else
       printf 'endpoint: dead (backend=%s window=%s)\n' "$backend" "$window"
     fi

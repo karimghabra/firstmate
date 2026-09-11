@@ -36,6 +36,10 @@
 #       This is the direct regression pair for the 2026-07-02 herdr incident,
 #       proving the watcher's own absorb-only-when-provably-working predicate
 #       benefits from the fix in both directions.
+#   (m) stand-down: a task whose agent is gone BY INTENT (bin/fm-stand-down.sh)
+#       reads paused/stood-down instead of unknown, but only from a proven death:
+#       a live agent, an unreachable endpoint, and an active run each outrank the
+#       record.
 #   (l) coarse runs-ledger fallback: a terminal failed record with the daemon
 #       provably down (explicit daemon-status probe fails) reads unknown -
 #       "unverified", never failed; the same record with the daemon up stays
@@ -2137,6 +2141,116 @@ test_dead_window_ignores_stale_status_log() {
   pass "dead window ignores stale status log"
 }
 
+# --- (m) stand-down: the agent is gone BY INTENT ----------------------------
+# Before this existed, a task the captain deliberately stopped was
+# indistinguishable from one whose worker died: both read unknown/gone, which is
+# a recovery trigger, so the same deliberate stop was re-investigated every
+# session for as long as the work stayed open. The record supplies the missing
+# evidence; these cases pin that it only ever explains a death already proven,
+# and never invents or hides one.
+stand_down() {  # <case-dir> <id> <reason>
+  PATH="$1/fakebin:$PATH" FM_STATE_OVERRIDE="$1/state" \
+    "$ROOT/bin/fm-stand-down.sh" "$2" --reason "$3"
+}
+
+test_stood_down_dead_window_reads_paused_not_unknown() {
+  reset_fakes
+  local d out; d=$(new_case stood-down-dead)
+  make_repo_on_branch "$d/wt" fm/feat-stood
+  make_fakebin "$d" >/dev/null
+  fm_write_meta "$d/state/feat-stood.meta" "window=fm:fm-feat-stood" "worktree=$d/wt" "kind=ship"
+  printf 'working: both branches pushed, waiting to land\n' > "$d/state/feat-stood.status"
+  FM_FAKE_AXI_STATUS=""
+  FM_FAKE_RUNS_LIST=""
+  FM_FAKE_TMUX_MISSING=1
+  out=$(run_crew_state "$d" feat-stood)
+  assert_contains "$out" "state: unknown" "an unexplained dead window is unknown before any record"
+  stand_down "$d" feat-stood "captain stopped it; waiting on a landing decision" >/dev/null \
+    || fail "recording a stand-down over a dead endpoint was refused"
+  out=$(run_crew_state "$d" feat-stood)
+  assert_contains "$out" "state: paused" "a stood-down task is not working and is expected to idle"
+  assert_contains "$out" "source: stood-down" "the source names WHY it idles"
+  assert_contains "$out" "waiting on a landing decision" "the recorded reason is reported"
+  assert_not_contains "$out" "state: unknown" "a recorded intent is not an unknown state"
+  # The record explains the endpoint; it never touches the work or the worker.
+  assert_contains "$(cat "$d/state/feat-stood.status")" "both branches pushed" \
+    "the worker's own status log is left exactly as the worker wrote it"
+  pass "a deliberately stopped task with an open item reads paused/stood-down, not unknown"
+}
+
+# The safety half: the record may only ever explain a death the caller already
+# proved. A live agent never reaches the branch that reads it, so a record left
+# behind by a resumed task cannot silence that task's next genuine failure.
+test_stood_down_record_never_masks_a_live_agent() {
+  reset_fakes
+  local d out; d=$(new_case stood-down-live)
+  make_repo_on_branch "$d/wt" fm/feat-stood-live
+  make_fakebin "$d" >/dev/null
+  fm_write_meta "$d/state/feat-stood-live.meta" "window=fm:fm-feat-stood-live" \
+    "worktree=$d/wt" "kind=ship" "harness=claude"
+  printf 'working: implementing\n' > "$d/state/feat-stood-live.status"
+  FM_FAKE_AXI_STATUS=""
+  FM_FAKE_RUNS_LIST=""
+  FM_FAKE_TMUX_MISSING=1
+  stand_down "$d" feat-stood-live "stopped while the captain decided" >/dev/null \
+    || fail "recording a stand-down over a dead endpoint was refused"
+  # The task is resumed: the same record is still on disk, and the agent is back.
+  FM_FAKE_TMUX_MISSING=0
+  FM_FAKE_BUSY=1
+  local gen; gen=$("$ROOT/bin/fm-busy-event.sh" arm "$d/state" feat-stood-live)
+  "$ROOT/bin/fm-busy-event.sh" apply "$d/state" feat-stood-live busy --gen "$gen" \
+    --source claude-hook --event user-prompt-submit
+  out=$(run_crew_state "$d" feat-stood-live)
+  assert_contains "$out" "state: working" "a live busy agent outranks a leftover stand-down record"
+  assert_not_contains "$out" "stood-down" "a leftover record must never describe a live agent"
+  pass "a leftover stand-down record is ignored beside a live agent"
+}
+
+# An endpoint that merely failed to answer is not positive evidence of anything,
+# so it keeps its unreachable reading rather than borrowing the record's
+# explanation. Otherwise one unanswerable backend call would convert every
+# stood-down task's real failure into a reassuring line.
+test_stood_down_record_does_not_explain_an_unreachable_endpoint() {
+  reset_fakes
+  local d out; d=$(new_case stood-down-unreachable)
+  make_repo_on_branch "$d/wt" fm/feat-stood-unreach
+  make_fakebin "$d" >/dev/null
+  fm_write_meta "$d/state/feat-stood-unreach.meta" "window=fm:fm-feat-stood-unreach" \
+    "worktree=$d/wt" "kind=ship"
+  FM_FAKE_AXI_STATUS=""
+  FM_FAKE_RUNS_LIST=""
+  FM_FAKE_TMUX_MISSING=1
+  stand_down "$d" feat-stood-unreach "stopped on purpose" >/dev/null \
+    || fail "recording a stand-down over a dead endpoint was refused"
+  reset_fakes
+  FM_FAKE_TMUX_UNREADABLE=1
+  out=$(run_crew_state "$d" feat-stood-unreach)
+  assert_contains "$out" "backend unreachable" "an unanswerable backend stays unreachable"
+  assert_not_contains "$out" "stood-down" "an unreachable endpoint is not a proven death to explain"
+  pass "a stand-down record does not explain an unreachable endpoint"
+}
+
+# An active run still outranks the record: if a pipeline is somehow running for
+# this task, that is the more specific and more urgent truth.
+test_stood_down_record_yields_to_an_active_run_step() {
+  reset_fakes
+  local d out; d=$(new_case stood-down-run)
+  make_repo_on_branch "$d/wt" fm/feat-stood-run
+  make_fakebin "$d" >/dev/null
+  fm_write_meta "$d/state/feat-stood-run.meta" "window=fm:fm-feat-stood-run" \
+    "worktree=$d/wt" "kind=ship"
+  FM_FAKE_AXI_STATUS=""
+  FM_FAKE_RUNS_LIST=""
+  FM_FAKE_TMUX_MISSING=1
+  stand_down "$d" feat-stood-run "stopped on purpose" >/dev/null \
+    || fail "recording a stand-down over a dead endpoint was refused"
+  FM_FAKE_AXI_STATUS="$(run_running fm/feat-stood-run)"
+  out=$(run_crew_state "$d" feat-stood-run)
+  assert_contains "$out" "source: run-step" "an active run still outranks a stand-down record"
+  assert_not_contains "$out" "stood-down" "a running pipeline is not a stood-down task"
+  pass "an active run step outranks a stand-down record"
+}
+
 # Regression (2026-09 G7 stale-claim incident, tmux half): the default backend
 # reached the same false-death path as herdr. A tmux that cannot answer at all
 # - a trimmed PATH, or any non-definitive error - made every live crew report
@@ -2911,6 +3025,10 @@ test_no_run_idle_pane_custom_paused_verb
 test_no_run_idle_secondmate_resolved_event_not_state
 test_dead_window_ignores_stale_status_log
 test_no_run_tmux_unreadable_reads_unreachable_not_gone
+test_stood_down_dead_window_reads_paused_not_unknown
+test_stood_down_record_never_masks_a_live_agent
+test_stood_down_record_does_not_explain_an_unreachable_endpoint
+test_stood_down_record_yields_to_an_active_run_step
 test_dead_window_still_reports_terminal_run_step
 test_dead_window_still_reports_active_run_step
 test_no_timeout_uses_perl_bound

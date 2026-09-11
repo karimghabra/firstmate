@@ -4,6 +4,7 @@ description: >-
   Agent-only playbook for stuck or missing ordinary Firstmate direct reports.
   Use when the session-start digest reports an ordinary direct report's endpoint dead or its metadata has no window, or after a stale wake, looping pane, repeated confusion, an answered-by-brief question, an unresponsive crewmate, or a failed steer.
   Also use on the inverse case: a live crewmate reporting the no-mistakes pipeline dead, unreachable, or timed out.
+  Also use before recording, reading, or retiring a deliberate stop on an open task (a stood-down endpoint).
   Reconciles recorded work before escalating from targeted inspection through safe relaunch or failure.
 user-invocable: false
 metadata:
@@ -39,6 +40,24 @@ Before relaunch, prove that no live agent still owns the recorded task and that 
 Preserve its uncommitted changes and commits, keep the same task identity, and resume or relaunch the recorded harness in that existing worktree with the same brief plus a concise progress note.
 Do not use a fresh generic spawn while the recorded worktree is unaccounted for, because allocating another worktree can split one task across two copies.
 If the worktree or ownership cannot be reconciled safely, leave all state intact and report the task failed or blocked with the conflicting evidence.
+
+## A task stopped on purpose while its work is still open
+
+Sometimes an absent agent is not a failure to recover from.
+The captain stops a worker, or firstmate stops one on the captain's word, and the task stays genuinely open: the work is pushed but not landed, or it is waiting on a decision that has not come.
+Recover nothing here, and do not reach for teardown to quieten it - teardown moves the item to Done, and recording a completion that did not happen to silence an alarm trades a small annoyance for a false record.
+Record the intent instead:
+
+```
+bin/fm-stand-down.sh <task-id> --reason "<why it was stopped>"
+```
+
+The digest then reports that endpoint as stood down with the reason rather than as dead, so it stops arriving as a recovery trigger every session, and `bin/fm-crew-state.sh <id>` reports it as paused from the stood-down source.
+Nothing else moves: the item stays in flight because the work is still open, the worker's own status log is untouched, and unlanded work is still unlanded.
+The command refuses while the agent is still running, so stop it first with `bin/fm-control.sh <task-id> exit` and then record why.
+
+Retire the record when the work resumes or lands - `bin/fm-stand-down.sh <task-id> --release`, which `bin/fm-control.sh <task-id> relaunch` does for you - and use `--show` to read one back.
+A stood-down task is still yours to finish: revisit it whenever the decision it waits on arrives, exactly as you would any other open item.
 
 ## A live crewmate claiming the pipeline is dead
 

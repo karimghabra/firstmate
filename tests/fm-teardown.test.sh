@@ -1967,6 +1967,27 @@ test_teardown_missing_busy_sidecar_completes() {
   pass "teardown completes when an exact busy-state sidecar is already absent"
 }
 
+# A stand-down says the agent is stopped by intent while the work is still open,
+# so it must not outlive the task it describes: a record left behind once the id
+# is reused would silence that new task's first genuine death.
+test_teardown_retires_a_stand_down_record() {
+  local case_dir rc record
+  case_dir=$(make_case stand-down-cleanup)
+  write_meta "$case_dir" local-only ship
+  record="$case_dir/state/task-x1.stood-down"
+  printf 'recorded=%s\nreason=captain stopped it while deciding\n' "$(date +%s)" > "$record"
+
+  set +e
+  run_teardown "$case_dir" --force > "$case_dir/stdout" 2> "$case_dir/stderr"
+  rc=$?
+  set -e
+
+  expect_code 0 "$rc" "stand-down-cleanup: teardown should complete: $(cat "$case_dir/stderr")"
+  assert_absent "$record" "stand-down-cleanup: teardown left the stand-down record behind"
+  assert_absent "$case_dir/state/task-x1.meta" "stand-down-cleanup: teardown remained incomplete"
+  pass "teardown retires a task's stand-down record with the rest of its runtime state"
+}
+
 test_herdr_teardown_clears_escalation_marker() {
   local case_dir marker
   case_dir=$(make_case herdr-marker-cleanup)
@@ -3677,6 +3698,7 @@ test_local_only_force_overrides_unpushed
 test_secondmate_pr_registration_publishes_ready_line
 test_secondmate_home_teardown_delivers_final_line_or_refuses
 test_teardown_missing_busy_sidecar_completes
+test_teardown_retires_a_stand_down_record
 test_herdr_teardown_clears_escalation_marker
 test_herdr_flat_teardown_refuses_orphaning_records_then_retry_completes
 test_herdr_flat_teardown_refuses_records_on_unparseable_presence

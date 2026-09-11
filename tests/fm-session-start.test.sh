@@ -1359,6 +1359,43 @@ EOF
   pass "tmux endpoint liveness is reported per task: alive for a live window, dead for a gone one"
 }
 
+# The alarm this separates out: an agent stopped on purpose while its task is
+# genuinely still open reads as a dead endpoint, and a dead endpoint sends the
+# supervisor to the recovery playbook. Without a way to say "stopped on purpose,
+# still open" that investigation repeated every single session, and the only
+# silence on offer was a teardown that records a completion that did not happen.
+test_endpoint_liveness_stood_down() {
+  local rec root home fakebin out
+  rec=$(new_world liveness-stood-down)
+  IFS='|' read -r root home fakebin <<EOF
+$rec
+EOF
+  make_fake_toolchain "$fakebin"
+  make_fake_ps_claude "$fakebin"
+  make_fake_tmux "$fakebin" "fm-sess:live-window"
+
+  printf 'window=fm-sess:stopped-window\nkind=ship\n' > "$home/state/task-stood.meta"
+  printf 'window=fm-sess:gone-window\nkind=ship\n' > "$home/state/task-gone.meta"
+
+  out=$(run_session_start "$home" "$root" "$fakebin:$BASE_PATH")
+  assert_contains "$out" "endpoint: dead (backend=tmux window=fm-sess:stopped-window)" \
+    "an unexplained stopped agent must read as dead before any record exists"
+
+  printf 'recorded=%s\nreason=captain stopped it; work pushed, waiting to land\n' "$(date +%s)" \
+    > "$home/state/task-stood.stood-down"
+  out=$(run_session_start "$home" "$root" "$fakebin:$BASE_PATH")
+  assert_contains "$out" "endpoint: stood down since " "a recorded deliberate stop is not reported as a dead endpoint"
+  assert_contains "$out" "not a recovery trigger (backend=tmux window=fm-sess:stopped-window)" \
+    "the stood-down line does not say it is not a recovery trigger"
+  assert_contains "$out" "captain stopped it; work pushed, waiting to land" \
+    "the stood-down line does not carry the recorded reason"
+  # The record explains exactly one endpoint and nothing else in the fleet.
+  assert_contains "$out" "endpoint: dead (backend=tmux window=fm-sess:gone-window)" \
+    "a stand-down on one task quietened another task's genuinely dead endpoint"
+
+  pass "a deliberately stopped agent on an open task is reported as stood down, not as a dead endpoint to recover"
+}
+
 test_endpoint_liveness_herdr() {
   local rec root home fakebin out
   rec=$(new_world liveness-herdr)
@@ -2663,6 +2700,7 @@ test_status_tail_bounding
 test_status_tail_line_cap
 test_orphan_status_logs_are_printed
 test_endpoint_liveness_tmux
+test_endpoint_liveness_stood_down
 test_endpoint_liveness_herdr
 test_composition_invokes_real_scripts
 test_branch_outcome_replay_respects_captain_barrier_and_lease_sweep
