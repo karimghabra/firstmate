@@ -1,0 +1,46 @@
+
+### removed tuning flags and baseline subcommand are refused
+$ fm-procevent-quota.sh arm --refresh --provider claude --min-advance 1
+Quota process-event adapter: the falling edge (quota running out) and the
+rising edge (a quota window refreshing).
+
+exit=2
+$ fm-procevent-quota.sh arm --refresh --provider claude --restore 5
+Quota process-event adapter: the falling edge (quota running out) and the
+rising edge (a quota window refreshing).
+
+exit=2
+$ fm-procevent-quota.sh baseline --refresh --provider claude
+error: unknown command: baseline
+exit=1
+
+### edge-scoped flags
+$ fm-procevent-quota.sh arm --refresh --provider claude --threshold 10
+error: --threshold belongs to the falling-edge watch, not --refresh
+exit=1
+$ fm-procevent-quota.sh arm --provider claude --window five_hour
+error: --window needs --refresh
+exit=1
+$ fm-procevent-quota.sh arm --refresh --provider claude --window ninety_day
+error: quota-axi reports no usable window ninety_day for claude
+exit=1
+
+### explicit --window seven_day pins seven_day although five_hour is binding
+registered: quota-refresh-claude (quota)
+armed: quota-refresh-claude
+provider: claude
+window: seven_day
+interval: 1s
+baseline: claude seven_day resets 2026-09-17T19:00:00Z at 60%
+window: seven_day
+
+### quota-axi starts failing while the refresh watch runs
+reconciled: published=0 started=1 stopped=0 uncertain=0
+1789099190	1	check	procevent:quota-refresh-claude:1	check: procevent quota quota-refresh-claude 1
+quota: quota-refresh-claude
+status: error
+detail: quota-axi --json failed or quota-axi is missing/incompatible
+condition_polls: 3
+
+### classify: error
+retired: quota-refresh-claude

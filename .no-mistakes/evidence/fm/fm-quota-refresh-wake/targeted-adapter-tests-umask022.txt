@@ -1,0 +1,38 @@
+$ (umask 022; bash tests/fm-procevent-quota.test.sh)
+ok - help renders only the complete header
+ok - poll accepts its documented defaults
+ok - provider watch blocks until a model scope is exhausted
+ok - exhausted poll records the triggering scope
+ok - poll detects exhausted runway under unknown headroom
+ok - aggregate watch blocks until any scope is exhausted
+ok - aggregate watch preserves empty quota uncertainty
+ok - arm rejects a missing provider value
+ok - arm rejects noncanonical provider identities
+ok - provider retire resolves the armed source id
+ok - poll rejects a decimal threshold above 100
+ok - poll accepts a leading-zero threshold
+ok - poll fires only after quota drops below the threshold
+ok - poll rejects a missing option value
+ok - quota polling uses the shared bash timeout fallback
+ok - poll rejects malformed schema-five snapshots
+ok - poll preserves provider-level unknown quota
+ok - poll preserves unknown headroom under known semantics
+ok - help documents the refresh watch
+ok - refresh fires on a crossed reset boundary of the binding window
+ok - refresh fires when the binding window resets with no new boundary yet
+ok - refresh tracks the binding window rather than the soonest reset
+ok - refresh ignores headroom fluctuation inside the recorded window
+ok - refresh detects a boundary crossed while nothing was polling
+ok - refresh never fires on an unknown or unreadable window reading
+ok - each unreadable window shape is rejected individually
+ok - refresh waits for materially restored headroom, then still fires
+ok - refresh ignores quota-axi's own resetsAt recomputation jitter
+ok - refresh waits for the recorded boundary to actually elapse
+ok - a relaunched refresh poll repeats an uncaptured wake rather than losing it
+ok - a baseline from another watch is never reused
+ok - refresh reports an unreadable snapshot as an error rather than a refresh
+ok - refresh arm and retire are idempotent
+ok - each quota edge owns its own canonical source id
+ok - refresh flags are edge-scoped and an unknown window is refused
+ok - classify and terminal cover the refreshed outcome
+# all fm-procevent-quota tests passed

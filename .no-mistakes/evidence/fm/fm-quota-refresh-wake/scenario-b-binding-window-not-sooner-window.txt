@@ -1,0 +1,31 @@
+
+### t0 2026-09-15T18:00Z: seven_day 0% exhausted_now (resets 09-17T19:00Z); five_hour 70% (resets 09-15T19:00Z)
+[{"scope":"all_models","status":"known","effectivePercentRemaining":0,"limitingWindowIds":["seven_day"],"runway":{"status":"exhausted_now","limitingWindowId":"seven_day"}}]
+registered: quota-refresh-claude (quota)
+armed: quota-refresh-claude
+provider: claude
+window: (binding)
+interval: 1s
+baseline: claude seven_day resets 2026-09-17T19:00:00Z at 0%
+reconciled: published=0 started=1 stopped=0 uncertain=0
+
+### t1 09-15T19:00:10Z: five_hour turned over (resets 09-16T00:00Z, 100%); seven_day still 0%
+
+### t2 09-16T00:00:10Z: five_hour turned over again (resetless, 100%); seven_day still 0%
+
+### refresh wakes before seven_day turnover (expect 0):
+0
+
+### t3 09-17T19:00:30Z: seven_day turned over (resets 09-24T19:00Z, 100%)
+
+### wake queue:
+1789099064	1	check	procevent:quota-refresh-claude:1	check: procevent quota quota-refresh-claude 1
+
+### captured result:
+quota: quota-refresh-claude
+status: refreshed
+detail: {"provider":"claude","window":"seven_day","previous":{"resetsAt":"2026-09-17T19:00:00Z","percentRemaining":0},"current":{"resetsAt":"2026-09-24T19:00:00Z","percentRemaining":100}}
+condition_polls: 11
+
+### classify: refreshed
+retired: quota-refresh-claude

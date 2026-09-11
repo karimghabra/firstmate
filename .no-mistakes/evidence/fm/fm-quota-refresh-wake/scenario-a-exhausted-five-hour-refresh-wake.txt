@@ -1,0 +1,72 @@
+
+### t0 2026-09-11T02:00Z: five_hour exhausted (0%, resets 03:00Z), seven_day 60%
+
+### firstmate: dispatch stopped on exhausted quota -> arm both edges
+registered: quota-refresh-claude (quota)
+armed: quota-refresh-claude
+provider: claude
+window: (binding)
+interval: 1s
+baseline: claude five_hour resets 2026-09-11T03:00:00.187Z at 0%
+registered: quota-claude (quota)
+armed: quota-claude
+provider: claude
+threshold: 10%
+interval: 1s
+
+### persisted baseline (state/quota-refresh/quota-refresh-claude.baseline)
+source: quota-refresh-claude
+provider: claude
+window: five_hour
+resets_at: 2026-09-11T03:00:00.187Z
+resets_at_epoch: 1789095600
+percent_remaining: 0
+recorded_at: 2026-09-11T03:56:58Z
+
+### watcher cycle: fm-procevent.sh reconcile starts the runners
+reconciled: published=0 started=2 stopped=0 uncertain=0
+
+### wake queue after 3s (falling edge should have fired; refresh must not):
+1789099019	1	check	procevent:quota-claude:1	check: procevent quota quota-claude 1
+
+### t1 02:30Z: still exhausted, resetsAt jitters +0.9s across a whole second
+
+### t2 03:00:02Z: boundary elapsed, but five_hour missing from the snapshot (unknown reading)
+
+### t3 03:00:03Z: boundary elapsed, five_hour shows new boundary but only 10% headroom
+
+### refresh wakes so far (expect none):
+0
+
+### t4 03:00:05Z: five_hour turned over -> resets 08:00Z, 100% remaining
+
+### wake queue:
+1789099019	1	check	procevent:quota-claude:1	check: procevent quota quota-claude 1
+1789099031	2	check	procevent:quota-refresh-claude:1	check: procevent quota quota-refresh-claude 1
+
+### fm-procevent.sh list:
+SOURCE                       ADAPTER      OWNER      PENDING
+quota-refresh-claude         quota        live       1
+
+### captured result /tmp/qr-e2e/lab-a/home/state/procevent-inbox/quota-refresh-claude.1.result:
+quota: quota-refresh-claude
+status: refreshed
+detail: {"provider":"claude","window":"five_hour","previous":{"resetsAt":"2026-09-11T03:00:00.187Z","percentRemaining":0},"current":{"resetsAt":"2026-09-11T08:00:00.201Z","percentRemaining":100}}
+condition_polls: 12
+
+### classify:
+refreshed
+refreshed
+
+### firstmate acknowledges: handled quota-refresh-claude 1
+handled: quota-refresh-claude 1
+
+### registrations after terminal verdict:
+no sources registered
+
+### refresh wake lines total (expect exactly 1):
+1
+
+### retire both (idempotent cleanup):
+retired: quota-refresh-claude
+retired: quota-claude

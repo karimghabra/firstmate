@@ -1,0 +1,49 @@
+
+### quota-axi: /home/mars/.nvm/versions/node/v22.23.0/bin/quota-axi 0.1.41
+
+### live binding scope and claude windows right now:
+{"generatedAt":"2026-09-11T03:58:33.547Z","all_models":{"effectivePercentRemaining":49,"limitingWindowIds":["five_hour"],"runway":"projected_exhaustion"},"windows":[{"id":"five_hour","resetsAt":"2026-09-11T07:50:00.793131+00:00","percentRemaining":49},{"id":"seven_day","resetsAt":"2026-09-17T19:00:00.793150+00:00","percentRemaining":82},{"id":"model:fable","resetsAt":"2026-09-17T19:00:00+00:00","percentRemaining":100}]}
+
+### arm --refresh --provider claude --interval 5 (real quota-axi)
+registered: quota-refresh-claude (quota)
+armed: quota-refresh-claude
+provider: claude
+window: (binding)
+interval: 5s
+baseline: claude five_hour resets 2026-09-11T07:50:00.555515+00:00 at 49%
+
+### baseline:
+source: quota-refresh-claude
+provider: claude
+window: five_hour
+resets_at: 2026-09-11T07:50:00.555515+00:00
+resets_at_epoch: 1789113000
+percent_remaining: 49
+recorded_at: 2026-09-11T03:58:34Z
+reconciled: published=0 started=1 stopped=0 uncertain=0
+
+### runner polling the live quota-axi for 45s...
+03:58:50  five_hour=2026-09-11T07:50:00.288274+00:00
+03:59:05  five_hour=2026-09-11T07:50:00.288274+00:00
+03:59:20  five_hour=2026-09-11T07:50:00.288274+00:00
+
+### fm-procevent.sh list:
+SOURCE                       ADAPTER      OWNER      PENDING
+quota-refresh-claude         quota        live       0
+
+### wake queue (expect empty - no false refresh):
+(empty)
+
+### captured results (expect none):
+(none)
+
+### retire --refresh --provider claude
+retired: quota-refresh-claude
+retired: quota-refresh-claude
+
+### after retire:
+no sources registered
+(baseline dir listing above; expect empty)
+3056653 bash /home/mars/.no-mistakes/worktrees/a8c0c72d0935/01M278DMHRZ56PHZN98T8TQ83P/bin/fm-procevent.sh _owner-watchdog quota-refresh-claude 3056528 linux-starttime=4007905 cmdline-hex=62617368002f686f6d652f6d6172732f2e6e6f2d6d697374616b65732f776f726b74726565732f6138633063373264303933352f30314d323738444d48525a353650485a4e3938543854513833502f62696e2f666d2d70726f636576656e742e7368005f73746172740071756f74612d726566726573682d636c6175646500 /tmp/qr-e2e/lab-d/home/state/procevent/.owner-guard-ready.slMVXb 2096 209666
+
+### 5s later: no runner/poll/watchdog process left (owner watchdog exited on its own)

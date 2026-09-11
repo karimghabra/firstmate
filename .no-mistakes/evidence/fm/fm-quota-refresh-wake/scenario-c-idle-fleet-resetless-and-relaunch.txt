@@ -1,0 +1,67 @@
+
+### t0 2026-09-10T14:00Z: five_hour exhausted (0%, resets 15:10Z)
+registered: quota-refresh-claude (quota)
+armed: quota-refresh-claude
+provider: claude
+window: (binding)
+interval: 1s
+baseline: claude five_hour resets 2026-09-10T15:10:00.412Z at 0%
+
+### registered source record (nothing polling yet):
+adapter=quota
+argc=11
+argv:
+/home/mars/.no-mistakes/worktrees/a8c0c72d0935/01M278DMHRZ56PHZN98T8TQ83P/bin/fm-procevent-quota.sh
+poll
+--refresh
+--interval
+1
+--window
+
+--provider
+claude
+--timeout
+5
+
+### hours pass with no runner; at 18:42Z the unused five_hour reports no resetsAt, 100%
+[{"id":"five_hour","percentRemaining":100},{"id":"seven_day","percentRemaining":40,"resetsAt":"2026-09-17T19:00:00Z"}]
+
+### watcher cycle resumes: reconcile
+reconciled: published=0 started=1 stopped=0 uncertain=0
+
+### wake queue:
+1789099095	1	check	procevent:quota-refresh-claude:1	check: procevent quota quota-refresh-claude 1
+
+### captured result:
+quota: quota-refresh-claude
+status: refreshed
+detail: {"provider":"claude","window":"five_hour","previous":{"resetsAt":"2026-09-10T15:10:00.412Z","percentRemaining":0},"current":{"resetsAt":null,"percentRemaining":100}}
+condition_polls: 1
+
+### classify: refreshed
+
+### --- relaunch after a lost capture: re-run the exact registered poll argv twice ---
+registered argv: /home/mars/.no-mistakes/worktrees/a8c0c72d0935/01M278DMHRZ56PHZN98T8TQ83P/bin/fm-procevent-quota.sh poll --refresh --interval 1 --window '' --provider claude --timeout 5
+
+### first poll run (runner dies before capturing its stdout):
+quota: quota-refresh-claude
+status: refreshed
+detail: {"provider":"claude","window":"five_hour","previous":{"resetsAt":"2026-09-10T15:10:00.412Z","percentRemaining":0},"current":{"resetsAt":null,"percentRemaining":100}}
+condition_polls: 1
+
+### baseline after firing (must be unchanged):
+source: quota-refresh-claude
+provider: claude
+window: five_hour
+resets_at: 2026-09-10T15:10:00.412Z
+resets_at_epoch: 1789053000
+percent_remaining: 0
+recorded_at: 2026-09-11T03:58:15Z
+
+### relaunched poll run:
+quota: quota-refresh-claude
+status: refreshed
+detail: {"provider":"claude","window":"five_hour","previous":{"resetsAt":"2026-09-10T15:10:00.412Z","percentRemaining":0},"current":{"resetsAt":null,"percentRemaining":100}}
+condition_polls: 1
+exit=0
+retired: quota-refresh-claude
