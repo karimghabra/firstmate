@@ -67,6 +67,24 @@ A `waiting` session, a `missing` one, an `unknown` or unreadable result, and eve
 The content check anchors on column zero for the same reason the terminal check reads the leading `session:` block: content headers are top-level and their rows are indented, so captain-supplied payload text can neither forge a content block nor hide behind a fake empty one.
 Any recognized block counts as present even when its declared count is zero, and a malformed top-level `prompts` or `feedback` header is indeterminate and therefore announced.
 
+## Why the quota refresh watch needs an advance floor
+
+Verified on 2026-09-10 against quota-axi 0.1.41.
+`quota-axi --json` recomputes each window's `resetsAt` on every invocation, and consecutive calls seconds apart disagree by roughly a second across a whole-second boundary:
+
+```text
+$ for i in 1 2 3; do quota-axi --json | jq -r '.generatedAt + "  five_hour=" + (.providers[]|select(.provider=="claude")|.windows[]|select(.id=="five_hour")|.resetsAt)'; done
+2026-09-10T19:38:50.971Z  five_hour=2026-09-10T21:50:00.189009+00:00
+2026-09-10T19:38:51.653Z  five_hour=2026-09-10T21:49:59.852098+00:00
+2026-09-10T19:38:52.322Z  five_hour=2026-09-10T21:49:59.614616+00:00
+```
+
+So a refresh watch that fires whenever the observed boundary is strictly later than the recorded one reports a turnover that never happened; an early build of `bin/fm-procevent-quota.sh --refresh` did exactly that against this account within three live polls.
+That is why the fire condition requires the recorded boundary to have elapsed by the snapshot's own `generatedAt`, and a window that still reports a boundary ahead of that instant to have advanced by a fixed floor of at least 300 seconds.
+A real turnover advances by the window's whole length - 18000 seconds for the `five_hour` window above - so the floor rejects the jitter with several orders of magnitude to spare.
+A window that reset and has not been used since reports no `resetsAt` at all (quota-axi's own pace code describes a Claude `five_hour` window before its first request this way), so once the recorded boundary has elapsed that shape, or a boundary already behind `generatedAt`, counts as a turnover without the floor.
+`tests/fm-procevent-quota.test.sh` pins each of these with scripted snapshots, including this jitter shape and the resetless one.
+
 ## The loss limitation this runner cannot close
 
 The published poll clears feedback destructively before returning it.
