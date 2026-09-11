@@ -19,6 +19,11 @@ assert_claude_pointer() {
 EOF
 }
 
+# The helper's public "guide:" line names the file to record knowledge in.
+guide_line() {
+  printf '%s\n' "$1" | sed -n 's/^guide: //p'
+}
+
 write_fixture_claude_pointer() {
   cat > "$1/CLAUDE.md" <<'EOF'
 <!-- Points Claude at AGENTS.md via import; edit AGENTS.md, not this file. -->
@@ -27,13 +32,15 @@ EOF
 }
 
 test_created_agents_md_includes_self_governance() {
-  local repo agents
+  local repo agents out
   repo="$TMP_ROOT/new-project"
   mkdir -p "$repo"
-  "$ROOT/bin/fm-ensure-agents-md.sh" "$repo" >/dev/null 2>&1 || fail "fm-ensure-agents-md.sh failed for empty project"
+  out=$("$ROOT/bin/fm-ensure-agents-md.sh" "$repo" 2>&1) || fail "fm-ensure-agents-md.sh failed for empty project"
   agents="$repo/AGENTS.md"
   assert_present "$agents" "AGENTS.md was not created"
   assert_claude_pointer "$repo/CLAUDE.md"
+  assert_equals "$(cd "$repo" && pwd -P)/AGENTS.md" "$(guide_line "$out")" \
+    "a created guide was not named as the file to record knowledge in"
   assert_grep "## Maintaining this file" "$agents" "self-governance section heading missing"
   assert_grep "Keep this file for knowledge useful to almost every future agent session in this project." "$agents" \
     "self-governance section lost the future-session bar"
@@ -67,7 +74,7 @@ test_promoted_claude_md_includes_self_governance() {
 
 Run tests with `make test`.
 EOF
-  "$ROOT/bin/fm-ensure-agents-md.sh" "$repo" >/dev/null 2>&1 || fail "fm-ensure-agents-md.sh failed for CLAUDE.md promotion"
+  "$ROOT/bin/fm-ensure-agents-md.sh" --migrate-layout "$repo" >/dev/null 2>&1 || fail "fm-ensure-agents-md.sh failed for CLAUDE.md promotion"
   agents="$repo/AGENTS.md"
   assert_present "$agents" "AGENTS.md was not created during promotion"
   assert_claude_pointer "$repo/CLAUDE.md"
@@ -77,7 +84,7 @@ EOF
   [ "$count" -eq 1 ] || fail "promotion wrote $count self-governance sections"
   assert_grep "Keep this file for knowledge useful to almost every future agent session in this project." "$agents" \
     "promoted AGENTS.md missing self-governance wording"
-  pass "fm-ensure-agents-md.sh: promoted CLAUDE.md includes self-governance section"
+  pass "fm-ensure-agents-md.sh: --migrate-layout promoted CLAUDE.md includes self-governance section"
 }
 
 test_promoted_claude_md_without_trailing_newline_keeps_blank_separator() {
@@ -85,7 +92,7 @@ test_promoted_claude_md_without_trailing_newline_keeps_blank_separator() {
   repo="$TMP_ROOT/no-trailing-newline-project"
   mkdir -p "$repo"
   printf '# Existing agent memory\n\nRun tests with make test.' > "$repo/CLAUDE.md"
-  "$ROOT/bin/fm-ensure-agents-md.sh" "$repo" >/dev/null 2>&1 || fail "fm-ensure-agents-md.sh failed for newline-less CLAUDE.md promotion"
+  "$ROOT/bin/fm-ensure-agents-md.sh" --migrate-layout "$repo" >/dev/null 2>&1 || fail "fm-ensure-agents-md.sh failed for newline-less CLAUDE.md promotion"
   agents="$repo/AGENTS.md"
   assert_grep "Run tests with make test." "$agents" \
     "newline-less promotion lost or mangled the last content line"
@@ -95,6 +102,98 @@ test_promoted_claude_md_without_trailing_newline_keeps_blank_separator() {
   [ -z "$before" ] || fail "self-governance heading not preceded by a blank line (got: $before)"
   assert_claude_pointer "$repo/CLAUDE.md"
   pass "fm-ensure-agents-md.sh: newline-less promotion keeps a blank separator line"
+}
+
+test_existing_claude_md_stays_at_its_path() {
+  local repo out
+  repo="$TMP_ROOT/claude-only-project"
+  mkdir -p "$repo"
+  printf '# Existing agent memory\n\nRun tests with make test.\n' > "$repo/CLAUDE.md"
+  cp "$repo/CLAUDE.md" "$repo/.before"
+  out=$("$ROOT/bin/fm-ensure-agents-md.sh" "$repo" 2>&1) \
+    || fail "fm-ensure-agents-md.sh failed for a project whose guide is CLAUDE.md"
+  assert_not_contains "$out" "promoted:" "default mode reported relocating the project's CLAUDE.md"
+  assert_absent "$repo/AGENTS.md" "default mode relocated the project's CLAUDE.md into AGENTS.md"
+  [ -f "$repo/CLAUDE.md" ] && [ ! -L "$repo/CLAUDE.md" ] \
+    || fail "default mode replaced the project's real CLAUDE.md"
+  cmp -s "$repo/.before" <(head -c "$(wc -c < "$repo/.before")" "$repo/CLAUDE.md") \
+    || fail "default mode rewrote the project's existing CLAUDE.md content"
+  assert_equals 1 "$(grep -Fxc '## Maintaining this file' "$repo/CLAUDE.md")" \
+    "the kept CLAUDE.md did not gain exactly one self-governance section"
+  assert_equals "$(cd "$repo" && pwd -P)/CLAUDE.md" "$(guide_line "$out")" \
+    "the kept CLAUDE.md was not named as the file to record knowledge in"
+  # The relocation default mode forbids is reachable from this same project:
+  # only the explicit layout migration performs it.
+  out=$("$ROOT/bin/fm-ensure-agents-md.sh" --migrate-layout "$repo" 2>&1) \
+    || fail "fm-ensure-agents-md.sh --migrate-layout failed for a CLAUDE.md-only project"
+  assert_contains "$out" "promoted:" "--migrate-layout did not relocate the CLAUDE.md guide"
+  assert_grep "Run tests with make test." "$repo/AGENTS.md" "--migrate-layout lost the relocated content"
+  assert_claude_pointer "$repo/CLAUDE.md"
+  pass "fm-ensure-agents-md.sh: an existing CLAUDE.md guide stays at its path unless the layout migration is requested"
+}
+
+# Durable knowledge lands in the guide the helper names, which is the file the
+# project already uses, and the project's guide layout survives the whole
+# record-then-rerun cycle a worker performs.
+test_durable_knowledge_reaches_existing_guide() {
+  local layout repo out guide expected note
+  note='- Integration tests need the local queue running: make queue-up.'
+  for layout in claude-only agents-only agents-with-pointer agents-with-symlink; do
+    repo="$TMP_ROOT/knowledge-$layout"
+    mkdir -p "$repo"
+    expected="$(cd "$repo" && pwd -P)/AGENTS.md"
+    case "$layout" in
+      claude-only)
+        printf '# Existing agent memory\n\nRun tests with make test.\n' > "$repo/CLAUDE.md"
+        expected="$(cd "$repo" && pwd -P)/CLAUDE.md"
+        ;;
+      agents-only) printf '# Existing agent memory\n' > "$repo/AGENTS.md" ;;
+      agents-with-pointer)
+        printf '# Existing agent memory\n' > "$repo/AGENTS.md"
+        write_fixture_claude_pointer "$repo"
+        ;;
+      agents-with-symlink)
+        printf '# Existing agent memory\n' > "$repo/AGENTS.md"
+        ln -s AGENTS.md "$repo/CLAUDE.md"
+        ;;
+    esac
+    out=$("$ROOT/bin/fm-ensure-agents-md.sh" "$repo" 2>&1) \
+      || fail "fm-ensure-agents-md.sh failed before recording knowledge ($layout)"
+    guide=$(guide_line "$out")
+    assert_equals "$expected" "$guide" "the helper did not name the existing guide ($layout)"
+    printf '%s\n' "$note" >> "$guide"
+    "$ROOT/bin/fm-ensure-agents-md.sh" "$repo" >/dev/null 2>&1 \
+      || fail "fm-ensure-agents-md.sh failed after recording knowledge ($layout)"
+    assert_grep "$note" "$expected" "recorded knowledge did not stay in the existing guide ($layout)"
+    case "$layout" in
+      claude-only)
+        assert_absent "$repo/AGENTS.md" "recording knowledge relocated the CLAUDE.md guide"
+        [ ! -L "$repo/CLAUDE.md" ] || fail "recording knowledge replaced the CLAUDE.md guide"
+        ;;
+      agents-only) assert_absent "$repo/CLAUDE.md" "recording knowledge added a CLAUDE.md" ;;
+      agents-with-pointer) assert_claude_pointer "$repo/CLAUDE.md" ;;
+      agents-with-symlink) [ -L "$repo/CLAUDE.md" ] || fail "recording knowledge replaced the CLAUDE.md symlink" ;;
+    esac
+    # Claude reads the guide through CLAUDE.md in every layout that has one.
+    [ "$layout" = agents-only ] || [ "$layout" = agents-with-pointer ] \
+      || assert_grep "$note" "$repo/CLAUDE.md" "recorded knowledge is not visible through CLAUDE.md ($layout)"
+  done
+  pass "fm-ensure-agents-md.sh: durable knowledge reaches the existing guide at its existing path"
+}
+
+test_unknown_option_is_refused() {
+  local repo rc
+  repo="$TMP_ROOT/unknown-option-project"
+  mkdir -p "$repo"
+  "$ROOT/bin/fm-ensure-agents-md.sh" --relocate "$repo" >/dev/null 2>&1
+  rc=$?
+  [ "$rc" -ne 0 ] || fail "an unknown option was accepted"
+  assert_absent "$repo/AGENTS.md" "an unknown option still created AGENTS.md"
+  "$ROOT/bin/fm-ensure-agents-md.sh" "$repo" "$repo" >/dev/null 2>&1
+  rc=$?
+  [ "$rc" -ne 0 ] || fail "a second directory argument was accepted"
+  assert_absent "$repo/AGENTS.md" "a rejected invocation still created AGENTS.md"
+  pass "fm-ensure-agents-md.sh: refuses unknown options and extra arguments without writing"
 }
 
 test_existing_agents_md_with_symlink_gains_self_governance() {
@@ -111,17 +210,16 @@ test_existing_agents_md_with_symlink_gains_self_governance() {
   assert_grep "## Maintaining this file" "$agents" "existing AGENTS.md did not gain the self-governance section"
   count=$(grep -Fc "## Maintaining this file" "$agents")
   [ "$count" -eq 1 ] || fail "injection wrote $count self-governance sections"
-  assert_claude_pointer "$repo/CLAUDE.md"
+  [ -L "$repo/CLAUDE.md" ] && [ "$(readlink "$repo/CLAUDE.md")" = "AGENTS.md" ] \
+    || fail "default mode replaced the project's working CLAUDE.md symlink"
   # Re-run must be a byte-exact no-op reporting unchanged.
   cp "$agents" "$repo/.after-first"
-  cp "$repo/CLAUDE.md" "$repo/.claude-after-first"
   out=$("$ROOT/bin/fm-ensure-agents-md.sh" "$repo" 2>&1) \
     || fail "fm-ensure-agents-md.sh failed on idempotent re-run"
   assert_contains "$out" "unchanged:" "idempotent re-run did not report unchanged"
   diff "$repo/.after-first" "$agents" >/dev/null \
     || fail "idempotent re-run modified AGENTS.md"
-  cmp -s "$repo/.claude-after-first" "$repo/CLAUDE.md" \
-    || fail "idempotent re-run modified CLAUDE.md"
+  [ -L "$repo/CLAUDE.md" ] || fail "idempotent re-run replaced the CLAUDE.md symlink"
   pass "fm-ensure-agents-md.sh: existing symlinked AGENTS.md gains the section idempotently"
 }
 
@@ -133,7 +231,7 @@ test_correct_symlink_migrates_to_pointer_without_clobbering_agents() {
   ln -s AGENTS.md "$repo/CLAUDE.md"
   agents="$repo/AGENTS.md"
   cp "$agents" "$repo/.before"
-  out=$("$ROOT/bin/fm-ensure-agents-md.sh" "$repo" 2>&1) \
+  out=$("$ROOT/bin/fm-ensure-agents-md.sh" --migrate-layout "$repo" 2>&1) \
     || fail "fm-ensure-agents-md.sh failed migrating a correct CLAUDE.md symlink"
   assert_contains "$out" "updated:" "symlink migration did not report an update"
   assert_claude_pointer "$repo/CLAUDE.md"
@@ -150,10 +248,10 @@ test_correct_symlink_migrates_to_pointer_without_clobbering_agents() {
     || fail "post-migration re-run modified AGENTS.md"
   cmp -s "$repo/.claude-after-first" "$repo/CLAUDE.md" \
     || fail "post-migration re-run modified CLAUDE.md"
-  pass "fm-ensure-agents-md.sh: correct symlink migrates to pointer without clobbering AGENTS.md"
+  pass "fm-ensure-agents-md.sh: --migrate-layout turns a correct symlink into the pointer without clobbering AGENTS.md"
 }
 
-test_existing_agents_md_without_claude_gains_section_and_pointer() {
+test_existing_agents_md_without_claude_gains_section_only() {
   local repo agents out count
   repo="$TMP_ROOT/existing-bare-project"
   mkdir -p "$repo"
@@ -162,11 +260,17 @@ test_existing_agents_md_without_claude_gains_section_and_pointer() {
   out=$("$ROOT/bin/fm-ensure-agents-md.sh" "$repo" 2>&1) \
     || fail "fm-ensure-agents-md.sh failed for existing AGENTS.md without CLAUDE.md"
   assert_contains "$out" "updated:" "injection without CLAUDE.md did not report an update"
-  assert_claude_pointer "$repo/CLAUDE.md"
+  assert_absent "$repo/CLAUDE.md" "default mode added a CLAUDE.md beside the project's working AGENTS.md"
   assert_grep "Deploy with kubectl." "$agents" "injection dropped existing AGENTS.md content"
   count=$(grep -Fc "## Maintaining this file" "$agents")
   [ "$count" -eq 1 ] || fail "injection wrote $count self-governance sections"
-  pass "fm-ensure-agents-md.sh: existing AGENTS.md without CLAUDE.md gains section and pointer"
+  # The pointer the default run withholds is reachable: the explicit layout
+  # migration adds it to this same project.
+  out=$("$ROOT/bin/fm-ensure-agents-md.sh" --migrate-layout "$repo" 2>&1) \
+    || fail "fm-ensure-agents-md.sh --migrate-layout failed for existing AGENTS.md without CLAUDE.md"
+  assert_contains "$out" "wrote:" "--migrate-layout did not report writing the pointer"
+  assert_claude_pointer "$repo/CLAUDE.md"
+  pass "fm-ensure-agents-md.sh: existing AGENTS.md gains only the section unless the layout migration is requested"
 }
 
 test_existing_agents_md_with_section_reports_unchanged() {
@@ -191,35 +295,46 @@ test_existing_agents_md_with_section_reports_unchanged() {
 }
 
 test_marked_project_guidance_stays_unchanged() {
-  local repo eol route out
-  for eol in $'\n' $'\r\n'; do
-    for route in bare pointer symlink promotion; do
-      repo=$(mktemp -d "$TMP_ROOT/marked-$route.XXXXXX")
-      printf '%s%s' '<!-- firstmate:maintained-by-project -->' "$eol" \
-        '# Project memory' "$eol" \
-        '## Editing these notes' "$eol" \
-        'Keep broadly useful knowledge concise; link to sources and rewrite stale entries.' "$eol" \
-        'Preserve these rules for every agent.' "$eol" > "$repo/AGENTS.md"
-      cp "$repo/AGENTS.md" "$repo/.before"
-      case "$route" in
-        pointer) write_fixture_claude_pointer "$repo" ;;
-        symlink) ln -s AGENTS.md "$repo/CLAUDE.md" ;;
-        promotion) mv "$repo/AGENTS.md" "$repo/CLAUDE.md" ;;
-      esac
-      "$ROOT/bin/fm-ensure-agents-md.sh" "$repo" >/dev/null 2>&1 \
-        || fail "ensure failed for marked project ($route)"
-      cmp -s "$repo/.before" "$repo/AGENTS.md" \
-        || fail "marked project guidance was modified ($route)"
-      assert_claude_pointer "$repo/CLAUDE.md"
-      out=$("$ROOT/bin/fm-ensure-agents-md.sh" "$repo" 2>&1) \
-        || fail "ensure failed on marked project re-run ($route)"
-      assert_contains "$out" "unchanged:" "marked project re-run did not report unchanged"
-      cmp -s "$repo/.before" "$repo/AGENTS.md" \
-        || fail "marked project re-run modified guidance ($route)"
-      assert_claude_pointer "$repo/CLAUDE.md"
+  local repo eol route out mode guide
+  for mode in default migrate; do
+    for eol in $'\n' $'\r\n'; do
+      for route in bare pointer symlink promotion; do
+        repo=$(mktemp -d "$TMP_ROOT/marked-$mode-$route.XXXXXX")
+        printf '%s%s' '<!-- firstmate:maintained-by-project -->' "$eol" \
+          '# Project memory' "$eol" \
+          '## Editing these notes' "$eol" \
+          'Keep broadly useful knowledge concise; link to sources and rewrite stale entries.' "$eol" \
+          'Preserve these rules for every agent.' "$eol" > "$repo/AGENTS.md"
+        cp "$repo/AGENTS.md" "$repo/.before"
+        case "$route" in
+          pointer) write_fixture_claude_pointer "$repo" ;;
+          symlink) ln -s AGENTS.md "$repo/CLAUDE.md" ;;
+          promotion) mv "$repo/AGENTS.md" "$repo/CLAUDE.md" ;;
+        esac
+        # Default mode keeps the marked guide where the project put it; only
+        # the layout migration moves a real CLAUDE.md to AGENTS.md.
+        guide="$repo/AGENTS.md"
+        [ "$mode" = migrate ] || [ "$route" != promotion ] || guide="$repo/CLAUDE.md"
+        for _ in first re-run; do
+          if [ "$mode" = migrate ]; then
+            out=$("$ROOT/bin/fm-ensure-agents-md.sh" --migrate-layout "$repo" 2>&1)
+          else
+            out=$("$ROOT/bin/fm-ensure-agents-md.sh" "$repo" 2>&1)
+          fi || fail "ensure failed for marked project ($mode, $route)"
+          cmp -s "$repo/.before" "$guide" \
+            || fail "marked project guidance was modified ($mode, $route)"
+          case "$mode/$route" in
+            migrate/*|*/pointer) assert_claude_pointer "$repo/CLAUDE.md" ;;
+            default/bare) assert_absent "$repo/CLAUDE.md" "default mode added CLAUDE.md to a marked project" ;;
+            default/symlink) [ -L "$repo/CLAUDE.md" ] || fail "default mode replaced a marked project's CLAUDE.md symlink" ;;
+            default/promotion) assert_absent "$repo/AGENTS.md" "default mode relocated a marked CLAUDE.md" ;;
+          esac
+        done
+        assert_contains "$out" "unchanged:" "marked project re-run did not report unchanged ($mode, $route)"
+      done
     done
   done
-  pass "fm-ensure-agents-md.sh: marked project guidance is preserved across ensure paths and line endings"
+  pass "fm-ensure-agents-md.sh: marked project guidance is preserved across ensure paths, modes, and line endings"
 }
 
 test_reworded_guidance_requires_first_line_marker() {
@@ -241,7 +356,6 @@ test_reworded_guidance_requires_first_line_marker() {
       assert_grep '## Editing these notes' "$repo/AGENTS.md" "ensure removed project guidance"
       count=$(grep -Fxc "## Maintaining this file${eol%$'\n'}" "$repo/AGENTS.md")
       [ "$count" -eq 1 ] || fail "guidance without a first-line mark did not gain the canonical section"
-      assert_claude_pointer "$repo/CLAUDE.md"
       cp "$repo/AGENTS.md" "$repo/.after-first"
       "$ROOT/bin/fm-ensure-agents-md.sh" "$repo" >/dev/null 2>&1 \
         || fail "ensure failed on unmarked project re-run"
@@ -307,15 +421,11 @@ test_existing_crlf_agents_md_without_section_preserves_crlf() {
     'When updating this file, preserve this bar for all agents and keep entries concise.' > "$repo/.expected"
   cmp -s "$repo/.expected" "$agents" \
     || fail "CRLF AGENTS.md injection did not preserve CRLF line endings"
-  assert_claude_pointer "$repo/CLAUDE.md"
   cp "$agents" "$repo/.after-first"
-  cp "$repo/CLAUDE.md" "$repo/.claude-after-first"
   "$ROOT/bin/fm-ensure-agents-md.sh" "$repo" >/dev/null 2>&1 \
     || fail "fm-ensure-agents-md.sh failed on idempotent CRLF re-run"
   cmp -s "$repo/.after-first" "$agents" \
     || fail "idempotent CRLF re-run modified AGENTS.md"
-  cmp -s "$repo/.claude-after-first" "$repo/CLAUDE.md" \
-    || fail "idempotent CRLF re-run modified CLAUDE.md"
   pass "fm-ensure-agents-md.sh: CRLF injection preserves line endings idempotently"
 }
 
@@ -419,9 +529,12 @@ test_created_agents_md_includes_self_governance
 test_fresh_setup_writes_real_claude_pointer
 test_promoted_claude_md_includes_self_governance
 test_promoted_claude_md_without_trailing_newline_keeps_blank_separator
+test_existing_claude_md_stays_at_its_path
+test_durable_knowledge_reaches_existing_guide
+test_unknown_option_is_refused
 test_existing_agents_md_with_symlink_gains_self_governance
 test_correct_symlink_migrates_to_pointer_without_clobbering_agents
-test_existing_agents_md_without_claude_gains_section_and_pointer
+test_existing_agents_md_without_claude_gains_section_only
 test_existing_agents_md_with_section_reports_unchanged
 test_existing_crlf_agents_md_with_section_stays_unchanged
 test_existing_crlf_agents_md_without_section_preserves_crlf

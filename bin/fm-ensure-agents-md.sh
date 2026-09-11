@@ -1,16 +1,28 @@
 #!/usr/bin/env bash
-# Ensure a project worktree follows the agent-memory file convention.
-# AGENTS.md is the real project-intrinsic knowledge file; CLAUDE.md is a
-# real regular file whose canonical content is the two-line @AGENTS.md pointer
-# that Claude Code inlines at load time. Creates a minimal AGENTS.md skeleton
-# when neither file exists, promotes a real CLAUDE.md file when it is the only
-# file present (unless it is already the canonical pointer), converts a correct
-# CLAUDE.md -> AGENTS.md symlink into the pointer file, and refuses to clobber
-# distinct real files or wrong symlinks.
+# Ensure a project worktree has an agent guide - the committed file holding
+# project-intrinsic agent knowledge - without restructuring one it already has.
+# The convention for a new guide is a real AGENTS.md plus a real regular
+# CLAUDE.md whose canonical content is the two-line @AGENTS.md pointer that
+# Claude Code inlines at load time.
+# Default mode adds guide files only when the project has no working guide: it
+# creates the AGENTS.md skeleton and the CLAUDE.md pointer when neither file
+# exists, when CLAUDE.md is only the canonical pointer, or when CLAUDE.md is a
+# correct symlink to a missing AGENTS.md. When a working guide exists - a real
+# AGENTS.md, or a real CLAUDE.md that is not the pointer - it keeps every guide
+# file at its existing path: it never adds, moves, renames, or replaces one,
+# and only ensures the self-governance section below in that guide.
+# Relocating or restructuring a working guide is a change of its own, never a
+# side effect of unrelated work, so it runs only under the explicit
+# --migrate-layout flag: that promotes a real CLAUDE.md to AGENTS.md and writes
+# the pointer in its place, adds the pointer beside an AGENTS.md without one,
+# and converts a correct CLAUDE.md -> AGENTS.md symlink into the pointer file.
+# Every success ends with one "guide: <absolute path>" line naming the file to
+# record durable project knowledge in. Both modes refuse to clobber distinct
+# real files or wrong symlinks.
 # Owns the canonical "## Maintaining this file" self-governance wording for
-# project AGENTS.md files, injecting it idempotently into created skeletons,
-# promoted CLAUDE.md files, and existing AGENTS.md files lacking both the exact
-# heading and the project-owned mark below (exact first line, LF or CRLF):
+# project guides, injecting it idempotently into created skeletons, promoted
+# CLAUDE.md files, and existing guides lacking both the exact heading and the
+# project-owned mark below (exact first line, LF or CRLF):
 # <!-- firstmate:maintained-by-project -->
 # Projects may place this mark at the start of the file and retain equivalent
 # maintenance guidance under their own heading. It declares guidance is present, not
@@ -25,30 +37,55 @@
 # link would have carried for that same mismatch.
 # This is a worktree utility for crewmates, not a supervision script, so it does
 # not call fm-guard.sh.
-# Usage: fm-ensure-agents-md.sh [repo-or-worktree-dir]
+# Usage: fm-ensure-agents-md.sh [--migrate-layout] [repo-or-worktree-dir]
 set -eu
 
 usage() {
-  echo "usage: fm-ensure-agents-md.sh [repo-or-worktree-dir]" >&2
+  echo "usage: fm-ensure-agents-md.sh [--migrate-layout] [repo-or-worktree-dir]" >&2
   cat >&2 <<'EOF'
 
+By default the helper creates AGENTS.md and a CLAUDE.md @AGENTS.md pointer only
+when the project has no agent guide, and otherwise keeps the existing guide at
+its path, only adding the self-governance section to it. The final
+"guide: <path>" line names the file to record durable project knowledge in.
+
+--migrate-layout  also relocate an existing guide to the AGENTS.md convention:
+                  move a real CLAUDE.md to AGENTS.md, add a missing pointer, or
+                  replace a CLAUDE.md symlink with the pointer. Use it only for
+                  a change whose purpose is that relocation.
+
 To retain equivalent project-owned maintenance guidance without adding the
-canonical section, use this exact first line of AGENTS.md (LF or CRLF):
+canonical section, use this exact first line of the guide (LF or CRLF):
 <!-- firstmate:maintained-by-project -->
 The mark declares retained guidance, not permission to remove governance.
 Without the first-line mark or exact canonical heading, the helper adds the section.
 EOF
 }
 
-case "${1:-}" in
-  -h|--help)
-    usage
-    exit 0
-    ;;
-esac
-[ "$#" -le 1 ] || { usage; exit 1; }
+MIGRATE=0
+DIR=
+while [ "$#" -gt 0 ]; do
+  case "$1" in
+    -h|--help)
+      usage
+      exit 0
+      ;;
+    --migrate-layout)
+      MIGRATE=1
+      ;;
+    -*)
+      usage
+      exit 1
+      ;;
+    *)
+      [ -z "$DIR" ] || { usage; exit 1; }
+      DIR=$1
+      ;;
+  esac
+  shift
+done
 
-DIR=${1:-.}
+DIR=${DIR:-.}
 [ -d "$DIR" ] || { echo "error: not a directory: $DIR" >&2; exit 1; }
 DIR=$(cd "$DIR" && pwd -P)
 cd "$DIR"
@@ -74,23 +111,25 @@ write_maintenance_section_with_eol() {
   done < <(write_maintenance_section)
 }
 
-# Idempotently append the canonical self-governance section to AGENTS.md when
-# neither its heading nor the first-line project-owned mark is present. Sets
-# MAINT_INJECTED=1 when it appends and 0 otherwise, for caller change reporting.
+# Idempotently append the canonical self-governance section to the guide file
+# passed as $1 when neither its heading nor the first-line project-owned mark is
+# present. Sets MAINT_INJECTED=1 when it appends and 0 otherwise, for caller
+# change reporting.
 MAINT_INJECTED=0
 ensure_maintenance_section() {
+  local guide=$1
   MAINT_INJECTED=0
-  if grep -Fqx -e '## Maintaining this file' -e $'## Maintaining this file\r' "$AGENTS" ||
-    head -n 1 "$AGENTS" | grep -Fqx -e '<!-- firstmate:maintained-by-project -->' \
+  if grep -Fqx -e '## Maintaining this file' -e $'## Maintaining this file\r' "$guide" ||
+    head -n 1 "$guide" | grep -Fqx -e '<!-- firstmate:maintained-by-project -->' \
       -e $'<!-- firstmate:maintained-by-project -->\r'; then
     return 0
   fi
   local eol=$'\n' sep=''
-  if LC_ALL=C grep -q $'\r$' "$AGENTS"; then
+  if LC_ALL=C grep -q $'\r$' "$guide"; then
     eol=$'\r\n'
   fi
-  if [ -s "$AGENTS" ]; then
-    if [ -n "$(tail -c 1 "$AGENTS")" ]; then
+  if [ -s "$guide" ]; then
+    if [ -n "$(tail -c 1 "$guide")" ]; then
       sep="${eol}${eol}"
     else
       sep=$eol
@@ -99,8 +138,25 @@ ensure_maintenance_section() {
   {
     printf '%s' "$sep"
     write_maintenance_section_with_eol "$eol"
-  } >> "$AGENTS"
+  } >> "$guide"
   MAINT_INJECTED=1
+}
+
+# Report a kept guide's self-governance result, then name it and stop.
+finish_kept_guide() {
+  local guide=$1
+  if [ "$MAINT_INJECTED" -eq 1 ]; then
+    echo "updated: added ## Maintaining this file to $guide in $DIR"
+  else
+    echo "unchanged: $guide in $DIR"
+  fi
+  finish "$guide"
+}
+
+# Name the guide file to record durable project knowledge in, then stop.
+finish() {
+  echo "guide: $DIR/$1"
+  exit 0
 }
 
 write_skeleton() {
@@ -111,7 +167,7 @@ This file is the project's committed home for project-intrinsic agent knowledge:
 
 - Add durable project-specific notes here as they are discovered through real work.
 EOF
-  ensure_maintenance_section
+  ensure_maintenance_section "$AGENTS"
 }
 
 # Canonical CLAUDE.md pointer: a real file, never a symlink. Byte-identical
@@ -176,7 +232,7 @@ for entry in *; do
   if [ "$entry" != "$AGENTS" ]; then
     case "$entry" in
       [Aa][Gg][Ee][Nn][Tt][Ss].[Mm][Dd])
-        echo "conflict: memory file is named $entry in $DIR but the convention is AGENTS.md; rename it to AGENTS.md so CLAUDE.md's @AGENTS.md pointer resolves portably" >&2
+        echo "conflict: memory file is named $entry in $DIR but the convention is AGENTS.md; record knowledge by hand in $entry where it is, and rename it to AGENTS.md only in a change of its own so CLAUDE.md's @AGENTS.md pointer resolves portably" >&2
         exit 1
         ;;
     esac
@@ -195,51 +251,57 @@ fi
 if [ -e "$AGENTS" ]; then
   if [ -L "$CLAUDE" ]; then
     if is_correct_claude_symlink; then
-      ensure_maintenance_section
+      ensure_maintenance_section "$AGENTS"
+      [ "$MIGRATE" -eq 1 ] || finish_kept_guide "$AGENTS"
       install_claude_pointer
       if [ "$MAINT_INJECTED" -eq 1 ]; then
         echo "updated: added ## Maintaining this file to AGENTS.md and wrote CLAUDE.md @AGENTS.md pointer in $DIR"
       else
         echo "updated: replaced CLAUDE.md symlink with @AGENTS.md pointer in $DIR"
       fi
-      exit 0
+      finish "$AGENTS"
     fi
     echo "conflict: CLAUDE.md is a symlink in $DIR but does not point to AGENTS.md" >&2
     exit 1
   fi
   if [ ! -e "$CLAUDE" ]; then
-    ensure_maintenance_section
+    ensure_maintenance_section "$AGENTS"
+    [ "$MIGRATE" -eq 1 ] || finish_kept_guide "$AGENTS"
     install_claude_pointer
     if [ "$MAINT_INJECTED" -eq 1 ]; then
       echo "updated: added ## Maintaining this file to AGENTS.md and wrote CLAUDE.md @AGENTS.md pointer in $DIR"
     else
       echo "wrote: CLAUDE.md @AGENTS.md pointer in $DIR"
     fi
-    exit 0
+    finish "$AGENTS"
   fi
   if [ -f "$CLAUDE" ]; then
     if is_canonical_claude_pointer; then
-      ensure_maintenance_section
+      ensure_maintenance_section "$AGENTS"
       if [ "$MAINT_INJECTED" -eq 1 ]; then
         echo "updated: added ## Maintaining this file to AGENTS.md in $DIR"
       else
         echo "unchanged: AGENTS.md with CLAUDE.md @AGENTS.md pointer in $DIR"
       fi
-      exit 0
+      finish "$AGENTS"
     fi
-    echo "conflict: both AGENTS.md and CLAUDE.md are real files in $DIR; reconcile them manually" >&2
+    echo "conflict: both AGENTS.md and CLAUDE.md are real guide files in $DIR; record knowledge by hand in the one the project uses for it, and merge them only in a change of its own" >&2
     exit 1
   fi
   echo "conflict: CLAUDE.md exists in $DIR but is not a regular file or symlink" >&2
   exit 1
 fi
 
+# From here AGENTS.md is absent. A CLAUDE.md that only points at the missing
+# AGENTS.md, by symlink or canonical pointer, is not a working guide, so these
+# are creation cases; a real CLAUDE.md with its own content is the project's
+# working guide and stays where it is unless --migrate-layout asks otherwise.
 if [ -L "$CLAUDE" ]; then
   if is_correct_claude_symlink; then
     write_skeleton
     install_claude_pointer
     echo "created: AGENTS.md and wrote CLAUDE.md @AGENTS.md pointer in $DIR"
-    exit 0
+    finish "$AGENTS"
   fi
   echo "conflict: CLAUDE.md is a symlink in $DIR but AGENTS.md is missing and the link does not point to AGENTS.md" >&2
   exit 1
@@ -250,13 +312,17 @@ if [ -e "$CLAUDE" ]; then
     if is_canonical_claude_pointer; then
       write_skeleton
       echo "created: AGENTS.md and kept CLAUDE.md @AGENTS.md pointer in $DIR"
-      exit 0
+      finish "$AGENTS"
+    fi
+    if [ "$MIGRATE" -eq 0 ]; then
+      ensure_maintenance_section "$CLAUDE"
+      finish_kept_guide "$CLAUDE"
     fi
     mv "$CLAUDE" "$AGENTS"
-    ensure_maintenance_section
+    ensure_maintenance_section "$AGENTS"
     install_claude_pointer
     echo "promoted: moved CLAUDE.md to AGENTS.md and wrote CLAUDE.md @AGENTS.md pointer in $DIR"
-    exit 0
+    finish "$AGENTS"
   fi
   echo "conflict: CLAUDE.md exists in $DIR but is not a regular file or symlink" >&2
   exit 1
@@ -265,3 +331,4 @@ fi
 write_skeleton
 install_claude_pointer
 echo "created: AGENTS.md and CLAUDE.md @AGENTS.md pointer in $DIR"
+finish "$AGENTS"

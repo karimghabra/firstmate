@@ -438,7 +438,37 @@ test_ship_project_memory_wording() {
     "project-memory contract lost pointer-over-copy guidance"
   assert_grep "follow \`$ROOT/bin/fm-ensure-agents-md.sh\`'s self-governance contract" "$brief" \
     "project-memory contract no longer defers to the ensure helper"
+  assert_grep "If this task produced durable project-intrinsic knowledge, run \`$ROOT/bin/fm-ensure-agents-md.sh .\`" "$brief" \
+    "project-memory contract no longer ties the helper to durable knowledge"
+  assert_grep "Never relocate, rename, merge, or restructure an existing \`AGENTS.md\` or \`CLAUDE.md\` in this task" "$brief" \
+    "project-memory contract no longer forbids relocating an existing guide"
   pass "fm-brief.sh: ship project-memory wording carries the AGENTS.md authoring bar"
+}
+
+# End to end as a worker meets it: follow the generated brief's own
+# project-memory command in a project whose only guide is CLAUDE.md, then record
+# knowledge where the command says. The guide must stay CLAUDE.md, in place.
+test_ship_project_memory_command_keeps_existing_claude_md() {
+  local home id brief proj cmd out guide
+  home="$TMP_ROOT/project-memory-e2e-home"
+  proj="$TMP_ROOT/project-memory-e2e-proj"
+  mkdir -p "$home/data" "$proj"
+  id="brief-memory-e2e"
+  FM_HOME="$home" "$ROOT/bin/fm-brief.sh" "$id" some-proj --mode no-mistakes >/dev/null 2>&1
+  brief="$home/data/$id/brief.md"
+  assert_present "$brief" "brief was not scaffolded"
+  # shellcheck disable=SC2016 # The backticks are literal brief markdown.
+  cmd=$(sed -n 's/^If this task produced durable project-intrinsic knowledge, run `\([^`]*\)` in the worktree.*/\1/p' "$brief")
+  assert_equals "$ROOT/bin/fm-ensure-agents-md.sh ." "$cmd" "brief did not carry a runnable project-memory command"
+  printf '# Project guide\n\nRun tests with make test.\n' > "$proj/CLAUDE.md"
+  out=$(cd "$proj" && eval "$cmd" 2>&1) || fail "the brief's project-memory command failed: $out"
+  assert_absent "$proj/AGENTS.md" "the brief's command relocated the project's CLAUDE.md"
+  assert_grep "Run tests with make test." "$proj/CLAUDE.md" "the brief's command moved existing guide content"
+  guide=$(printf '%s\n' "$out" | sed -n 's/^guide: //p')
+  assert_equals "$(cd "$proj" && pwd -P)/CLAUDE.md" "$guide" "the brief's command did not name the existing CLAUDE.md"
+  printf '%s\n' '- Seed data lives in fixtures/seed.sql.' >> "$guide"
+  assert_grep "- Seed data lives in fixtures/seed.sql." "$proj/CLAUDE.md" "recorded knowledge did not reach the existing CLAUDE.md"
+  pass "fm-brief.sh: the ship brief's project-memory command keeps an existing CLAUDE.md in place"
 }
 
 test_herdr_lab_contract_is_explicit_and_complete() {
@@ -960,6 +990,7 @@ test_faster_paths_use_configured_authority_without_stacked_review
 test_no_mistakes_dod_wording
 test_ask_user_escalation_format
 test_ship_project_memory_wording
+test_ship_project_memory_command_keeps_existing_claude_md
 test_herdr_lab_contract_is_explicit_and_complete
 test_herdr_lab_contract_quotes_foreign_firstmate_path
 test_herdr_lab_omission_is_loud_for_ship_and_scout
