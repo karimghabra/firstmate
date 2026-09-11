@@ -95,14 +95,17 @@ test_daemon_startup_refuses_undeliverable_supervisor_pane() {
   . "$ROOT/bin/fm-timeout-lib.sh"
   out=$(PATH="$dir/fakebin:$PATH" FM_STATE_OVERRIDE="$state" FM_SUPERVISOR_BACKEND=tmux \
     FM_SUPERVISOR_TARGET=%1 FM_FAKE_TMUX_CAPTURE="$capture" FM_FAKE_TMUX_CURSOR_Y=0 \
-    FM_SUPERVISOR_DELIVERY_PROOF_ATTEMPTS=1 fm_run_timed 30 "$AFK_START" 2>&1)
+    fm_run_timed 30 "$AFK_START" 2>&1)
   status=$?
 
   [ "$status" -ne 124 ] || fail "the daemon kept running against a supervisor pane it can never deliver to"
   [ "$status" -ne 0 ] || fail "the daemon started against a supervisor pane it can never deliver to"
-  assert_contains "$out" "away-mode daemon refused to start: it cannot confirm the supervisor composer at '%1'" \
-    "the daemon's startup refusal did not name the undeliverable pane"
-  assert_contains "$out" "verdict unknown" "the daemon's startup refusal did not name the composer verdict"
+  assert_contains "$out" "away-mode daemon refused to start: it cannot prove it could deliver an escalation to this session on this harness, so it was not started" \
+    "the daemon's startup refusal did not say the daemon was not started because delivery is unprovable"
+  assert_contains "$out" "backend tmux, target '%1', verdict unknown)" \
+    "the daemon's startup refusal did not name the backend, pane, and composer verdict"
+  assert_contains "$out" "the ordinary supervision cycle is still running and keeps supervising, and away mode's hold-for-return record is unaffected" \
+    "the daemon's startup refusal did not say ordinary supervision keeps running and the hold-for-return record stands"
   assert_absent "$state/.afk" "a refused daemon left state/.afk switching off the ordinary supervision cycle"
   assert_absent "$state/.supervise-daemon.lock" "a refused daemon kept the singleton lock"
   assert_absent "$state/.supervise-daemon.pid" "a refused daemon kept its pidfile"

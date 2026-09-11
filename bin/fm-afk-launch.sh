@@ -243,9 +243,9 @@ fm_afk_launch_release_unowned_flag() {
 fm_afk_launch_delivery_gate() {  # <backend> <target>
   local backend=$1 target=$2 verdict
   verdict=$(fm_supervisor_delivery_proof "$backend" "$target") && return 0
-  fm_afk_launch_log "REFUSED: the away daemon cannot confirm the supervisor composer at $target (harness $(fm_afk_launch_primary_harness), backend $backend, verdict ${verdict:-unknown}); it delivers escalations only by typing into an affirmatively empty composer, so launching it would switch off the ordinary supervision cycle and strand every escalation until the captain returns"
+  fm_afk_launch_log "REFUSED: the away daemon cannot prove it could deliver an escalation to this session on this harness, so it was not started (harness $(fm_afk_launch_primary_harness), backend $backend, target $target, verdict ${verdict:-unknown}); it delivers escalations only by typing into a supervisor composer it reads as exactly empty"
   fm_afk_launch_release_unowned_flag || return 1
-  fm_afk_launch_log "no away daemon was launched and no daemon state was written: the away-posture record stands and the ordinary supervision cycle keeps owning supervision; tell the captain the away daemon did not start and why"
+  fm_afk_launch_log "the ordinary supervision cycle is still running and keeps supervising, and away mode's hold-for-return record is unaffected; no daemon state was written, so tell the captain the away daemon did not start and why"
   return 4
 }
 

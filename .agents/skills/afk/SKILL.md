@@ -49,6 +49,8 @@ Hold-for-return is the default and the only reach profile this release records: 
    Both daemon paths require the already-confirmed record and share `bin/fm-afk-start.sh` as the daemon entry.
    Both first prove the daemon could deliver to this session (`fm_supervisor_delivery_proof` in `bin/fm-supervisor-target-lib.sh`), and the daemon repeats that proof at its own startup.
    **Exit 4** means that proof failed: no daemon was launched and no daemon state was written, so the posture stands exactly as on Pi and the ordinary supervision cycle keeps owning supervision.
+   This is deliberate, not a malfunction: on grok, and on any harness whose supervisor composer cannot be proven empty, `/afk` now refuses the away daemon and says why, while the ordinary supervision cycle keeps running and the hold-for-return record stands.
+   Grok is the currently recorded case; the dated evidence is the known-staleness note under "Composer classification matrix" in `docs/verification/runtime-backends.md`.
    Stop there, do not run `stop`, and tell the captain in the entry reply, in `AGENTS.md` section 9 language, that the away-mode helper could not start and why, and that supervision continues exactly as it does while they are present.
    The daemon is **presence-gated**: it injects escalations only while `state/.afk` exists, and stays quiet otherwise.
 5. **Do not separately arm `fm-watch.sh` where the daemon runs.** The daemon manages the watcher as its child; the singleton lock no-ops a stray arm harmlessly.

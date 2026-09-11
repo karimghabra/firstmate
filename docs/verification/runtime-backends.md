@@ -1081,6 +1081,7 @@ exit=1
 ```
 
 Neither refusal left `state/.afk`, a daemon lock, or a daemon record, and the unnamed pane's run wrote the `none - native` record that `stop` then cleared.
+The attempt-count override used in the last command has since been removed and the refusal wording has since changed: without the override the proof takes its fixed five reads, and the recorded exit codes, verdicts, and state guarantees are unchanged because the named pane read `unknown` on every attempt, with the current wording pinned by `tests/fm-afk-launch.test.sh` and `tests/fm-daemon.test.sh`.
 The daemon entry ran as a Claude Code tracked background job, and its refusal reached the session as that job's completion notification, the path every harness-native daemon launch reports through, with no dependence on the daemon log or the wedge alarm.
 The portable regressions are `tests/fm-afk-launch.test.sh` (real tmux panes) and `tests/fm-daemon.test.sh`; the classifier's live idle-composer guard, `tests/fm-composer-matrix-live-e2e.test.sh`, is what proves each daemon-running harness's idle composer still passes the proof after an upgrade.
 

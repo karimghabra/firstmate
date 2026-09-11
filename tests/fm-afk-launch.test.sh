@@ -224,15 +224,15 @@ unit_delivery_proof_gates_every_daemon_launch() {
   make_captain_pane "$shell_session" shell || { fail "delivery proof: could not draw the dead-shell pane"; rm -rf "$st"; return 0; }
   for verb in start start-native; do
     out=$(FM_HOME="$st" FM_STATE_OVERRIDE="$st/state" FM_SUPERVISOR_TARGET="$CAPTAIN_PANE" \
-      FM_SUPERVISOR_BACKEND=tmux FM_SUPERVISOR_DELIVERY_PROOF_ATTEMPTS=1 FM_AFK_LAUNCH_ENTRY="$SLEEPER" \
+      FM_SUPERVISOR_BACKEND=tmux FM_AFK_LAUNCH_ENTRY="$SLEEPER" \
       "$LAUNCH" "$verb" 2>&1)
     rc=$?
     daemon_sessions=$(tmux list-sessions -F '#{session_name}' 2>/dev/null | grep -c "^fm-afk-daemon-$hash-" || true)
     if [ "$rc" -eq 4 ] && [ ! -e "$st/state/.afk" ] && [ ! -e "$st/state/.afk-daemon-terminal" ] \
       && [ "$daemon_sessions" -eq 0 ] && [ -f "$st/state/.afk-contract" ] \
-      && printf '%s' "$out" | grep -F "cannot confirm the supervisor composer at $CAPTAIN_PANE" >/dev/null \
-      && printf '%s' "$out" | grep -F 'verdict unknown' >/dev/null \
-      && printf '%s' "$out" | grep -F 'the away-posture record stands and the ordinary supervision cycle keeps owning supervision' >/dev/null; then
+      && printf '%s' "$out" | grep -F 'the away daemon cannot prove it could deliver an escalation to this session on this harness, so it was not started' >/dev/null \
+      && printf '%s' "$out" | grep -F "(harness grok, backend tmux, target $CAPTAIN_PANE, verdict unknown)" >/dev/null \
+      && printf '%s' "$out" | grep -F "the ordinary supervision cycle is still running and keeps supervising, and away mode's hold-for-return record is unaffected" >/dev/null; then
       pass "delivery proof: $verb refuses a dead-shell captain pane with exit 4, launches nothing, and keeps the posture record"
     else
       fail "delivery proof: $verb did not refuse the dead-shell pane cleanly (rc=$rc sessions=$daemon_sessions): $out"
@@ -306,7 +306,7 @@ unit_refusals_release_only_an_unowned_away_flag() {
 
   if command -v tmux >/dev/null 2>&1 && make_captain_pane "fm-afk-unowned-shell-$$" shell; then
     out=$(FM_HOME="$st" FM_STATE_OVERRIDE="$st/state" FM_SUPERVISOR_TARGET="$CAPTAIN_PANE" \
-      FM_SUPERVISOR_BACKEND=tmux FM_SUPERVISOR_DELIVERY_PROOF_ATTEMPTS=1 "$LAUNCH" start-native 2>&1)
+      FM_SUPERVISOR_BACKEND=tmux "$LAUNCH" start-native 2>&1)
     rc=$?
     if [ "$rc" -eq 4 ] && [ ! -e "$st/state/.afk" ] \
       && printf '%s' "$out" | grep -F 'released a state/.afk that no running daemon owned' >/dev/null; then

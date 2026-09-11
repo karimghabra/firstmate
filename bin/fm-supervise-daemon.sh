@@ -96,11 +96,7 @@
 #                                   supported as supervisor backends; the daemon
 #                                   refuses loudly at startup rather than trying
 #                                   tmux primitives against a non-tmux pane.
-#          FM_SUPERVISOR_DELIVERY_PROOF_ATTEMPTS  composer reads, one second
-#                                   apart, before the startup delivery proof
-#                                   refuses (default 5); it can never waive the
-#                                   proof's exact-empty requirement.
-#          FM_INJECT_SKIP          |-prefixes force-self-handle bypassing
+#          FM_INJECT_SKIP           |-prefixes force-self-handle bypassing
 #                                   classification (default "heartbeat"); empty
 #                                   disables. Use sparingly: it overrides the
 #                                   captain-relevant escalation for matching
@@ -1664,7 +1660,7 @@ fm_super_main() {
   # that could never type an escalation into this pane.
   local proof
   if ! proof=$(fm_supervisor_delivery_proof "$BACKEND" "$TARGET"); then
-    startup_refuse "error: away-mode daemon refused to start: it cannot confirm the supervisor composer at '$TARGET' (harness $(fm_daemon_primary_harness), backend $BACKEND, verdict ${proof:-unknown}), so no escalation could ever be delivered there; the ordinary supervision cycle keeps owning supervision" \
+    startup_refuse "error: away-mode daemon refused to start: it cannot prove it could deliver an escalation to this session on this harness, so it was not started (harness $(fm_daemon_primary_harness), backend $BACKEND, target '$TARGET', verdict ${proof:-unknown}); the ordinary supervision cycle is still running and keeps supervising, and away mode's hold-for-return record is unaffected" \
       "startup refused: supervisor composer at '$TARGET' not confirmable (verdict=${proof:-unknown}, backend=$BACKEND)"
   fi
 

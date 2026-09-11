@@ -112,11 +112,10 @@ discover_supervisor_backend() {
 #   unsupported   the daemon has no transport for <backend>
 #   missing       <target> is not a live pane on <backend>
 #   <verdict>     the last composer verdict (unknown, pending, pending-unproven,
-#                 or any future verdict) after FM_SUPERVISOR_DELIVERY_PROOF_ATTEMPTS
-#                 reads one second apart (default 5), so a capture taken
-#                 mid-redraw does not refuse on its own
+#                 or any future verdict) after five composer reads one second
+#                 apart, so a capture taken mid-redraw does not refuse on its own
 fm_supervisor_delivery_proof() {  # <backend> <target>
-  local backend=$1 target=$2 attempts attempt=0 verdict=''
+  local backend=$1 target=$2 attempts=5 attempt=0 verdict=''
   if ! fm_backend_list_contains "$FM_SUPERVISOR_SUPPORTED_BACKENDS" "$backend"; then
     printf 'unsupported'
     return 1
@@ -125,9 +124,6 @@ fm_supervisor_delivery_proof() {  # <backend> <target>
     printf 'missing'
     return 1
   fi
-  attempts=${FM_SUPERVISOR_DELIVERY_PROOF_ATTEMPTS:-5}
-  case "$attempts" in ''|*[!0-9]*) attempts=5 ;; esac
-  [ "$attempts" -ge 1 ] || attempts=1
   while :; do
     attempt=$((attempt + 1))
     verdict=$(fm_backend_composer_state "$backend" "$target" 2>/dev/null)
