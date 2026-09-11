@@ -62,6 +62,17 @@ run_stand_down() {  # <case-dir> <args...>
   PATH="$d/fakebin:$PATH" FM_STATE_OVERRIDE="$d/state" "$STAND_DOWN" "$@"
 }
 
+# Sorted basenames of everything directly inside <dir>, dotfiles included. A bash
+# glob rather than a GNU-only find format, which would fail this suite on macOS,
+# and rather than ls, whose output is not safe to parse.
+list_dir_entries() {  # <dir>
+  local f names=''
+  shopt -s nullglob dotglob
+  for f in "$1"/*; do names="$names${f##*/}"$'\n'; done
+  shopt -u nullglob dotglob
+  printf '%s' "$names" | sort
+}
+
 # --- the round trip ---------------------------------------------------------
 
 test_record_show_release_round_trip() {
@@ -103,7 +114,7 @@ test_recording_touches_no_other_record() {
   d=$(new_case leaves-records-alone)
   printf 'working: both branches pushed, waiting to land\n' > "$d/state/stood.status"
   before_meta=$(cat "$d/state/stood.meta")
-  before_files=$(cd "$d/state" && ls -A | sort)
+  before_files=$(list_dir_entries "$d/state")
   run_stand_down "$d" stood --reason "stopped on purpose" >/dev/null \
     || fail "recording was refused over a stopped agent"
 
@@ -115,7 +126,7 @@ test_recording_touches_no_other_record() {
     "no line is appended to the worker's log on its behalf"
   # Nothing else is created, so no completion, transition, or lifecycle record
   # can be hiding behind the one file this is allowed to write.
-  after_files=$(cd "$d/state" && ls -A | sort)
+  after_files=$(list_dir_entries "$d/state")
   assert_equals "$(printf '%s\nstood.stood-down' "$before_files" | sort)" "$after_files" \
     "recording a stand-down wrote something other than its own record"
   pass "recording a stand-down writes only its own record: no completion, no transition, no word put in the worker's mouth"
