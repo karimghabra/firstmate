@@ -1,0 +1,75 @@
+### Kept CLAUDE.md: git diff after first run (existing content untouched, only appended)
+diff --git a/CLAUDE.md b/CLAUDE.md
+index ad236d2..2d6c701 100644
+--- a/CLAUDE.md
++++ b/CLAUDE.md
+@@ -2,3 +2,10 @@
+ 
+ Run tests with make test.
+ Deploy with ./deploy.sh.
++
++## Maintaining this file
++
++Keep this file for knowledge useful to almost every future agent session in this project.
++Do not repeat what the codebase already shows; point to the authoritative file or command instead.
++Prefer rewriting or pruning existing entries over appending new ones.
++When updating this file, preserve this bar for all agents and keep entries concise.
+
+### CRLF CLAUDE.md: every line keeps CRLF (count of lines lacking \r)
+lines total=10 lines-without-CR=0
+
+### Idempotence: second run on kept CLAUDE.md
+unchanged: CLAUDE.md in /tmp/fm-agents-live.xf2a/target-claude-only
+guide: /tmp/fm-agents-live.xf2a/target-claude-only/CLAUDE.md
+exit 0
+maint-sections=1
+git status: []
+CLAUDE.md
+
+### Idempotence: second run on kept CLAUDE.md -> AGENTS.md symlink
+unchanged: AGENTS.md in /tmp/fm-agents-live.xf2a/target-claude-symlink
+guide: /tmp/fm-agents-live.xf2a/target-claude-symlink/AGENTS.md
+exit 0
+lrwxrwxrwx CLAUDE.md -> AGENTS.md
+git status: []
+
+### Removed flag: --migrate-layout on a CLAUDE.md-only project
+usage: fm-ensure-agents-md.sh [repo-or-worktree-dir]
+
+The helper creates AGENTS.md and a CLAUDE.md @AGENTS.md pointer when the
+project has no agent guide, adds a missing pointer beside an existing AGENTS.md,
+and otherwise keeps the existing guide at its path, only adding the
+self-governance section to it. It never moves a guide. The final
+"guide: <path>" line names the file to record durable project knowledge in.
+
+To retain equivalent project-owned maintenance guidance without adding the
+canonical section, use this exact first line of the guide (LF or CRLF):
+<!-- firstmate:maintained-by-project -->
+The mark declares retained guidance, not permission to remove governance.
+Without the first-line mark or exact canonical heading, the helper adds the section.
+exit 1
+CLAUDE.md
+error: not a directory: --migrate-layout
+exit 1
+CLAUDE.md
+
+### Directory argument from elsewhere (brief uses '.', but path arg must work too)
+updated: added ## Maintaining this file to CLAUDE.md in /tmp/fm-agents-live.xf2a/target-arg
+guide: /tmp/fm-agents-live.xf2a/target-arg/CLAUDE.md
+exit 0
+CLAUDE.md
+
+### --help text
+usage: fm-ensure-agents-md.sh [repo-or-worktree-dir]
+
+The helper creates AGENTS.md and a CLAUDE.md @AGENTS.md pointer when the
+project has no agent guide, adds a missing pointer beside an existing AGENTS.md,
+and otherwise keeps the existing guide at its path, only adding the
+self-governance section to it. It never moves a guide. The final
+"guide: <path>" line names the file to record durable project knowledge in.
+
+To retain equivalent project-owned maintenance guidance without adding the
+canonical section, use this exact first line of the guide (LF or CRLF):
+<!-- firstmate:maintained-by-project -->
+The mark declares retained guidance, not permission to remove governance.
+Without the first-line mark or exact canonical heading, the helper adds the section.

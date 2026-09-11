@@ -1,0 +1,14 @@
+### Worker follows the generated ship brief's project-memory command in a CLAUDE.md-only production repo
+command extracted from brief: /home/mars/.no-mistakes/worktrees/a8c0c72d0935/01M28052W3RM6R1YPGVSBKVPD8/bin/fm-ensure-agents-md.sh .
+(unrelated work) editing src/app.py
+  | updated: added ## Maintaining this file to CLAUDE.md in /tmp/fm-agents-live.xf2a/worker-e2e
+  | guide: /tmp/fm-agents-live.xf2a/worker-e2e/CLAUDE.md
+recorded knowledge into: /tmp/fm-agents-live.xf2a/worker-e2e/CLAUDE.md
+--- git status --porcelain (branch diff a reviewer would see)
+ M CLAUDE.md
+ M src/app.py
+--- git diff --stat
+ CLAUDE.md  | 8 ++++++++
+ src/app.py | 2 +-
+ 2 files changed, 9 insertions(+), 1 deletion(-)
+--- AGENTS.md exists? no

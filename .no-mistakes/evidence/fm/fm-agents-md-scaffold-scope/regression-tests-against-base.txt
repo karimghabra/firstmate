@@ -1,0 +1,4 @@
+### target-branch tests run against the BASE (6705ed2) helper and brief - expected to fail
+not ok - a created guide was not named as the file to record knowledge in (expected '/tmp/fm-ensure-agents-md.iDhBLd/new-project/AGENTS.md', got '')
+exit 1
+not ok - project-memory contract no longer ties the helper to durable knowledge
