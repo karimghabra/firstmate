@@ -12,21 +12,23 @@
 # clause fields, the never-set, the refusal wording, and the record schema); `confirm` promotes it
 # into state/.afk-contract and prints the entry announcement (hold-for-return
 # only: no phone channel exists). The record is the posture in every harness.
-# On Pi and pi-signed the entry ENDS there: the away daemon is no longer launched
-# on Pi, the ordinary supervision session keeps running in both postures, and
-# `start` refuses on those harnesses. Every other harness still runs the daemon
-# for now, so `start` and `start-native` require the confirmed record before they
-# launch the daemon.
+# On Pi, pi-signed, and Claude the entry ENDS there: the away daemon is not
+# launched on those harnesses, their own supervision cycle keeps running in both
+# postures, and `start` and `start-native` refuse there. Every other harness
+# still runs the daemon for now, so `start` and `start-native` require the
+# confirmed record before they launch the daemon.
+# The per-harness refusal above also releases a state/.afk that no running
+# daemon owns, since that flag alone would keep the ordinary cycle switched off.
 # `stop` (the return, driven by bin/fm-afk-return.sh) shuts the daemon down,
 # clears state/.afk last, and archives the record under state/afk-contracts/.
 #
 # Why the terminal lifecycle exists (docs/herdr-backend.md "Away-mode daemon terminal launch"):
 # bin/fm-afk-start.sh execs the supervise daemon in the FOREGROUND of whatever
-# terminal it is already in. Harnesses with a native in-pane tracked-background
-# tool (claude, grok) run it there directly and it is fine. A harness with NO
-# native background mechanism (pi) has to manufacture a terminal, and doing that
-# by SPLITTING the captain's active pane visibly shrinks it - the regression this
-# script fixes. Instead this creates a non-visible tracked terminal (a herdr tab/
+# terminal it is already in. A harness with a native in-pane tracked-background
+# tool (grok) runs it there directly and it is fine. A harness with NO native
+# background mechanism (codex, for one) has to manufacture a terminal, and doing
+# that by SPLITTING the captain's active pane visibly shrinks it - the
+# regression this script fixes. Instead this creates a non-visible tracked terminal (a herdr tab/
 # workspace with --no-focus, or a detached tmux session) that never touches the
 # captain's active tab, and NEVER uses shell `&` (which herdr/codex can reap).
 #
@@ -46,7 +48,8 @@
 #                              missing part is named in the read-back); the
 #                              proposal still records it as refused.
 #   fm-afk-launch.sh confirm   Promote the required proposal and print the entry
-#                              announcement. On Pi this is the whole entry.
+#                              announcement. On Pi, pi-signed, and Claude this is
+#                              the whole entry.
 #   fm-afk-launch.sh start     Capture the captain pane, then (unless the daemon
 #                              is already running) launch the daemon in a fresh
 #                              non-visible terminal for the detected backend and
@@ -185,17 +188,41 @@ fm_afk_launch_primary_harness() {
   "$FM_AFK_LAUNCH_DIR/fm-harness.sh" 2>/dev/null || printf unknown
 }
 
-# The away daemon is no longer launched on Pi: the posture record is the whole
-# entry there and the ordinary supervision session runs in both postures.
+# The away daemon is not launched where the harness's own supervision cycle
+# already wakes an idle session without typing into its pane: Pi's supervision
+# session, and Claude's Stop-hook rewake (bin/fm-claude-stop-autoarm.sh). The
+# daemon's state/.afk flag would switch that cycle off in favor of a transport
+# that reaches the session only through a composer read the shared classifier
+# must confirm, so on these harnesses it could only trade a working wake path
+# for a fragile one. The posture record is the whole entry there, and the
+# ordinary supervision session runs in both postures.
 fm_afk_launch_daemon_allowed() {
   local harness
   harness=$(fm_afk_launch_primary_harness)
   case "$harness" in
-    pi|pi-signed)
-      fm_afk_launch_log "the away daemon is no longer launched on $harness; the away-posture record is the posture there (run bin/fm-afk-launch.sh confirm and stop)"
+    pi|pi-signed|claude)
+      fm_afk_launch_log "the away daemon is not launched on $harness; its own supervision cycle keeps running under the away-posture record, which is the whole entry there (run bin/fm-afk-launch.sh confirm and stop)"
+      fm_afk_launch_release_unowned_flag
       return 1 ;;
   esac
   return 0
+}
+
+# The per-harness refusal promises that the ordinary supervision cycle keeps
+# owning supervision, which holds only once no state/.afk remains to switch it off.
+# With no live daemon holding the daemon lock, a present flag is one nobody
+# owns - left by a crashed daemon, or by an older launch on a harness that no
+# longer runs one - so release it. A live daemon's flag is left alone: the
+# return path stops that daemon in order.
+fm_afk_launch_release_unowned_flag() {
+  [ -e "$FM_AFK_LAUNCH_STATE/.afk" ] || return 0
+  daemon_lock_held_by_live_daemon && return 0
+  if rm -f "$FM_AFK_LAUNCH_STATE/.afk"; then
+    fm_afk_launch_log "released a state/.afk that no running daemon owned, so the ordinary supervision cycle resumes"
+    return 0
+  fi
+  fm_afk_launch_log "failed to release a state/.afk that no running daemon owns; the ordinary supervision cycle stays switched off until it is removed"
+  return 1
 }
 
 fm_afk_launch_catchup_pending() {

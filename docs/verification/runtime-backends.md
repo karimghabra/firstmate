@@ -334,6 +334,7 @@ The strict blank-row posture held live (a blank shell row deferred injection), a
 Kimi was not installed on the verification machine; its bordered shape is pinned by the portable byte-capture regressions in `tests/fm-composer-lib.test.sh`, which also carry the other five adapters' capability profiles for every harness under both a UTF-8 locale and `LC_ALL=C`.
 This guard is the refresh command after an upgrade to any matrix-covered harness; rerun it and update the versions above rather than trusting this table across releases.
 Known staleness: on 2026-08-23 the steering-inbox doorbell run observed grok 1.0.5's idle composer classifying `unknown` (and sometimes pending-family), never `empty`, so the grok row above is stale for 1.0.5 and owes a refresh; steering is unaffected because the send path's composer check is advisory, but empty-requiring consumers (away-daemon injection, spawn readiness) should not trust the 1.0.0 grok result.
+The claude row covers only an unnamed session: a Claude session whose name is drawn into its composer's top rule classified `unknown` at idle on 2026-09-11 ([Claude away posture without a daemon](#claude-away-posture-without-a-daemon)).
 Cursor is deliberately outside this cursor-anchored empty-composer matrix because its terminal cursor is parked outside the composer; tmux's Cursor-specific, process-identity-gated cursorless fallback is covered by the [Cursor Agent CLI](#cursor-agent-cli) section's separate live evidence and drift guard.
 
 `zellij action dump-screen --pane-id <id> --ansi` was verified at zellij 0.44.0 to preserve ANSI styling (real Claude Code rendered inside a zellij pane dumped `ESC[m` `❯` U+00A0 for its idle composer row), which is the capability the zellij composer classifier reads.
@@ -1027,7 +1028,7 @@ That command is the guard that refreshes this record; run it after every Herdr u
 
 ### Away-mode transport
 
-The away daemon is no longer launched on Pi; the away posture there is the record `bin/fm-afk-contract.sh` owns.
+The away daemon is not launched on Pi or Claude; the away posture there is the record `bin/fm-afk-contract.sh` owns.
 The Pi/Herdr away posture and return path was verified on 2026-09-08 against a real Pi primary in an isolated Herdr lab session, Herdr 0.9.0 and Pi 0.82.0:
 
 ```sh
@@ -1046,6 +1047,31 @@ evidence: herdr=herdr 0.9.0 pi=0.82.0 target=fm-lab-fm-afk-pi-return-37189-7133:
 Observed guarantees: `fm-afk-launch.sh start` refused on the Pi primary and `confirm` recorded the posture with no daemon pid, flag, or terminal; a pending real Pi draft was left untouched with nothing submitted into the captain pane; the unmarked return request was recognized as the return, rendered the brief health first, opened the catch-up gate on the live blocker, and refused Bearings; resolving the blocker cleared the gate, and a clean re-entry and return left exactly one archived record per away window.
 The fixture captures submitted input through Pi's `input` extension hook, so the lab agent directory needs no provider credentials.
 The daemon injection transport into a live composer keeps its coverage in `tests/fm-afk-inject-herdr-e2e.test.sh` for the harnesses that still run the daemon, and the dedicated Herdr daemon workspace topology is covered by `tests/fm-afk-launch.test.sh` and preserves the captain tab's pane count.
+
+#### Claude away posture without a daemon
+
+The away daemon is not launched on Claude, observed 2026-09-11 on Claude Code 2.1.268 and Herdr 0.7.4 (Linux under WSL2) from an isolated home holding a confirmed posture record:
+
+```sh
+FM_HOME="$ISO" FM_STATE_OVERRIDE="$ISO/state" bin/fm-afk-launch.sh start-native
+```
+
+```text
+fm-afk-launch: the away daemon is not launched on claude; its own supervision cycle keeps running under the away-posture record, which is the whole entry there (run bin/fm-afk-launch.sh confirm and stop)
+exit=1
+```
+
+Why the daemon could never deliver to the incident's session was observed at 2026-09-11T16:44Z on the same versions, reading real Claude panes only:
+
+```sh
+bash -c '. bin/fm-backend.sh; fm_backend_composer_state herdr "$1"' _ <pane>
+```
+
+For a Claude session whose name is drawn into its composer's top rule (the captured top rule is a run of `─` ending in ` FIRSTMATE ─`), it printed `unknown` while `herdr pane list` reported that pane's `agent_status` as `done`, that is idle.
+For an unnamed Claude session whose top rule is a plain rule, it printed `empty` while that pane's `agent_status` was `working`, that is mid-turn.
+Injection requires `empty`, so the daemon could never type into the named session even when idle.
+The daemon remains unproven on harnesses whose idle composer the shared classifier cannot read as `empty`; grok's known staleness under [Composer classification matrix](#composer-classification-matrix) is the other current case.
+The portable regression for the Claude refusal is `tests/fm-afk-launch.test.sh`.
 
 ## Zellij
 

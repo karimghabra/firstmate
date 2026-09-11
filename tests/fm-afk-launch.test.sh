@@ -23,10 +23,14 @@ ROOT="$(cd "$(dirname "${BASH_SOURCE[0]}")/.." && pwd)"
 LAUNCH="$ROOT/bin/fm-afk-launch.sh"
 START="$ROOT/bin/fm-afk-start.sh"
 CONTRACT="$ROOT/bin/fm-afk-contract.sh"
-# The daemon paths refuse on a Pi primary, so pin a daemon-running harness for
-# every unit below; the Pi refusal has its own units (unit_pi_never_launches_the_daemon).
-unset PI_CODING_AGENT FM_PI_HARNESS CURSOR_AGENT CURSOR_INVOKED_AS GEMINI_CLI ATLASSIAN_AGENT_TYPE ROVODEV_CLI
-export CLAUDECODE=1
+# The daemon paths refuse on Pi and Claude primaries, so pin a daemon-running
+# harness for every unit below; those refusals have their own unit
+# (unit_own_cycle_harnesses_never_launch_the_daemon).
+unset PI_CODING_AGENT FM_PI_HARNESS CURSOR_AGENT CURSOR_INVOKED_AS GEMINI_CLI ATLASSIAN_AGENT_TYPE ROVODEV_CLI CLAUDECODE FM_OMP_HARNESS
+export GROK_AGENT=1
+# Supervisor-pane discovery must never resolve the pane this suite was started
+# from: every unit names its captain pane explicitly or deliberately has none.
+unset TMUX_PANE HERDR_ENV HERDR_PANE_ID
 
 FAILED=0
 fail() { printf 'not ok - %s\n' "$1" >&2; FAILED=1; }
@@ -89,29 +93,37 @@ unit_propose_confirm_records_the_posture_without_a_daemon() {
   rm -rf "$st"
 }
 
-unit_pi_never_launches_the_daemon() {
-  local st harness out rc
-  for harness in pi pi-signed; do
-    st=$(mktemp -d "${TMPDIR:-/tmp}/fm-afk-pi.XXXXXX")
+# Pi's supervision session and Claude's Stop-hook rewake keep supervising under
+# the away-posture record, so neither path may ever switch them off for a
+# daemon: not even with a confirmed record.
+unit_own_cycle_harnesses_never_launch_the_daemon() {
+  local st harness out rc verb
+  for harness in pi pi-signed claude; do
+    st=$(mktemp -d "${TMPDIR:-/tmp}/fm-afk-own-cycle.XXXXXX")
     mkdir -p "$st/state"
     out=$(FM_HOME="$st" FM_STATE_OVERRIDE="$st/state" FM_TEST_HARNESS="$harness" \
       FM_SUPERVISOR_TARGET=unused FM_SUPERVISOR_BACKEND=tmux FM_AFK_LAUNCH_ENTRY="$SLEEPER" \
       bash -c '. "$1"; fm_afk_launch_primary_harness() { printf "%s" "$FM_TEST_HARNESS"; }; fm_afk_launch_main start' _ "$LAUNCH" 2>&1)
     rc=$?
-    if [ "$rc" -ne 0 ] && printf '%s' "$out" | grep -F "the away daemon is no longer launched on $harness" >/dev/null \
+    if [ "$rc" -ne 0 ] && printf '%s' "$out" | grep -F "the away daemon is not launched on $harness" >/dev/null \
       && [ ! -e "$st/state/.afk" ] && [ ! -e "$st/state/.afk-daemon-terminal" ] && [ ! -e "$st/state/.afk-contract" ]; then
       pass "$harness: start refuses to launch the daemon and writes no state"
     else
       fail "$harness: start did not refuse cleanly (rc=$rc): $out"
     fi
-    out=$(FM_HOME="$st" FM_STATE_OVERRIDE="$st/state" FM_TEST_HARNESS="$harness" \
-      bash -c '. "$1"; fm_afk_launch_primary_harness() { printf "%s" "$FM_TEST_HARNESS"; }; fm_afk_launch_main start-native' _ "$LAUNCH" 2>&1)
-    rc=$?
-    if [ "$rc" -ne 0 ] && [ ! -e "$st/state/.afk" ] && [ ! -e "$st/state/.afk-daemon-terminal" ]; then
-      pass "$harness: start-native refuses to prepare a daemon"
-    else
-      fail "$harness: start-native did not refuse (rc=$rc): $out"
-    fi
+    confirm_posture "$st" || fail "$harness: could not confirm fixture posture"
+    for verb in start start-native; do
+      out=$(FM_HOME="$st" FM_STATE_OVERRIDE="$st/state" FM_TEST_HARNESS="$harness" \
+        FM_SUPERVISOR_TARGET=unused FM_SUPERVISOR_BACKEND=tmux FM_AFK_LAUNCH_ENTRY="$SLEEPER" \
+        bash -c '. "$1"; fm_afk_launch_primary_harness() { printf "%s" "$FM_TEST_HARNESS"; }; fm_afk_launch_main "$2"' _ "$LAUNCH" "$verb" 2>&1)
+      rc=$?
+      if [ "$rc" -ne 0 ] && printf '%s' "$out" | grep -F "the away daemon is not launched on $harness" >/dev/null \
+        && [ ! -e "$st/state/.afk" ] && [ ! -e "$st/state/.afk-daemon-terminal" ] && [ -f "$st/state/.afk-contract" ]; then
+        pass "$harness: $verb refuses the daemon even with a confirmed posture"
+      else
+        fail "$harness: $verb did not refuse cleanly with a confirmed posture (rc=$rc): $out"
+      fi
+    done
     rm -rf "$st"
   done
 }
@@ -152,6 +164,49 @@ unit_failed_daemon_launch_preserves_confirmed_record() {
   else
     fail "failed start: changed the pre-confirmed posture record"
   fi
+  rm -rf "$st"
+}
+
+# A refused launch promises that the ordinary supervision cycle keeps
+# supervising, which is false while state/.afk still switches it off. The
+# refusal therefore releases a flag no running daemon owns - a crashed daemon's,
+# or one an older launch left on a harness that no longer runs a daemon - and
+# leaves a live daemon's flag for the ordered return.
+unit_refusals_release_only_an_unowned_away_flag() {
+  local st out rc sleeper_pid lock
+  st=$(mktemp -d "${TMPDIR:-/tmp}/fm-afk-unowned-flag.XXXXXX")
+  mkdir -p "$st/state"
+  confirm_posture "$st" || fail "unowned flag: could not confirm fixture posture"
+  date '+%s' > "$st/state/.afk"
+  out=$(FM_HOME="$st" FM_STATE_OVERRIDE="$st/state" \
+    bash -c '. "$1"; fm_afk_launch_primary_harness() { printf claude; }; fm_afk_launch_main start-native' _ "$LAUNCH" 2>&1)
+  rc=$?
+  if [ "$rc" -ne 0 ] && [ ! -e "$st/state/.afk" ] \
+    && printf '%s' "$out" | grep -F 'released a state/.afk that no running daemon owned' >/dev/null; then
+    pass "unowned flag: the Claude refusal releases a flag no running daemon owns"
+  else
+    fail "unowned flag: the Claude refusal left an unowned flag switching supervision off (rc=$rc): $out"
+  fi
+
+  date '+%s' > "$st/state/.afk"
+  sleep 600 &
+  # shellcheck disable=SC2031 # The background PID is captured immediately in this shell.
+  sleeper_pid=$!
+  lock="$st/state/.supervise-daemon.lock"
+  mkdir -p "$lock"
+  printf '%s' "$sleeper_pid" > "$lock/pid"
+  # shellcheck source=/dev/null
+  ( . "$ROOT/bin/fm-wake-lib.sh"; fm_pid_identity "$sleeper_pid" > "$lock/pid-identity" 2>/dev/null ) || true
+  FM_HOME="$st" FM_STATE_OVERRIDE="$st/state" \
+    bash -c '. "$1"; fm_afk_launch_primary_harness() { printf claude; }; fm_afk_launch_main start-native' _ "$LAUNCH" >/dev/null 2>&1
+  if [ -e "$st/state/.afk" ]; then
+    pass "unowned flag: a live daemon's flag survives the refusal for the ordered return"
+  else
+    fail "unowned flag: the refusal removed a live daemon's flag"
+  fi
+  kill "$sleeper_pid" 2>/dev/null || true
+  wait "$sleeper_pid" 2>/dev/null || true
+  rm -rf "$lock"
   rm -rf "$st"
 }
 
@@ -884,9 +939,10 @@ unit_stop_confirms_daemon_exit() {
 }
 
 unit_refresh_validates_record() {
-  local st daemon_pid
+  local st daemon_pid out
   st=$(mktemp -d "${TMPDIR:-/tmp}/fm-afk-refresh-record.XXXXXX")
   mkdir -p "$st/state/.supervise-daemon.lock"
+  confirm_posture "$st" || fail "refresh record: could not confirm fixture posture"
   printf 'tmux\tonly-two-fields\n' > "$st/state/.afk-daemon-terminal"
   sleep 30 &
   # shellcheck disable=SC2031 # The background PID is captured immediately in this shell.
@@ -894,14 +950,15 @@ unit_refresh_validates_record() {
   printf '%s' "$daemon_pid" > "$st/state/.supervise-daemon.lock/pid"
   # shellcheck source=/dev/null
   ( . "$ROOT/bin/fm-wake-lib.sh"; fm_pid_identity "$daemon_pid" > "$st/state/.supervise-daemon.lock/pid-identity" )
-  if FM_HOME="$st" FM_STATE_OVERRIDE="$st/state" FM_SUPERVISOR_TARGET=unused \
+  if out=$(FM_HOME="$st" FM_STATE_OVERRIDE="$st/state" FM_SUPERVISOR_TARGET=unused \
     FM_SUPERVISOR_BACKEND=tmux bash -c '
       . "$1"
       ! fm_afk_launch_start && ! fm_afk_launch_start_native
-    ' _ "$LAUNCH" && [ ! -e "$st/state/.afk" ]; then
+    ' _ "$LAUNCH" 2>&1) && [ ! -e "$st/state/.afk" ] \
+    && [ "$(printf '%s\n' "$out" | grep -cF 'daemon terminal record is malformed')" -eq 2 ]; then
     pass "refresh record: malformed terminal identity fails closed"
   else
-    fail "refresh record: malformed terminal identity was accepted"
+    fail "refresh record: malformed terminal identity was accepted or refused for another reason: $out"
   fi
   kill "$daemon_pid" 2>/dev/null || true
   wait "$daemon_pid" 2>/dev/null || true
@@ -909,19 +966,21 @@ unit_refresh_validates_record() {
 }
 
 unit_clear_failure_aborts_entry() {
-  local st
+  local st out
   st=$(mktemp -d "${TMPDIR:-/tmp}/fm-afk-clear-fail.XXXXXX")
   mkdir -p "$st/state"
+  confirm_posture "$st" || fail "clear failure: could not confirm fixture posture"
   : > "$st/state/.subsuper-escalations"
-  if FM_HOME="$st" FM_STATE_OVERRIDE="$st/state" bash -c '
+  if out=$(FM_HOME="$st" FM_STATE_OVERRIDE="$st/state" bash -c '
     . "$1"
     fm_afk_launch_reconcile() { return 0; }
     fm_afk_clear_stale_artifacts() { return 1; }
     ! fm_afk_launch_start_native
-  ' _ "$LAUNCH" && [ ! -e "$st/state/.afk" ] && [ -e "$st/state/.subsuper-escalations" ]; then
+  ' _ "$LAUNCH" 2>&1) && [ ! -e "$st/state/.afk" ] && [ -e "$st/state/.subsuper-escalations" ] \
+    && printf '%s' "$out" | grep -F 'failed to clear stale away-mode artifacts' >/dev/null; then
     pass "clear failure: native entry aborts and restores prior state"
   else
-    fail "clear failure: native entry proceeded or lost prior state"
+    fail "clear failure: native entry proceeded, lost prior state, or stopped for another reason: $out"
   fi
   rm -rf "$st"
 }
@@ -963,18 +1022,20 @@ unit_incomplete_restore_retains_backup() {
 }
 
 unit_flag_write_failure_aborts() {
-  local st
+  local st marker
   st=$(mktemp -d "${TMPDIR:-/tmp}/fm-afk-flag-fail.XXXXXX")
   mkdir -p "$st/state"
-  FM_HOME="$st" FM_STATE_OVERRIDE="$st/state" bash -c '
+  confirm_posture "$st" || fail "flag failure: could not confirm fixture posture"
+  marker="$st/flag-write-attempted"
+  FM_HOME="$st" FM_STATE_OVERRIDE="$st/state" MARKER="$marker" bash -c '
     . "$1"
-    fm_afk_launch_flag_write() { return 1; }
+    fm_afk_launch_flag_write() { : > "$MARKER"; return 1; }
     ! fm_afk_launch_start_native
   ' _ "$LAUNCH"
-  if [ ! -e "$st/state/.afk" ] && [ ! -e "$st/state/.afk-daemon-terminal" ]; then
+  if [ -e "$marker" ] && [ ! -e "$st/state/.afk" ] && [ ! -e "$st/state/.afk-daemon-terminal" ]; then
     pass "flag failure: lifecycle aborts without active state"
   else
-    fail "flag failure: lifecycle reported active state"
+    fail "flag failure: lifecycle reported active state or never reached the flag write"
   fi
   rm -rf "$st"
 }
@@ -1081,9 +1142,10 @@ e2e_tmux() {
 
 unit_clear_stale
 unit_propose_confirm_records_the_posture_without_a_daemon
-unit_pi_never_launches_the_daemon
+unit_own_cycle_harnesses_never_launch_the_daemon
 unit_daemon_entry_requires_confirmation
 unit_failed_daemon_launch_preserves_confirmed_record
+unit_refusals_release_only_an_unowned_away_flag
 unit_stop_archives_the_record_last
 unit_relative_paths_are_absolute_before_daemon_launch
 unit_fresh_vs_refresh

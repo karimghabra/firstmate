@@ -18,13 +18,14 @@
 # restore them explicitly.
 #
 # This is the COMMON daemon entry for every backend. HOW it becomes a tracked
-# background process differs by harness/backend and is owned elsewhere:
-#   - Harnesses with a native in-pane tracked-background tool (e.g. claude, grok)
-#     run this directly via that tool, so the daemon inherits the captain pane's
+# background process differs by harness/backend and is owned elsewhere (the
+# daemon is not launched at all on Pi, pi-signed, or Claude):
+#   - Harnesses with a native in-pane tracked-background tool (e.g. grok) run
+#     this directly via that tool, so the daemon inherits the captain pane's
 #     env and auto-discovers it.
-#   - Harnesses with NO native background mechanism (e.g. pi) run this THROUGH
-#     bin/fm-afk-launch.sh, which creates a non-visible tracked terminal per
-#     backend (herdr tab/workspace, tmux detached session) and passes the
+#   - Harnesses with NO native background mechanism (e.g. codex) run this
+#     THROUGH bin/fm-afk-launch.sh, which creates a non-visible tracked terminal
+#     per backend (herdr tab/workspace, tmux detached session) and passes the
 #     captain pane in as FM_SUPERVISOR_TARGET so injection targets it, not the
 #     daemon's own new pane.
 # Do not wrap this in `nohup ... &`: Codex/herdr can reap fire-and-forget shell
