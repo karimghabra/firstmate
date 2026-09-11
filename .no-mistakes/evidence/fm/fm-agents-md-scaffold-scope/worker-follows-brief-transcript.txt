@@ -1,0 +1,23 @@
+=== [base] worker follows the brief's project-memory command in a project whose only guide is CLAUDE.md
+  brief command: /tmp/fm-guide-e2e.Lr9U/base-tree/bin/fm-ensure-agents-md.sh .
+  exit 0
+  | promoted: moved CLAUDE.md to AGENTS.md and wrote CLAUDE.md @AGENTS.md pointer in /tmp/fm-guide-e2e.Lr9U/worker-base
+  helper printed no guide: line (worker has no named file to record into)
+  resulting diff a reviewer would see (git add -A; git diff --cached --stat, then name-status):
+     AGENTS.md | 10 ++++++++++
+     CLAUDE.md |  5 ++---
+     2 files changed, 12 insertions(+), 3 deletions(-)
+    A	AGENTS.md
+    M	CLAUDE.md
+
+=== [target] worker follows the brief's project-memory command in a project whose only guide is CLAUDE.md
+  brief command: /home/mars/.no-mistakes/worktrees/a8c0c72d0935/01M27XRRA2TBG69F66NZBJT666/bin/fm-ensure-agents-md.sh .
+  exit 0
+  | updated: added ## Maintaining this file to CLAUDE.md in /tmp/fm-guide-e2e.Lr9U/worker-target
+  | guide: /tmp/fm-guide-e2e.Lr9U/worker-target/CLAUDE.md
+  recorded knowledge into: /tmp/fm-guide-e2e.Lr9U/worker-target/CLAUDE.md
+  resulting diff a reviewer would see (git add -A; git diff --cached --stat, then name-status):
+     CLAUDE.md | 8 ++++++++
+     1 file changed, 8 insertions(+)
+    M	CLAUDE.md
+

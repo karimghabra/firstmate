@@ -1,0 +1,19 @@
+=== [base] generated ship brief: '# Project memory' section (FM_HOME=/tmp/fm-guide-e2e.Lr9U/home-base, fm-brief.sh guide-e2e some-proj --mode no-mistakes)
+# Project memory
+If `AGENTS.md` or `CLAUDE.md` already exists, or if this task produced durable project-intrinsic knowledge, run `/tmp/fm-guide-e2e.Lr9U/base-tree/bin/fm-ensure-agents-md.sh .` in the worktree.
+Record only project knowledge useful to almost every future session.
+For anything the codebase already shows, prefer a pointer to the authoritative file, command, or doc over copying the detail.
+If you touch a project `AGENTS.md`, follow `/tmp/fm-guide-e2e.Lr9U/base-tree/bin/fm-ensure-agents-md.sh`'s self-governance contract in the same pass.
+Keep it proportionate: skip `AGENTS.md` edits for trivial tasks that produced no durable project knowledge.
+
+
+=== [target] generated ship brief: '# Project memory' section (FM_HOME=/tmp/fm-guide-e2e.Lr9U/home-target, fm-brief.sh guide-e2e some-proj --mode no-mistakes)
+# Project memory
+If this task produced durable project-intrinsic knowledge, run `/home/mars/.no-mistakes/worktrees/a8c0c72d0935/01M27XRRA2TBG69F66NZBJT666/bin/fm-ensure-agents-md.sh .` in the worktree and record that knowledge in the file its final `guide:` line names, at that existing path; if it reports a conflict instead, record the knowledge by hand in the guide file the project already uses.
+Never relocate, rename, merge, or restructure an existing `AGENTS.md` or `CLAUDE.md` in this task: a guide-layout change is a change of its own, never part of unrelated work.
+Record only project knowledge useful to almost every future session.
+For anything the codebase already shows, prefer a pointer to the authoritative file, command, or doc over copying the detail.
+When you touch the project guide, follow `/home/mars/.no-mistakes/worktrees/a8c0c72d0935/01M27XRRA2TBG69F66NZBJT666/bin/fm-ensure-agents-md.sh`'s self-governance contract in the same pass.
+Keep it proportionate: skip the helper and the guide entirely for tasks that produced no durable project knowledge.
+
+

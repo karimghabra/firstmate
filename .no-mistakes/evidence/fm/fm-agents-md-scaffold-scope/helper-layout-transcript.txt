@@ -1,0 +1,321 @@
+=== Scenario: project whose only guide is a real CLAUDE.md
+--- [base] real-claude-only
+  before:
+    CLAUDE.md (regular file, 3 lines, first line: # Project guide)
+    git status --porcelain:
+  $ fm-ensure-agents-md.sh .   (exit 0)
+    | promoted: moved CLAUDE.md to AGENTS.md and wrote CLAUDE.md @AGENTS.md pointer in /tmp/fm-guide-e2e.Lr9U/proj/real-claude-only-base
+  after:
+    AGENTS.md (regular file, 10 lines, first line: # Project guide)
+    CLAUDE.md (regular file, 2 lines, first line: <!-- Points Claude at AGENTS.md via import; edit AGENTS.md, not this file. -->)
+    git status --porcelain:
+       M CLAUDE.md
+      ?? AGENTS.md
+--- [target] real-claude-only
+  before:
+    CLAUDE.md (regular file, 3 lines, first line: # Project guide)
+    git status --porcelain:
+  $ fm-ensure-agents-md.sh .   (exit 0)
+    | updated: added ## Maintaining this file to CLAUDE.md in /tmp/fm-guide-e2e.Lr9U/proj/real-claude-only-target
+    | guide: /tmp/fm-guide-e2e.Lr9U/proj/real-claude-only-target/CLAUDE.md
+  after:
+    CLAUDE.md (regular file, 10 lines, first line: # Project guide)
+    git status --porcelain:
+       M CLAUDE.md
+
+=== Scenario: AGENTS.md plus a correct CLAUDE.md -> AGENTS.md symlink
+--- [base] agents-plus-symlink
+  before:
+    AGENTS.md (regular file, 3 lines, first line: # Agents)
+    CLAUDE.md -> symlink to AGENTS.md
+    git status --porcelain:
+  $ fm-ensure-agents-md.sh .   (exit 0)
+    | updated: added ## Maintaining this file to AGENTS.md and wrote CLAUDE.md @AGENTS.md pointer in /tmp/fm-guide-e2e.Lr9U/proj/agents-plus-symlink-base
+  after:
+    AGENTS.md (regular file, 10 lines, first line: # Agents)
+    CLAUDE.md (regular file, 2 lines, first line: <!-- Points Claude at AGENTS.md via import; edit AGENTS.md, not this file. -->)
+    git status --porcelain:
+       M AGENTS.md
+       T CLAUDE.md
+--- [target] agents-plus-symlink
+  before:
+    AGENTS.md (regular file, 3 lines, first line: # Agents)
+    CLAUDE.md -> symlink to AGENTS.md
+    git status --porcelain:
+  $ fm-ensure-agents-md.sh .   (exit 0)
+    | updated: added ## Maintaining this file to AGENTS.md in /tmp/fm-guide-e2e.Lr9U/proj/agents-plus-symlink-target
+    | guide: /tmp/fm-guide-e2e.Lr9U/proj/agents-plus-symlink-target/AGENTS.md
+  after:
+    AGENTS.md (regular file, 10 lines, first line: # Agents)
+    CLAUDE.md -> symlink to AGENTS.md
+    git status --porcelain:
+       M AGENTS.md
+
+=== Scenario: AGENTS.md only, no CLAUDE.md
+--- [base] agents-only
+  before:
+    AGENTS.md (regular file, 3 lines, first line: # Agents)
+    git status --porcelain:
+  $ fm-ensure-agents-md.sh .   (exit 0)
+    | updated: added ## Maintaining this file to AGENTS.md and wrote CLAUDE.md @AGENTS.md pointer in /tmp/fm-guide-e2e.Lr9U/proj/agents-only-base
+  after:
+    AGENTS.md (regular file, 10 lines, first line: # Agents)
+    CLAUDE.md (regular file, 2 lines, first line: <!-- Points Claude at AGENTS.md via import; edit AGENTS.md, not this file. -->)
+    git status --porcelain:
+       M AGENTS.md
+      ?? CLAUDE.md
+--- [target] agents-only
+  before:
+    AGENTS.md (regular file, 3 lines, first line: # Agents)
+    git status --porcelain:
+  $ fm-ensure-agents-md.sh .   (exit 0)
+    | updated: added ## Maintaining this file to AGENTS.md and wrote CLAUDE.md @AGENTS.md pointer in /tmp/fm-guide-e2e.Lr9U/proj/agents-only-target
+    | guide: /tmp/fm-guide-e2e.Lr9U/proj/agents-only-target/AGENTS.md
+  after:
+    AGENTS.md (regular file, 10 lines, first line: # Agents)
+    CLAUDE.md (regular file, 2 lines, first line: <!-- Points Claude at AGENTS.md via import; edit AGENTS.md, not this file. -->)
+    git status --porcelain:
+       M AGENTS.md
+      ?? CLAUDE.md
+
+=== Scenario: project with no guide at all
+On branch master
+nothing to commit, working tree clean
+--- [base] no-guide
+  before:
+    git status --porcelain:
+  $ fm-ensure-agents-md.sh .   (exit 0)
+    | created: AGENTS.md and CLAUDE.md @AGENTS.md pointer in /tmp/fm-guide-e2e.Lr9U/proj/no-guide-base
+  after:
+    AGENTS.md (regular file, 12 lines, first line: # Project agent memory)
+    CLAUDE.md (regular file, 2 lines, first line: <!-- Points Claude at AGENTS.md via import; edit AGENTS.md, not this file. -->)
+    git status --porcelain:
+      ?? AGENTS.md
+      ?? CLAUDE.md
+On branch master
+nothing to commit, working tree clean
+--- [target] no-guide
+  before:
+    git status --porcelain:
+  $ fm-ensure-agents-md.sh .   (exit 0)
+    | created: AGENTS.md and CLAUDE.md @AGENTS.md pointer in /tmp/fm-guide-e2e.Lr9U/proj/no-guide-target
+    | guide: /tmp/fm-guide-e2e.Lr9U/proj/no-guide-target/AGENTS.md
+  after:
+    AGENTS.md (regular file, 12 lines, first line: # Project agent memory)
+    CLAUDE.md (regular file, 2 lines, first line: <!-- Points Claude at AGENTS.md via import; edit AGENTS.md, not this file. -->)
+    git status --porcelain:
+      ?? AGENTS.md
+      ?? CLAUDE.md
+
+=== Scenario: CLAUDE.md is only the canonical pointer, AGENTS.md missing
+--- [base] pointer-only
+  before:
+    CLAUDE.md (regular file, 2 lines, first line: <!-- Points Claude at AGENTS.md via import; edit AGENTS.md, not this file. -->)
+    git status --porcelain:
+  $ fm-ensure-agents-md.sh .   (exit 0)
+    | created: AGENTS.md and kept CLAUDE.md @AGENTS.md pointer in /tmp/fm-guide-e2e.Lr9U/proj/pointer-only-base
+  after:
+    AGENTS.md (regular file, 12 lines, first line: # Project agent memory)
+    CLAUDE.md (regular file, 2 lines, first line: <!-- Points Claude at AGENTS.md via import; edit AGENTS.md, not this file. -->)
+    git status --porcelain:
+      ?? AGENTS.md
+--- [target] pointer-only
+  before:
+    CLAUDE.md (regular file, 2 lines, first line: <!-- Points Claude at AGENTS.md via import; edit AGENTS.md, not this file. -->)
+    git status --porcelain:
+  $ fm-ensure-agents-md.sh .   (exit 0)
+    | created: AGENTS.md and kept CLAUDE.md @AGENTS.md pointer in /tmp/fm-guide-e2e.Lr9U/proj/pointer-only-target
+    | guide: /tmp/fm-guide-e2e.Lr9U/proj/pointer-only-target/AGENTS.md
+  after:
+    AGENTS.md (regular file, 12 lines, first line: # Project agent memory)
+    CLAUDE.md (regular file, 2 lines, first line: <!-- Points Claude at AGENTS.md via import; edit AGENTS.md, not this file. -->)
+    git status --porcelain:
+      ?? AGENTS.md
+
+=== Scenario: dangling correct CLAUDE.md -> AGENTS.md symlink, AGENTS.md missing
+--- [base] dangling-symlink
+  before:
+    CLAUDE.md -> symlink to AGENTS.md
+    git status --porcelain:
+  $ fm-ensure-agents-md.sh .   (exit 0)
+    | created: AGENTS.md and wrote CLAUDE.md @AGENTS.md pointer in /tmp/fm-guide-e2e.Lr9U/proj/dangling-symlink-base
+  after:
+    AGENTS.md (regular file, 12 lines, first line: # Project agent memory)
+    CLAUDE.md (regular file, 2 lines, first line: <!-- Points Claude at AGENTS.md via import; edit AGENTS.md, not this file. -->)
+    git status --porcelain:
+       T CLAUDE.md
+      ?? AGENTS.md
+--- [target] dangling-symlink
+  before:
+    CLAUDE.md -> symlink to AGENTS.md
+    git status --porcelain:
+  $ fm-ensure-agents-md.sh .   (exit 0)
+    | created: AGENTS.md and wrote CLAUDE.md @AGENTS.md pointer in /tmp/fm-guide-e2e.Lr9U/proj/dangling-symlink-target
+    | guide: /tmp/fm-guide-e2e.Lr9U/proj/dangling-symlink-target/AGENTS.md
+  after:
+    AGENTS.md (regular file, 12 lines, first line: # Project agent memory)
+    CLAUDE.md (regular file, 2 lines, first line: <!-- Points Claude at AGENTS.md via import; edit AGENTS.md, not this file. -->)
+    git status --porcelain:
+       T CLAUDE.md
+      ?? AGENTS.md
+
+=== Adversarial: CRLF real CLAUDE.md with no trailing newline
+--- [base] crlf-claude
+  before:
+    CLAUDE.md (regular file, 2 lines, first line: # Guide)
+    git status --porcelain:
+  $ fm-ensure-agents-md.sh .   (exit 0)
+    | promoted: moved CLAUDE.md to AGENTS.md and wrote CLAUDE.md @AGENTS.md pointer in /tmp/fm-guide-e2e.Lr9U/proj/crlf-claude-base
+  after:
+    AGENTS.md (regular file, 10 lines, first line: # Guide)
+    CLAUDE.md (regular file, 2 lines, first line: <!-- Points Claude at AGENTS.md via import; edit AGENTS.md, not this file. -->)
+    git status --porcelain:
+       M CLAUDE.md
+      ?? AGENTS.md
+--- [target] crlf-claude
+  before:
+    CLAUDE.md (regular file, 2 lines, first line: # Guide)
+    git status --porcelain:
+  $ fm-ensure-agents-md.sh .   (exit 0)
+    | updated: added ## Maintaining this file to CLAUDE.md in /tmp/fm-guide-e2e.Lr9U/proj/crlf-claude-target
+    | guide: /tmp/fm-guide-e2e.Lr9U/proj/crlf-claude-target/CLAUDE.md
+  after:
+    CLAUDE.md (regular file, 10 lines, first line: # Guide)
+    git status --porcelain:
+       M CLAUDE.md
+
+=== Adversarial: real CLAUDE.md carrying the project-owned first-line mark
+--- [base] marked-claude
+  before:
+    CLAUDE.md (regular file, 5 lines, first line: <!-- firstmate:maintained-by-project -->)
+    git status --porcelain:
+  $ fm-ensure-agents-md.sh .   (exit 0)
+    | promoted: moved CLAUDE.md to AGENTS.md and wrote CLAUDE.md @AGENTS.md pointer in /tmp/fm-guide-e2e.Lr9U/proj/marked-claude-base
+  after:
+    AGENTS.md (regular file, 5 lines, first line: <!-- firstmate:maintained-by-project -->)
+    CLAUDE.md (regular file, 2 lines, first line: <!-- Points Claude at AGENTS.md via import; edit AGENTS.md, not this file. -->)
+    git status --porcelain:
+       M CLAUDE.md
+      ?? AGENTS.md
+--- [target] marked-claude
+  before:
+    CLAUDE.md (regular file, 5 lines, first line: <!-- firstmate:maintained-by-project -->)
+    git status --porcelain:
+  $ fm-ensure-agents-md.sh .   (exit 0)
+    | unchanged: CLAUDE.md in /tmp/fm-guide-e2e.Lr9U/proj/marked-claude-target
+    | guide: /tmp/fm-guide-e2e.Lr9U/proj/marked-claude-target/CLAUDE.md
+  after:
+    CLAUDE.md (regular file, 5 lines, first line: <!-- firstmate:maintained-by-project -->)
+    git status --porcelain:
+
+=== Adversarial: both AGENTS.md and a distinct real CLAUDE.md
+--- [base] both-real
+  before:
+    AGENTS.md (regular file, 1 lines, first line: # Agents)
+    CLAUDE.md (regular file, 1 lines, first line: # Claude guide)
+    git status --porcelain:
+  $ fm-ensure-agents-md.sh .   (exit 1)
+    | conflict: both AGENTS.md and CLAUDE.md are real files in /tmp/fm-guide-e2e.Lr9U/proj/both-real-base; reconcile them manually
+  after:
+    AGENTS.md (regular file, 1 lines, first line: # Agents)
+    CLAUDE.md (regular file, 1 lines, first line: # Claude guide)
+    git status --porcelain:
+--- [target] both-real
+  before:
+    AGENTS.md (regular file, 1 lines, first line: # Agents)
+    CLAUDE.md (regular file, 1 lines, first line: # Claude guide)
+    git status --porcelain:
+  $ fm-ensure-agents-md.sh .   (exit 1)
+    | conflict: both AGENTS.md and CLAUDE.md are real guide files in /tmp/fm-guide-e2e.Lr9U/proj/both-real-target; record knowledge by hand in the one the project uses for it, and merge them only in a change of its own
+  after:
+    AGENTS.md (regular file, 1 lines, first line: # Agents)
+    CLAUDE.md (regular file, 1 lines, first line: # Claude guide)
+    git status --porcelain:
+
+=== Adversarial: lowercase agents.md plus real CLAUDE.md
+--- [base] lowercase-agents
+  before:
+    CLAUDE.md (regular file, 1 lines, first line: # Claude guide)
+    agents.md (regular file, 1 lines, first line: # lower)
+    git status --porcelain:
+  $ fm-ensure-agents-md.sh .   (exit 1)
+    | conflict: memory file is named agents.md in /tmp/fm-guide-e2e.Lr9U/proj/lowercase-agents-base but the convention is AGENTS.md; rename it to AGENTS.md so CLAUDE.md's @AGENTS.md pointer resolves portably
+  after:
+    CLAUDE.md (regular file, 1 lines, first line: # Claude guide)
+    agents.md (regular file, 1 lines, first line: # lower)
+    git status --porcelain:
+--- [target] lowercase-agents
+  before:
+    CLAUDE.md (regular file, 1 lines, first line: # Claude guide)
+    agents.md (regular file, 1 lines, first line: # lower)
+    git status --porcelain:
+  $ fm-ensure-agents-md.sh .   (exit 1)
+    | conflict: memory file is named agents.md in /tmp/fm-guide-e2e.Lr9U/proj/lowercase-agents-target but the convention is AGENTS.md; record knowledge by hand in agents.md where it is, and rename it to AGENTS.md only in a change of its own so CLAUDE.md's @AGENTS.md pointer resolves portably
+  after:
+    CLAUDE.md (regular file, 1 lines, first line: # Claude guide)
+    agents.md (regular file, 1 lines, first line: # lower)
+    git status --porcelain:
+
+=== Adversarial: CLAUDE.md symlink pointing somewhere other than AGENTS.md
+--- [base] wrong-symlink
+  before:
+    CLAUDE.md -> symlink to GUIDE.md
+    git status --porcelain:
+  $ fm-ensure-agents-md.sh .   (exit 1)
+    | conflict: CLAUDE.md is a symlink in /tmp/fm-guide-e2e.Lr9U/proj/wrong-symlink-base but AGENTS.md is missing and the link does not point to AGENTS.md
+  after:
+    CLAUDE.md -> symlink to GUIDE.md
+    git status --porcelain:
+--- [target] wrong-symlink
+  before:
+    CLAUDE.md -> symlink to GUIDE.md
+    git status --porcelain:
+  $ fm-ensure-agents-md.sh .   (exit 1)
+    | conflict: CLAUDE.md is a symlink in /tmp/fm-guide-e2e.Lr9U/proj/wrong-symlink-target but AGENTS.md is missing and the link does not point to AGENTS.md
+  after:
+    CLAUDE.md -> symlink to GUIDE.md
+    git status --porcelain:
+
+=== Idempotence: run the target helper twice on a real-CLAUDE.md project
+  first  | updated: added ## Maintaining this file to CLAUDE.md in /tmp/fm-guide-e2e.Lr9U/proj/idempotent
+  first  | guide: /tmp/fm-guide-e2e.Lr9U/proj/idempotent/CLAUDE.md
+  second | unchanged: CLAUDE.md in /tmp/fm-guide-e2e.Lr9U/proj/idempotent
+  second | guide: /tmp/fm-guide-e2e.Lr9U/proj/idempotent/CLAUDE.md
+  CLAUDE.md sha256 after first run:  604ad0cfeede27932bb85e981e4b119519bda585ef1caf008f5237fcca09c4bc
+  CLAUDE.md sha256 after second run: 604ad0cfeede27932bb85e981e4b119519bda585ef1caf008f5237fcca09c4bc
+    CLAUDE.md (regular file, 10 lines, first line: # Project guide)
+    git status --porcelain:
+       M CLAUDE.md
+
+=== Removed flag: --migrate-layout is no longer accepted by the target helper
+  | usage: fm-ensure-agents-md.sh [repo-or-worktree-dir]
+  | 
+  | The helper creates AGENTS.md and a CLAUDE.md @AGENTS.md pointer when the
+  | project has no agent guide, adds a missing pointer beside an existing AGENTS.md,
+  | and otherwise keeps the existing guide at its path, only adding the
+  | self-governance section to it. It never moves a guide. The final
+  | "guide: <path>" line names the file to record durable project knowledge in.
+  | 
+  | To retain equivalent project-owned maintenance guidance without adding the
+  | canonical section, use this exact first line of the guide (LF or CRLF):
+  | <!-- firstmate:maintained-by-project -->
+  | The mark declares retained guidance, not permission to remove governance.
+  | Without the first-line mark or exact canonical heading, the helper adds the section.
+  |   (exit 1)
+    CLAUDE.md (regular file, 1 lines, first line: # Project guide)
+    git status --porcelain:
+
+=== Help text of the target helper
+  | usage: fm-ensure-agents-md.sh [repo-or-worktree-dir]
+  | 
+  | The helper creates AGENTS.md and a CLAUDE.md @AGENTS.md pointer when the
+  | project has no agent guide, adds a missing pointer beside an existing AGENTS.md,
+  | and otherwise keeps the existing guide at its path, only adding the
+  | self-governance section to it. It never moves a guide. The final
+  | "guide: <path>" line names the file to record durable project knowledge in.
+  | 
+  | To retain equivalent project-owned maintenance guidance without adding the
+  | canonical section, use this exact first line of the guide (LF or CRLF):
+  | <!-- firstmate:maintained-by-project -->
+  | The mark declares retained guidance, not permission to remove governance.
+  | Without the first-line mark or exact canonical heading, the helper adds the section.
