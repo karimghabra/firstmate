@@ -1,0 +1,191 @@
+
+=== S1 regression: project whose only guide is a real CLAUDE.md ===
+-- base helper (8facd7c) --
+  $ (base) fm-ensure-agents-md.sh .   [exit 0]
+    | promoted: moved CLAUDE.md to AGENTS.md and wrote CLAUDE.md @AGENTS.md pointer in <tmp>/s1-base
+  layout:
+    AGENTS.md (regular file, 10 lines)
+    CLAUDE.md (regular file, 2 lines)
+  git status --short:
+     M CLAUDE.md
+    ?? AGENTS.md
+-- target helper (50c8a38) --
+  $ (target) fm-ensure-agents-md.sh .   [exit 0]
+    | updated: added ## Maintaining this file to CLAUDE.md in <tmp>/s1-target
+    | guide: <tmp>/s1-target/CLAUDE.md
+  layout:
+    AGENTS.md (absent)
+    CLAUDE.md (regular file, 10 lines)
+  git status --short:
+     M CLAUDE.md
+  CLAUDE.md content after run:
+    > # Project guide
+    > 
+    > Run tests with make test.
+    > 
+    > ## Maintaining this file
+    > 
+    > Keep this file for knowledge useful to almost every future agent session in this project.
+    > Do not repeat what the codebase already shows; point to the authoritative file or command instead.
+    > Prefer rewriting or pruning existing entries over appending new ones.
+    > When updating this file, preserve this bar for all agents and keep entries concise.
+  second run (idempotence):
+  $ (target) fm-ensure-agents-md.sh .   [exit 0]
+    | unchanged: CLAUDE.md in <tmp>/s1-target
+    | guide: <tmp>/s1-target/CLAUDE.md
+  layout:
+    AGENTS.md (absent)
+    CLAUDE.md (regular file, 10 lines)
+  git status --short:
+     M CLAUDE.md
+
+=== S2 AGENTS.md with a working CLAUDE.md -> AGENTS.md symlink ===
+-- base helper --
+  $ (base) fm-ensure-agents-md.sh .   [exit 0]
+    | updated: added ## Maintaining this file to AGENTS.md and wrote CLAUDE.md @AGENTS.md pointer in <tmp>/s2-base
+  layout:
+    AGENTS.md (regular file, 10 lines)
+    CLAUDE.md (regular file, 2 lines)
+  git status --short:
+     M AGENTS.md
+     T CLAUDE.md
+-- target helper --
+  $ (target) fm-ensure-agents-md.sh .   [exit 0]
+    | updated: added ## Maintaining this file to AGENTS.md in <tmp>/s2-target
+    | guide: <tmp>/s2-target/AGENTS.md
+  layout:
+    AGENTS.md (regular file, 10 lines)
+    CLAUDE.md -> AGENTS.md (symlink)
+  git status --short:
+     M AGENTS.md
+
+=== S3 AGENTS.md only: pointer is added, nothing moves ===
+  $ (target) fm-ensure-agents-md.sh .   [exit 0]
+    | updated: added ## Maintaining this file to AGENTS.md and wrote CLAUDE.md @AGENTS.md pointer in <tmp>/s3
+    | guide: <tmp>/s3/AGENTS.md
+  layout:
+    AGENTS.md (regular file, 10 lines)
+    CLAUDE.md (regular file, 2 lines)
+  git status --short:
+     M AGENTS.md
+    ?? CLAUDE.md
+  CLAUDE.md content:
+    > <!-- Points Claude at AGENTS.md via import; edit AGENTS.md, not this file. -->
+    > @AGENTS.md
+  git diff AGENTS.md (only the self-governance section appended):
+    diff --git a/AGENTS.md b/AGENTS.md
+    index 15d9309..aee7309 100644
+    --- a/AGENTS.md
+    +++ b/AGENTS.md
+    @@ -1,3 +1,10 @@
+     # Agents
+     
+     - note
+    +
+    +## Maintaining this file
+    +
+    +Keep this file for knowledge useful to almost every future agent session in this project.
+    +Do not repeat what the codebase already shows; point to the authoritative file or command instead.
+    +Prefer rewriting or pruning existing entries over appending new ones.
+    +When updating this file, preserve this bar for all agents and keep entries concise.
+
+=== S4 project with no guide: AGENTS.md skeleton + CLAUDE.md pointer created ===
+  $ (target) fm-ensure-agents-md.sh .   [exit 0]
+    | created: AGENTS.md and CLAUDE.md @AGENTS.md pointer in <tmp>/s4
+    | guide: <tmp>/s4/AGENTS.md
+  layout:
+    AGENTS.md (regular file, 12 lines)
+    CLAUDE.md (regular file, 2 lines)
+  git status --short:
+    ?? AGENTS.md
+    ?? CLAUDE.md
+
+=== S5 canonical CLAUDE.md pointer but no AGENTS.md: skeleton created, pointer kept ===
+  $ (target) fm-ensure-agents-md.sh .   [exit 0]
+    | created: AGENTS.md and kept CLAUDE.md @AGENTS.md pointer in <tmp>/s5
+    | guide: <tmp>/s5/AGENTS.md
+  layout:
+    AGENTS.md (regular file, 12 lines)
+    CLAUDE.md (regular file, 2 lines)
+  git status --short:
+    ?? AGENTS.md
+
+=== S6 adversarial: refusals leave the tree untouched ===
+-- distinct real AGENTS.md and CLAUDE.md --
+  $ (target) fm-ensure-agents-md.sh .   [exit 1]
+    | conflict: both AGENTS.md and CLAUDE.md are real guide files in <tmp>/s6a; record knowledge by hand in the one the project uses for it, and merge them only in a change of its own
+  layout:
+    AGENTS.md (regular file, 1 lines)
+    CLAUDE.md (regular file, 1 lines)
+  git status --short:
+-- CLAUDE.md symlink to a different file --
+  $ (target) fm-ensure-agents-md.sh .   [exit 1]
+    | conflict: CLAUDE.md is a symlink in <tmp>/s6b but does not point to AGENTS.md
+  layout:
+    AGENTS.md (regular file, 1 lines)
+    CLAUDE.md -> OTHER.md (symlink)
+  git status --short:
+-- lowercase agents.md --
+  $ (target) fm-ensure-agents-md.sh .   [exit 1]
+    | conflict: memory file is named agents.md in <tmp>/s6c but the convention is AGENTS.md; record knowledge by hand in agents.md where it is, and rename it to AGENTS.md only in a change of its own so CLAUDE.md's @AGENTS.md pointer resolves portably
+  layout:
+    AGENTS.md (absent)
+    CLAUDE.md (absent)
+  git status --short:
+
+=== S7 project-owned mark on a real CLAUDE.md: byte-for-byte unchanged, stays in place ===
+  $ (target) fm-ensure-agents-md.sh .   [exit 0]
+    | unchanged: CLAUDE.md in <tmp>/s7
+    | guide: <tmp>/s7/CLAUDE.md
+  layout:
+    AGENTS.md (absent)
+    CLAUDE.md (regular file, 4 lines)
+  git status --short:
+
+=== S8 CRLF real CLAUDE.md without the section: section appended with CRLF, stays in place ===
+  $ (target) fm-ensure-agents-md.sh .   [exit 0]
+    | updated: added ## Maintaining this file to CLAUDE.md in <tmp>/s8
+    | guide: <tmp>/s8/CLAUDE.md
+  layout:
+    AGENTS.md (absent)
+    CLAUDE.md (regular file, 10 lines)
+  git status --short:
+     M CLAUDE.md
+  lines lacking CRLF: 0
+
+=== S9 removed --migrate-layout flag is not a relocation path ===
+  $ fm-ensure-agents-md.sh --migrate-layout   [exit 1]
+    | error: not a directory: --migrate-layout
+  $ fm-ensure-agents-md.sh --migrate-layout .   [exit 1]
+    | usage: fm-ensure-agents-md.sh [repo-or-worktree-dir]
+    | 
+    | The helper creates AGENTS.md and a CLAUDE.md @AGENTS.md pointer when the
+    | project has no agent guide, adds a missing pointer beside an existing AGENTS.md,
+    | and otherwise keeps the existing guide at its path, only adding the
+    | self-governance section to it. It never moves a guide. The final
+    | "guide: <path>" line names the file to record durable project knowledge in.
+    | 
+    | To retain equivalent project-owned maintenance guidance without adding the
+    | canonical section, use this exact first line of the guide (LF or CRLF):
+    | <!-- firstmate:maintained-by-project -->
+    | The mark declares retained guidance, not permission to remove governance.
+    | Without the first-line mark or exact canonical heading, the helper adds the section.
+  layout:
+    AGENTS.md (absent)
+    CLAUDE.md (regular file, 3 lines)
+  git status --short:
+  --help mentions migrate: 0
+  --help text:
+    | usage: fm-ensure-agents-md.sh [repo-or-worktree-dir]
+    | 
+    | The helper creates AGENTS.md and a CLAUDE.md @AGENTS.md pointer when the
+    | project has no agent guide, adds a missing pointer beside an existing AGENTS.md,
+    | and otherwise keeps the existing guide at its path, only adding the
+    | self-governance section to it. It never moves a guide. The final
+    | "guide: <path>" line names the file to record durable project knowledge in.
+    | 
+    | To retain equivalent project-owned maintenance guidance without adding the
+    | canonical section, use this exact first line of the guide (LF or CRLF):
+    | <!-- firstmate:maintained-by-project -->
+    | The mark declares retained guidance, not permission to remove governance.
+    | Without the first-line mark or exact canonical heading, the helper adds the section.

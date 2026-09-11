@@ -1,0 +1,41 @@
+=== B1 ship brief # Project memory section: base (8facd7c) ===
+    | # Project memory
+    | If `AGENTS.md` or `CLAUDE.md` already exists, or if this task produced durable project-intrinsic knowledge, run `<FM_ROOT>/bin/fm-ensure-agents-md.sh .` in the worktree.
+    | Record only project knowledge useful to almost every future session.
+    | For anything the codebase already shows, prefer a pointer to the authoritative file, command, or doc over copying the detail.
+    | If you touch a project `AGENTS.md`, follow `<FM_ROOT>/bin/fm-ensure-agents-md.sh`'s self-governance contract in the same pass.
+    | Keep it proportionate: skip `AGENTS.md` edits for trivial tasks that produced no durable project knowledge.
+    | 
+
+=== B1 ship brief # Project memory section: target (50c8a38) ===
+    | # Project memory
+    | If this task produced durable project-intrinsic knowledge, run `<FM_ROOT>/bin/fm-ensure-agents-md.sh .` in the worktree and record that knowledge in the file its final `guide:` line names, at that existing path; if it reports a conflict instead, record the knowledge by hand in the guide file the project already uses.
+    | Never relocate, rename, merge, or restructure an existing `AGENTS.md` or `CLAUDE.md` in this task: a guide-layout change is a change of its own, never part of unrelated work.
+    | Record only project knowledge useful to almost every future session.
+    | For anything the codebase already shows, prefer a pointer to the authoritative file, command, or doc over copying the detail.
+    | When you touch the project guide, follow `<FM_ROOT>/bin/fm-ensure-agents-md.sh`'s self-governance contract in the same pass.
+    | Keep it proportionate: skip the helper and the guide entirely for tasks that produced no durable project knowledge.
+    | 
+
+=== B2 worker follows the target brief in a repo whose only guide is CLAUDE.md ===
+  command extracted from the brief: <FM_ROOT>/bin/fm-ensure-agents-md.sh .
+  [exit 0]
+    | updated: added ## Maintaining this file to CLAUDE.md in <tmp>/proj
+    | guide: <tmp>/proj/CLAUDE.md
+  staged change set after task work + recorded knowledge (git diff --cached --stat -M):
+     CLAUDE.md | 8 ++++++++
+     app.txt   | 2 +-
+     2 files changed, 9 insertions(+), 1 deletion(-)
+  git diff --cached --name-status -M:
+    M	CLAUDE.md
+    M	app.txt
+  AGENTS.md exists: no
+
+=== B3 same worker flow with the base brief + base helper (the reported failure) ===
+  command extracted from the base brief: <FM_ROOT>/bin/fm-ensure-agents-md.sh .
+  [exit 0]
+    | promoted: moved CLAUDE.md to AGENTS.md and wrote CLAUDE.md @AGENTS.md pointer in <tmp>/proj-base
+  staged change set (git diff --cached --name-status -M):
+    A	AGENTS.md
+    M	CLAUDE.md
+    M	app.txt
