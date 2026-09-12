@@ -931,11 +931,12 @@ clear_write_tracking() {  # <window-key>
 # branch spent three rounds getting that wrong. A write is evidence that SOMETHING
 # is writing; it is evidence about the AGENT only where nothing else is writing that
 # tree. Three attempts were made to act on that distinction here - a busy-turn
-# eligibility flag, then a pipeline-ownership gate - and each one removed a deferral
-# that predates this work and produced fresh wedge noise on a healthy crew, the last
-# of them worse than no change at all. They were reverted rather than corrected a
-# fourth time, so the probe is back to its unconditional form. The distinction is
-# real and still worth recording; acting on it here is what kept failing.
+# eligibility flag, then a run-movement bound, then a pipeline-ownership gate - and
+# each one removed a deferral that predates this work and produced fresh wedge noise
+# on a healthy crew, the last of them worse than no change at all. They were
+# reverted rather than corrected a fourth time, so the probe is back to its
+# unconditional form. The distinction is real and still worth recording; acting on
+# it here is what kept failing.
 wedge_timer_check() {  # <window> <since-file> <triage-label> <escalation-count-file> <task>
   local win=$1 since_file=$2 label=$3 escalation_file=$4 task=$5 since age n reason
   since=$(cat "$since_file" 2>/dev/null || true)
