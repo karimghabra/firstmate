@@ -15,7 +15,7 @@
 # fixed mapping logic, no heuristics and no LLM. Output is one stable, parseable,
 # token-tight line firstmate can read every heartbeat:
 #
-#   state: <working|parked|done|blocked|paused|failed|unknown> · source: <run-step|pane|status-log|remote-endpoint|none> · <detail>
+#   state: <working|parked|done|blocked|paused|failed|unknown> · source: <run-step|pane|status-log|remote-endpoint|stood-down|none> · <detail>
 #
 # Logic, in order:
 #   1. Resolve worktree + backend target + kind from state/<id>.meta. A meta
@@ -94,7 +94,12 @@
 #      endpoint that merely failed to answer reports unknown · none as
 #      unreachable, and an alive endpoint whose scrollback read failed is still
 #      classified by step 4. Backends with no classifier keep reading a failed
-#      capture as gone. The fallback's own comment owns the per-verdict rules.
+#      capture as gone. A task whose agent is gone by INTENT rather than by
+#      failure - recorded with bin/fm-stand-down.sh, still open, work not landed -
+#      reports paused · stood-down instead of unknown, but only from a branch that
+#      already proved the AGENT gone, never merely the endpoint (the stand-down
+#      gate at the head of the fallback below owns that decision).
+#      The fallback's own comment owns the per-verdict rules.
 #
 # Read-only and side-effect free. Always exits 0 on a successful read regardless
 # of state; exit 2 only on a usage error (no id).
@@ -119,6 +124,8 @@ STATE="${FM_STATE_OVERRIDE:-$FM_HOME/state}"
 . "$SCRIPT_DIR/fm-timeout-lib.sh"
 # shellcheck source=bin/fm-pr-lib.sh
 . "$SCRIPT_DIR/fm-pr-lib.sh"
+# shellcheck source=bin/fm-stand-down-lib.sh
+. "$SCRIPT_DIR/fm-stand-down-lib.sh"
 
 ID=${1:-}
 [ -n "$ID" ] || { echo "usage: fm-crew-state.sh <id>" >&2; exit 2; }
@@ -941,6 +948,35 @@ fi
 # verdict reports unknown rather than trusting a possibly-stale status log as
 # the current state.
 [ -n "$BACKEND_TARGET" ] || emit unknown none "no backend target recorded"
+# A stand-down is a claim about the AGENT, so it is honored on proven agent death
+# and nowhere else. Endpoint absence used to stand in for that, and on tmux the
+# proxy simply does not hold: bin/backends/tmux.sh creates the task window with no
+# command, so the shell outlives the agent and pane_readable below still succeeds.
+# The stop this fleet's own playbook prescribes - bin/fm-control.sh <id> exit -
+# returns on exactly that `dead` verdict, so every reader gated on the endpoint
+# sailed past the record and reported the task as though nothing had been recorded.
+#
+# The probe is bounded by reading the RECORD first: fm_stand_down_read is a local
+# file read, while fm_backend_agent_state is a real backend call, so a task with no
+# stand-down record costs exactly what it always did and never pays for this path.
+#
+# Only `dead` and `missing` qualify. An `alive` agent - including a wedged one,
+# looping or hung behind a frozen busy footer - is not stood down whatever the
+# record says, so it falls through to the ordinary classification below and stays
+# fully visible to the wedge ladder. Anything else is a probe that failed to
+# answer, which is not proof of anything and keeps its existing verdict - and
+# that covers a backend with no recovery-grade classifier without restating the
+# table, because bin/fm-backend.sh already answers `unverified` for those.
+if fm_stand_down_read "$STATE" "$ID"; then
+  STAND_DOWN_AGENT=$(fm_backend_agent_state "$TASK_BACKEND" "$BACKEND_TARGET" 2>/dev/null) || STAND_DOWN_AGENT=unreadable
+  case "$STAND_DOWN_AGENT" in
+    dead|missing)
+      emit paused stood-down \
+        "stopped by intent since $(fm_stand_down_format_time "$FM_STAND_DOWN_RECORDED"): $FM_STAND_DOWN_REASON"
+      ;;
+  esac
+fi
+
 if ! pane_readable "$BACKEND_TARGET"; then
   # A failed probe is not itself evidence the pane is gone: the herdr CLI can
   # error or stall under load, and tmux can fail to be executed at all (a
@@ -983,6 +1019,12 @@ if ! pane_readable "$BACKEND_TARGET"; then
       emit unknown none "backend unreachable ($TASK_BACKEND endpoint state: $AGENT_STATE)"
       ;;
     *)
+      # A backend with no recovery-grade classifier, where a failed capture is
+      # the legacy capture-means-gone heuristic rather than proven death, so this
+      # branch could never have satisfied the stand-down gate's proven-death
+      # requirement. It does not have to: a stand-down cannot be recorded on such
+      # a backend at all (bin/fm-stand-down.sh refuses), and the gate above reads
+      # the agent state rather than this endpoint verdict.
       emit unknown none "backend target gone: $BACKEND_TARGET"
       ;;
   esac

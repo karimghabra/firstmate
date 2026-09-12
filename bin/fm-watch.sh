@@ -39,13 +39,17 @@
 #                          also carries a "demand-deep-inspection" marker so the
 #                          wake payload itself, not just repetition, forces a
 #                          closer look instead of another routine supervision
-#                          resume. Unless afk is active. A pane whose own task
-#                          worktree was written during the quiet window is
-#                          deferred rather than escalated (wedge_defer_writing),
-#                          because files appearing there are liveness the pane and
-#                          the run step cannot show; that deferral still
+#                          resume. Unless afk is active. ONE deferral bounds that
+#                          escalation, decided only at the threshold
+#                          (wedge_defer_writing). A pane whose own task worktree
+#                          was written during the quiet window is deferred rather
+#                          than escalated, because files appearing there are
+#                          liveness the pane itself cannot show. That deferral
 #                          re-surfaces once per PAUSE_RESURFACE_SECS, and a pane
-#                          that writes nothing keeps the unchanged schedule.
+#                          with no write evidence keeps the unchanged schedule. An
+#                          active no-mistakes run step does NOT defer: see
+#                          wedge_defer_writing for why that probe was removed
+#                          rather than repaired, and what its removal costs.
 #                          A genuinely busy pane
 #                          (window_is_busy true) is exempt from the above, but
 #                          only up to BUSY_TURN_MAX_SECS with no completed turn
@@ -62,7 +66,8 @@
 #                          escalation count, and demand-deep-inspection marker,
 #                          for human inspection only - never an automatic
 #                          interrupt, signal, or restart of the worker or its
-#                          tool process.
+#                          tool process. The write deferral applies past that bound
+#                          exactly as it does anywhere else.
 #   stale: <window> (unread firstmate instruction: ...)
 #                          the steering-inbox ladder spent its delivery-attempt
 #                          budget on an idle pane without an acknowledgement
@@ -118,6 +123,8 @@ mkdir -p "$STATE"
 . "$SCRIPT_DIR/fm-push-transition-lib.sh"
 # shellcheck source=bin/fm-pr-lib.sh
 . "$SCRIPT_DIR/fm-pr-lib.sh"
+# shellcheck source=bin/fm-stand-down-lib.sh
+. "$SCRIPT_DIR/fm-stand-down-lib.sh"
 # Single owner of durable merge-outcome publication, shared with
 # bin/fm-pr-merge.sh so self and poll origins use the same role-routed outcome.
 # The watcher still owns immediate delivery of its actionable poll result and
@@ -838,7 +845,7 @@ FM_WEDGE_DEMAND_INSPECT_COUNT=${FM_WEDGE_DEMAND_INSPECT_COUNT:-3}
 # once past PAUSE_RESURFACE_SECS the pane wakes once per window rather than every
 # poll. An optional <scope> binds that cadence to its current declaration; callers
 # without a scoped declaration keep the timestamp body. Shared by the
-# declared-pause absorb and the worktree-write deferral so the two cadences cannot
+# declared-pause absorb and the threshold deferral so the two cadences cannot
 # drift apart; each caller owns its own marker and reason.
 # Returns without waking while either the absorb or the throttle is inside the
 # window; wake() itself exits the cycle, exactly as it does inline. An optional
@@ -859,18 +866,36 @@ resurface_absorbed() {  # <window> <throttle-marker> <age> <reason> [scope] [min
 
 # Defer ONE wedge escalation for a pane that went quiet while its own task
 # worktree is demonstrably still being written (crew_worktree_written_since in
-# fm-classify-lib.sh). The pane and the run step both say nothing is happening;
-# the worktree says otherwise, and files appearing in it is the harder signal to
-# fake, so the escalation is deferred rather than fired. Deliberately a DEFERRAL,
-# not a cancellation: the idle timer restarts, so the next window probes again,
-# and a .writing-since-<key> marker ages the whole deferral chain so the pane
-# still re-surfaces once every PAUSE_RESURFACE_SECS through the shared
-# resurface_absorbed above - literally the same bounded cadence a declared pause
-# uses, throttled by its own .writing-resurfaced-<key> marker - and a crew whose
-# worktree churns without real progress cannot stay invisible. The escalation
-# counter is left alone: it is neither advanced (this is not an escalation) nor
-# reset (a later genuine escalation must still carry the demand-deep-inspection
-# history it had already earned).
+# fm-classify-lib.sh). The pane says nothing is happening; the worktree says
+# otherwise, and files appearing in it are the harder signal to fake.
+#
+# THERE WAS A SECOND KIND OF EVIDENCE HERE, and it was removed rather than fixed a
+# fourth time: an active no-mistakes run step, which would have deferred the idle
+# pane of a crew whose pipeline owns the work. Its bound on whether that run was
+# actually MOVING failed three distinct ways in three consecutive rounds - it read
+# a foreign run's activity table; it then failed in both directions depending on
+# that unrelated run's state; and it read the pipeline client's benign `quiet`
+# marker as absence of movement, which stripped the deferral from a crew waiting
+# on CI - the longest and commonest healthy idle phase there is, and the very case
+# the deferral existed to serve. Three different misunderstandings of one data
+# source in one small function is evidence that the function was trying to extract
+# a distinction the run record does not cleanly carry; a fourth fix would have been
+# a fourth guess at the same inputs.
+# WHAT THAT REMOVAL COSTS, plainly: a pipeline-owned crew on a static pane past
+# STALE_ESCALATE_SECS raises possible-wedge alarms again, and firstmate has to
+# check and dismiss them. That is accepted deliberately. The cost of noise is a
+# cheap check; the cost of silence is a dead worker nobody notices. Removing a
+# silencer cannot weaken the alarm, which is the one thing this work may not do.
+#
+# Deliberately a DEFERRAL, not a cancellation: the idle timer restarts, so the
+# next window probes again, and a .writing-since-<key> marker ages the whole
+# deferral chain so the pane still re-surfaces once every PAUSE_RESURFACE_SECS
+# through the shared resurface_absorbed above - literally the same bounded cadence
+# a declared pause uses, throttled by its own .writing-resurfaced-<key> marker -
+# and a crew whose worktree churns without real progress cannot stay invisible.
+# The escalation counter is left alone: it is neither advanced (this is not an
+# escalation) nor reset (a later genuine escalation must still carry the
+# demand-deep-inspection history it had already earned).
 wedge_defer_writing() {  # <window> <since-file> <triage-label> <idle-age>
   local win=$1 since_file=$2 label=$3 age=$4 key wsf wage
   key=$(window_key "$win")
@@ -894,14 +919,24 @@ clear_write_tracking() {  # <window-key>
 # Repeat-poll wedge-timer bookkeeping for an already-classified stale hash
 # absorbed as provably-working - repairs a missing/corrupt timer (self-heals a
 # watcher restart between recording the hash and recording the timer), or
-# escalates once STALE_ESCALATE_SECS have elapsed. Never re-reads the crew
-# state (the costly check already ran once, at classification time). Shared by
-# both places a hash can be absorbed this way: the plain non-terminal path,
-# and the stale_is_terminal-overridden path (a captain-relevant status-log
-# line that an active run/busy pane outranked).
-# The worktree write probe runs ONLY here, inside the at-threshold branch that is
-# about to escalate: at most one bounded walk per window per STALE_ESCALATE_SECS,
-# never per poll.
+# escalates once STALE_ESCALATE_SECS have elapsed. Shared by both places a hash can
+# be absorbed this way: the plain non-terminal path, and the
+# stale_is_terminal-overridden path (a captain-relevant status-log line that an
+# active run/busy pane outranked).
+# The worktree-write probe runs ONLY inside the at-threshold branch that is about to
+# escalate - one bounded walk per window per STALE_ESCALATE_SECS, never per poll -
+# and it defers on every path that reaches here, exactly as it always has.
+#
+# It is worth knowing what a worktree write does and does not prove, because this
+# branch spent three rounds getting that wrong. A write is evidence that SOMETHING
+# is writing; it is evidence about the AGENT only where nothing else is writing that
+# tree. Three attempts were made to act on that distinction here - a busy-turn
+# eligibility flag, then a run-movement bound, then a pipeline-ownership gate - and
+# each one removed a deferral that predates this work and produced fresh wedge noise
+# on a healthy crew, the last of them worse than no change at all. They were
+# reverted rather than corrected a fourth time, so the probe is back to its
+# unconditional form. The distinction is real and still worth recording; acting on
+# it here is what kept failing.
 wedge_timer_check() {  # <window> <since-file> <triage-label> <escalation-count-file> <task>
   local win=$1 since_file=$2 label=$3 escalation_file=$4 task=$5 since age n reason
   since=$(cat "$since_file" 2>/dev/null || true)
@@ -924,7 +959,7 @@ wedge_timer_check() {  # <window> <since-file> <triage-label> <escalation-count-
         echo "$n" > "$escalation_file"
         reason="stale: $win (idle ${age}s, possible wedge, escalation $n)"
         if [ "$n" -ge "$FM_WEDGE_DEMAND_INSPECT_COUNT" ]; then
-          reason="stale: $win (idle ${age}s, possible wedge, escalation $n, demand-deep-inspection: same pane has wedge-escalated $n times in a row - do not re-absorb on the run-step/pane state alone)"
+          reason="stale: $win (idle ${age}s, possible wedge, escalation $n, demand-deep-inspection: same pane has wedge-escalated $n times in a row - do not re-absorb on the run-step/pane state alone; read the pane and confirm the worker itself is moving)"
         fi
         fm_wake_append stale "$win" "$reason" || exit 1
         rm -f "$since_file"
@@ -1002,6 +1037,29 @@ handle_paused_stale() {  # <window> <task> <hash>
       declaration="$declaration:due"
       min_age=0
     fi
+  elif status_is_stood_down "$last" && fm_stand_down_read "$STATE" "$task"; then
+    # Selected by the DECLARATION, never by the record alone: the log is what says
+    # which kind of wait a pane is in, and the record only supplies this one's
+    # reason and epoch once the log has established that. Asking the record first
+    # let a leftover record hijack a worker's own `paused:` wait - mislabelling the
+    # wake, reporting the record's age instead of the declaration's, and binding
+    # the re-surface throttle to the record's identity, so the worker's brand-new
+    # wait inherited the silence of a window scoped to something else.
+    # A stand-down reaches this absorber as an ordinary declared wait - its own
+    # `stood-down:` line is on the log - but it is NOT an EXTERNAL wait and must
+    # not borrow that wording: nothing external is going to clear it, so "confirm
+    # the wait still holds" would send the reader looking for a dependency that
+    # does not exist.
+    # It clears when someone resumes or lands the work, so the recheck says that.
+    # The age is the record's own, not the status file's, because the status log's
+    # last line predates the stop; and the cadence is bound to the record's
+    # identity, so releasing and re-recording a stand-down starts its own window
+    # instead of inheriting the silence of the one before it.
+    age=$(( now - FM_STAND_DOWN_RECORDED ))
+    [ "$age" -ge 0 ] || age=0
+    declaration="stood-down:$FM_STAND_DOWN_RECORDED"
+    detail="stood down, no agent by intent"
+    reason="stood down ${age}s, no agent by intent - $FM_STAND_DOWN_REASON; rechecked on a long cadence not a wedge, and it clears when the work resumes or lands"
   else
     detail="paused, awaiting external"
     reason="paused ${age}s, awaiting external - declared pause, rechecked on a long cadence not a wedge; confirm the wait still holds"
@@ -1021,14 +1079,21 @@ handle_paused_stale() {  # <window> <task> <hash>
 # the expected external wait. The caller has already confirmed liveness through
 # the busy verdict, so this exception does not suppress undeclared wedges or
 # alter the separate non-busy classification. handle_paused_stale keeps the
-# exception bounded by re-surfacing it once per PAUSE_RESURFACE_SECS. Away mode
+# exception bounded by re-surfacing it once per PAUSE_RESURFACE_SECS.
+# A stood-down declaration is deliberately NOT admitted here, which is why this
+# asks status_wait_explains_a_busy_pane rather than the combined predicate the
+# loop-top reconciliation uses. `paused:` and captain-held absorb a busy pane
+# because there the busy verdict IS the declared long call. A stand-down asserts
+# the opposite - that the agent is GONE - so a busy verdict is positive evidence
+# the record must not be believed, and the pane falls through to the wedge timer
+# exactly as an undeclared busy pane does. Away mode
 # remains daemon-owned and receives the undecorated wake identity for its own
 # classification, which is why the declaration is read before the afk branch
 # rather than after it.
 busy_turn_bound_check() {  # <window> <task> <hash> <since-file> <escalation-file>
   local win=$1 task=$2 h=$3 since_file=$4 escalation_file=$5 key statusf declared
   statusf="$STATE/$task.status"
-  if status_is_paused_or_captain_held "$(last_status_line "$statusf")"; then
+  if status_wait_explains_a_busy_pane "$(last_status_line "$statusf")"; then
     if afk_present; then
       # Away mode is daemon-owned, so this bound hands off the PLAIN wake identity
       # and lets the daemon classify the declaration itself - the undecorated
@@ -1104,12 +1169,34 @@ pause_state_class() {  # <window> <task>
   recheck_file="$STATE/.paused-rechecked-$key"
   if ! status_is_paused_or_captain_held "$last"; then
     rm -f "$recheck_file"
-    crew_absorb_class "$task"
+    # Nothing is declared here, so only positive working evidence may absorb. A
+    # `paused` verdict on this branch can only come from a stand-down RECORD,
+    # which outlives an agent restarted in the same pane by any route but a
+    # relaunch, and absorbing on the record alone would label the pane an
+    # external wait nobody declared - then lose that marker to the loop-top
+    # reconciliation on the very next poll, waking every cycle instead of once
+    # per cadence. The DECLARATION is what earns the absorb; without it the pane
+    # keeps the ordinary stale schedule.
+    class=$(crew_absorb_class "$task")
+    case "$class" in paused) class=none ;; esac
+    printf '%s' "$class"
     return
   fi
   # Read once past the declared-wait gate and reused by both liveness gates below,
   # so a mate's stale poll costs one metadata scan rather than one per gate, and the
   # far more common no-declaration path above still costs none.
+  # A stand-down is the one declaration whose admissibility depends on a record
+  # outside the log, and a record nobody can parse must never be trusted to
+  # quieten an alarm. Answering `none` here is what makes that true of the ALARM
+  # and not merely of the reader: the caller routes an unadmitted stood-down pane
+  # to the wedge timer, so a malformed, truncated, or symlinked record restores
+  # the ordinary schedule instead of leaving the pane absorbed under the generic
+  # external-wait wording. A local file read, never a backend probe.
+  if ! fm_stand_down_declared_wait_admissible "$STATE" "$task" "$last"; then
+    rm -f "$recheck_file"
+    printf 'none'
+    return
+  fi
   kind=$(window_kind "$win")
   if [ -e "$STATE/.paused-$key" ] && [ "$(age_of "$recheck_file")" -lt "$STALE_ESCALATE_SECS" ]; then
     if [ "$kind" != secondmate ]; then
@@ -2208,7 +2295,15 @@ EOF
           # authoritative source fm-crew-state.sh itself already prioritizes
           # over the log) a chance to override before trusting the log.
           if [ "$(cat "$sf" 2>/dev/null || true)" != "$h" ]; then
-            if crew_is_provably_working "$(window_to_task "$w" "$STATE")"; then
+            # ONE crew-state read, taken once per distinct stale hash: this is the
+            # costly, deliberately first-sighting-only check (it may make a bounded
+            # no-mistakes call). Reaching here means the log's LAST line is
+            # captain-relevant, which no declared wait ever is, so a declared-wait
+            # verdict cannot arise on this path and is not asked for: a pause flag
+            # written under a captain-relevant line would be stripped by the
+            # loop-top reconciliation on the very next poll anyway, taking the
+            # re-surface throttle with it.
+            if crew_is_provably_working "$task"; then
               printf '%s' "$h" > "$sf"
               date +%s > "$ssf"
               clear_write_tracking "$key"
@@ -2290,7 +2385,19 @@ EOF
                          printf '%s' "$h" > "$sf"
                          wedge_timer_check "$w" "$ssf" "non-terminal stale (provably working after a declared pause)" "$ewf" "$task"
                          triage_log "absorbed non-terminal stale (provably working): $w" ;;
-                *)       handle_paused_stale "$w" "$task" "$h" ;;
+                # Anything else means the wait was not admitted, and for an
+                # ordinary crew that is precisely because its agent did NOT read
+                # dead. A `paused:` worker is entitled to be alive - the wait is
+                # its own - so it keeps the bounded cadence. A stand-down asserts
+                # the agent is gone, so the same answer refutes it: absorbing here
+                # would put a live, possibly wedged crewmate on the four-hour
+                # cadence under a record the readers already refuse to honor.
+                *)       if status_is_stood_down "$(last_status_line "$STATE/$task.status")"; then
+                           clear_pause_state "$key"
+                           wedge_timer_check "$w" "$ssf" "non-terminal stale (stood down, agent not provably gone)" "$ewf" "$task"
+                         else
+                           handle_paused_stale "$w" "$task" "$h"
+                         fi ;;
               esac
             else
               wedge_timer_check "$w" "$ssf" "non-terminal stale" "$ewf" "$task"

@@ -758,6 +758,198 @@ test_enriched_wedge_under_declared_wait_uses_pause_cadence() {
   pass "an enriched wedge under a declared wait uses the pause cadence and restores wedge detection on resume"
 }
 
+# Every declaration the combined predicate admits needs its own arm in the pause
+# re-surface recheck, and the stand-down verb arrived without one. The failure is
+# silent and self-renewing: the recheck matched neither `captain-held` nor
+# `paused`, fell through to the marker drop, and migrate_watcher_pause_markers
+# recreated the marker with a fresh timestamp on the next tick - so a stood-down
+# task was absorbed forever in away mode with no digest at all, which is the one
+# thing this loop exists to prevent. A captain-held transfer IS deliberately silent
+# while the away-posture record exists; a stand-down is not that.
+test_stood_down_wait_resurfaces_on_the_pause_cadence() {
+  local dir state fakebin task win pane key escalations
+  dir=$(make_supercase stood-down-resurface)
+  state="$dir/state"; fakebin="$dir/fakebin"
+  task=stood-w1; win="sess:fm-$task"; pane="$dir/pane.txt"
+  key=$(printf '%s' "$task" | tr ':/.' '___')
+  fm_write_meta "$state/$task.meta" "window=$win" "backend=tmux"
+  # The shape a recorded stand-down leaves: work delivered and not landed, then
+  # firstmate's own declaration of the deliberate stop - and BOTH halves of the
+  # state, because bin/fm-stand-down.sh writes the record first and appends the
+  # declaration only once it reads back. A declaration with no record is not a
+  # state the fleet produces, and is refused rather than absorbed
+  # (test_stood_down_with_an_unreadable_record_still_alarms_in_away_mode).
+  printf 'done: PR 42 pushed, awaiting the captain\nstood-down: captain stopped this crewmate on purpose\n' \
+    > "$state/$task.status"
+  printf 'recorded=%s\nreason=captain stopped this crewmate on purpose\n' "$(( $(date +%s) - 5000 ))" \
+    > "$state/$task.stood-down"
+  printf 'idle prompt $\n' > "$pane"
+  # The marker has been aging for well past the cadence, so the recheck is due.
+  echo $(( $(date +%s) - 5000 )) > "$state/.subsuper-paused-$key"
+
+  PATH="$fakebin:$PATH" FM_FAKE_TMUX_WINDOW="$win" FM_FAKE_TMUX_CAPTURE="$pane" \
+    FM_STATE_OVERRIDE="$state" FM_ESCALATE_BATCH_SECS=999999 FM_PAUSE_RESURFACE_SECS=3600 \
+    housekeeping "$state"
+
+  # Scoped to the stand-down digest: the catch-all status scan independently
+  # surfaces the `done:` line beneath the declaration, which is its own contract.
+  escalations=$(grep -c "no agent by intent" "$state/.subsuper-escalations" 2>/dev/null || true)
+  [ "$escalations" = 1 ] \
+    || fail "a due stand-down produced $escalations rechecks, expected exactly one: $(cat "$state/.subsuper-escalations")"
+  grep -F "possible wedge" "$state/.subsuper-escalations" >/dev/null \
+    && fail "the stand-down recheck was mislabeled a possible wedge"
+  grep -F "awaiting external" "$state/.subsuper-escalations" >/dev/null \
+    && fail "the stand-down recheck borrowed the external-wait wording; nothing external clears it"
+  # The marker must be RESET rather than dropped: a dropped marker is silently
+  # recreated by the next housekeeping tick, which is how the absorb went unbounded.
+  [ -e "$state/.subsuper-paused-$key" ] \
+    || fail "the stand-down recheck dropped its pause marker instead of restarting the window"
+
+  # And the cadence holds: the freshly reset window produces no second digest.
+  : > "$state/.subsuper-escalations"
+  PATH="$fakebin:$PATH" FM_FAKE_TMUX_WINDOW="$win" FM_FAKE_TMUX_CAPTURE="$pane" \
+    FM_STATE_OVERRIDE="$state" FM_ESCALATE_BATCH_SECS=999999 FM_PAUSE_RESURFACE_SECS=3600 \
+    housekeeping "$state"
+  grep -F "no agent by intent" "$state/.subsuper-escalations" >/dev/null \
+    && fail "a stand-down re-surfaced twice inside one window: $(cat "$state/.subsuper-escalations")"
+  pass "a stood-down task re-surfaces once per pause cadence in away mode instead of being absorbed forever"
+}
+
+# The endpoint-gone shape is the one variant two was written for - the captain
+# stops a crewmate whose window is killed outright - and it is exactly the shape
+# the recheck could not serve. A failed capture means "nothing left to re-surface"
+# for an ordinary declared wait, but for a stand-down a gone endpoint is the state
+# it DECLARES, so dropping the marker there meant migrate_watcher_pause_markers
+# recreated it with a fresh timestamp on the next tick, the age restarted from
+# zero, and the digest could never fire on any tick, ever.
+test_stood_down_wait_resurfaces_when_its_endpoint_is_gone() {
+  local dir state fakebin task win key escalations
+  dir=$(make_supercase stood-down-endpoint-gone)
+  state="$dir/state"; fakebin="$dir/fakebin"
+  task=stood-gone; win="sess:fm-$task"
+  key=$(printf '%s' "$task" | tr ':/.' '___')
+  fm_write_meta "$state/$task.meta" "window=$win" "backend=tmux"
+  printf 'working: implementation committed, handed to validation\nstood-down: captain stopped this crewmate on purpose\n' \
+    > "$state/$task.status"
+  printf 'recorded=%s\nreason=captain stopped this crewmate on purpose\n' "$(( $(date +%s) - 5000 ))" \
+    > "$state/$task.stood-down"
+  echo $(( $(date +%s) - 5000 )) > "$state/.subsuper-paused-$key"
+
+  # No FM_FAKE_TMUX_WINDOW and no capture: the window is gone, so the capture
+  # fails and the probe answers "endpoint unreadable".
+  PATH="$fakebin:$PATH" FM_STATE_OVERRIDE="$state" FM_ESCALATE_BATCH_SECS=999999 \
+    FM_PAUSE_RESURFACE_SECS=3600 housekeeping "$state"
+
+  escalations=$(grep -c "no agent by intent" "$state/.subsuper-escalations" 2>/dev/null || true)
+  [ "$escalations" = 1 ] \
+    || fail "a stood-down task whose endpoint is gone produced $escalations rechecks, expected exactly one: $(cat "$state/.subsuper-escalations" 2>/dev/null)"
+  [ -e "$state/.subsuper-paused-$key" ] \
+    || fail "the recheck dropped its marker, so the next tick recreates it and the window restarts forever"
+
+  # And the cadence still holds for this shape: the reset window stays quiet.
+  : > "$state/.subsuper-escalations"
+  PATH="$fakebin:$PATH" FM_STATE_OVERRIDE="$state" FM_ESCALATE_BATCH_SECS=999999 \
+    FM_PAUSE_RESURFACE_SECS=3600 housekeeping "$state"
+  grep -F "no agent by intent" "$state/.subsuper-escalations" >/dev/null \
+    && fail "a gone-endpoint stand-down re-surfaced twice inside one window"
+  pass "a stood-down task whose endpoint is gone still gets its bounded recheck in away mode"
+}
+
+# The record half of the away-mode gate. bin/fm-stand-down-lib.sh promises that a
+# record nobody can parse "restores the ordinary ALARM, not merely the reader's
+# verdict" - and that promise has to hold in whichever supervisor is running, or
+# it is one sentence that is true in the watcher and a lie in the daemon. The
+# declaration alone therefore does not earn the pause routing here: a half-written
+# record falls through to the ordinary wedge aging. This checks a local file read,
+# not a backend probe, so the classifier's no-fm-crew-state.sh cost rule is intact.
+# The LIVENESS half is deliberately absent here and documented as a gap; this case
+# pins only what is actually protected.
+test_stood_down_with_an_unreadable_record_still_alarms_in_away_mode() {
+  local dir state fakebin task win pane key verdict
+  dir=$(make_supercase stood-down-corrupt-record)
+  state="$dir/state"; fakebin="$dir/fakebin"
+  task=stood-corrupt; win="sess:fm-$task"; pane="$dir/pane.txt"
+  key=$(printf '%s' "$task" | tr ':/.' '___')
+  fm_write_meta "$state/$task.meta" "window=$win" "backend=tmux"
+  # A non-captain-relevant line beneath the declaration, so the actionable-span
+  # check above the declared-wait arm finds nothing and this case stays about the
+  # record gate rather than about an unread delivery.
+  printf 'working: implementation committed, handed to validation\nstood-down: captain stopped this crewmate on purpose\n' \
+    > "$state/$task.status"
+  printf 'idle prompt $\n' > "$pane"
+
+  # Control: a well-formed record DOES earn the pause routing, so the corrupt case
+  # below is isolated to the record rather than to the declaration or the fixture.
+  printf 'recorded=%s\nreason=captain stopped this crewmate on purpose\n' "$(date +%s)" \
+    > "$state/$task.stood-down"
+  verdict=$(FM_STATE_OVERRIDE="$state" classify_stale "$win" "$state")
+  case "$verdict" in
+    pause\|*) ;;
+    *) fail "a backed stand-down did not take the pause routing: $verdict" ;;
+  esac
+  case "$verdict" in
+    *"no agent by intent"*) ;;
+    *) fail "the backed stand-down verdict did not name the deliberate stop: $verdict" ;;
+  esac
+
+  # Half-written: the epoch never landed, so nothing backs the declaration.
+  printf 'recorded=notanumber\nreason=captain stopped this crewmate on purpose\n' \
+    > "$state/$task.stood-down"
+  verdict=$(FM_STATE_OVERRIDE="$state" classify_stale "$win" "$state")
+  case "$verdict" in
+    pause\|*) fail "an unreadable stand-down record still absorbed the pane: $verdict" ;;
+  esac
+  case "$verdict" in
+    *"awaiting external"*) fail "an unreadable record fell through to the external-wait wording: $verdict" ;;
+  esac
+
+  # An enriched `possible wedge, escalation N` reason from the watcher is no longer
+  # downgraded by the declaration: with nothing backing it, the escalation stands.
+  LOG="$dir/daemon.log" FM_STATE_OVERRIDE="$state" \
+    handle_wake "stale: $win (idle 250s, possible wedge, escalation 2)" "$state"
+  grep -F "possible wedge" "$state/.subsuper-escalations" >/dev/null \
+    || fail "an enriched wedge was downgraded by a declaration nothing backs: $(cat "$state/.subsuper-escalations" 2>/dev/null)"
+  [ ! -e "$state/.subsuper-paused-$key" ] \
+    || fail "an unreadable stand-down record recorded a pause marker, putting a live pane on the long cadence"
+
+  # And the first-sighting shape, which is where the wedge marker is written:
+  # the wake records wedge aging rather than a pause marker.
+  : > "$state/.subsuper-escalations"
+  LOG="$dir/daemon.log" FM_STATE_OVERRIDE="$state" handle_wake "stale: $win" "$state"
+  [ ! -e "$state/.subsuper-paused-$key" ] \
+    || fail "a first-sighting stale under an unbacked declaration recorded a pause marker"
+  [ -e "$state/.subsuper-stale-$key" ] \
+    || fail "an unreadable stand-down record left no wedge aging behind, so nothing escalates it"
+
+  # The wake is only where the marker is WRITTEN. What absorbs a pane in away mode
+  # is the marker surviving, and housekeeping re-derives markers from the status
+  # log on every tick - so a gate that stops at the classifier is inert: the
+  # declaration alone would make migrate_watcher_pause_markers swap wedge aging for
+  # a pause marker ~16 times per STALE_ESCALATE_SECS window and the wedge would
+  # never mature. Drive the real tick and assert the marker survives it.
+  PATH="$fakebin:$PATH" FM_FAKE_TMUX_WINDOW="$win" FM_FAKE_TMUX_CAPTURE="$pane" \
+    FM_STATE_OVERRIDE="$state" FM_ESCALATE_BATCH_SECS=999999 \
+    FM_STALE_ESCALATE_SECS=240 FM_PAUSE_RESURFACE_SECS=3600 housekeeping "$state"
+  [ ! -e "$state/.subsuper-paused-$key" ] \
+    || fail "a housekeeping tick re-derived a pause marker from the declaration alone"
+  [ -e "$state/.subsuper-stale-$key" ] \
+    || fail "a housekeeping tick destroyed the wedge aging, so it can never mature"
+  [ ! -s "$state/.subsuper-escalations" ] \
+    || fail "the wedge escalated before its bound: $(cat "$state/.subsuper-escalations")"
+
+  # And it matures: past the bound the ordinary possible-wedge digest fires,
+  # which is the alarm the library header promises an unparseable record restores.
+  echo $(( $(date +%s) - 5000 )) > "$state/.subsuper-stale-$key"
+  PATH="$fakebin:$PATH" FM_FAKE_TMUX_WINDOW="$win" FM_FAKE_TMUX_CAPTURE="$pane" \
+    FM_STATE_OVERRIDE="$state" FM_ESCALATE_BATCH_SECS=999999 \
+    FM_STALE_ESCALATE_SECS=240 FM_PAUSE_RESURFACE_SECS=3600 housekeeping "$state"
+  grep -F "possible wedge" "$state/.subsuper-escalations" >/dev/null \
+    || fail "an aged unreadable stand-down never escalated as a possible wedge: $(cat "$state/.subsuper-escalations" 2>/dev/null)"
+  grep -F "no agent by intent" "$state/.subsuper-escalations" >/dev/null \
+    && fail "an unreadable record still produced the reassuring stand-down digest"
+  pass "an unreadable stand-down record keeps its pane on the ordinary wedge schedule in away mode, and it matures into a wedge"
+}
+
 test_stale_terminal_escalates() {
   local dir state out
   dir=$(make_supercase stale-terminal)
@@ -2674,6 +2866,9 @@ test_classify_check_and_unknown_escalate
 test_stale_transient_self_records_marker
 test_stale_diagnostic_wedge_survives_busy_housekeeping
 test_enriched_wedge_under_declared_wait_uses_pause_cadence
+test_stood_down_wait_resurfaces_on_the_pause_cadence
+test_stood_down_wait_resurfaces_when_its_endpoint_is_gone
+test_stood_down_with_an_unreadable_record_still_alarms_in_away_mode
 test_stale_terminal_escalates
 test_stale_actionable_wait_escalates_and_keeps_pause_cadence
 test_stale_paused_classifies_pause

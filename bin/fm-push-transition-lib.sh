@@ -148,9 +148,18 @@ handle_push_transition() {  # <backend> <session> <record>
   task=$(window_to_task "$window" "$STATE")
   # A declared wait already names the human this transition would report: an
   # external dependency, or the captain a verified hold transferred the work to.
-  # Either way the wait is durably recorded, so absorb the immediate escalation
-  # and leave the bounded re-surface to the watcher's own pause cadence.
-  if status_is_paused_or_captain_held "$(last_status_line "$STATE/$task.status")"; then
+  # Either way the wait is durably recorded, so absorb the immediate escalation and
+  # leave the bounded re-surface to the watcher's own pause cadence.
+  # A stood-down declaration is NOT admitted here, which is why this asks
+  # status_wait_explains_a_busy_pane rather than the combined predicate. The push
+  # that brought us here is a herdr agent-status change, which can only come from a
+  # RUNNING agent - so it is positive live-agent evidence, and a stand-down asserts
+  # the opposite, that the agent is GONE. Absorbing on the record here would
+  # silence a live worker asking for input, which is the contradiction the rest of
+  # this rule exists to refuse. No probe is needed: the evidence arrived with the
+  # event. A `paused:` wait and a captain-held transfer are absorbed exactly as
+  # before, because a live agent is compatible with both.
+  if status_wait_explains_a_busy_pane "$(last_status_line "$STATE/$task.status")"; then
     triage_log "absorbed push $to (declared wait, awaiting external or captain): $window"
     fm_backend_commit_transition "$backend" "$STATE" "$session" "$record" || exit 1
     return

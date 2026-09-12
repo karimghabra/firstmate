@@ -343,6 +343,8 @@ PRIMARY_HARNESS=$("$SCRIPT_DIR/fm-harness.sh" 2>/dev/null || printf unknown)
 . "$SCRIPT_DIR/fm-wake-lib.sh"
 # shellcheck source=bin/fm-line-cap-lib.sh
 . "$SCRIPT_DIR/fm-line-cap-lib.sh"
+# shellcheck source=bin/fm-stand-down-lib.sh
+. "$SCRIPT_DIR/fm-stand-down-lib.sh"
 
 # One tasks-axi compatibility verdict per session start. The probe costs three
 # tasks-axi subprocesses and this digest needs the same answer twice - here for
@@ -842,11 +844,41 @@ for meta in "$STATE"/*.meta; do
   target=$(fm_backend_target_of_meta "$meta")
   if [ -n "$window" ]; then
     backend=$(fm_backend_of_meta "$meta")
-    if fm_backend_target_exists "$backend" "${target:-$window}" "fm-$id"; then
-      printf 'endpoint: alive (backend=%s window=%s)\n' "$backend" "$window"
-    else
-      printf 'endpoint: dead (backend=%s window=%s)\n' "$backend" "$window"
+    # A missing agent on an open task is a recovery trigger (AGENTS.md section 5),
+    # and correctly so - except when the agent is gone by intent. The stand-down
+    # record is what separates the two, so a deliberate stop is not re-investigated
+    # on every session start for as long as the work stays open.
+    #
+    # The record is honored on proven AGENT death, not on an absent endpoint. That
+    # distinction is the whole fix: on tmux the task window is created with no
+    # command, so its shell outlives the agent and fm_backend_target_exists still
+    # succeeds - which is exactly the shape `bin/fm-control.sh <id> exit` leaves
+    # behind, since it returns on the `dead` verdict. Gated on the endpoint, this
+    # line was unreachable for the stop the recovery playbook itself prescribes.
+    #
+    # Reading the local record first keeps the extra agent-state probe off the
+    # ordinary path: a task with no record costs exactly what it did before.
+    # An `alive` agent is never stood down whatever the record says, so a wedged
+    # worker still reports as it always did and stays a recovery trigger; so does
+    # any answer that is not proven death, including the `unverified` that
+    # bin/fm-backend.sh returns for a backend with no recovery-grade classifier.
+    stood_down_state=
+    if fm_stand_down_read "$STATE" "$id"; then
+      stood_down_state=$(fm_backend_agent_state "$backend" "${target:-$window}" 2>/dev/null) || stood_down_state=unreadable
     fi
+    case "$stood_down_state" in
+      dead|missing)
+        printf 'endpoint: stood down since %s, no agent by intent - not a recovery trigger (backend=%s window=%s): %s\n' \
+          "$(fm_stand_down_format_time "$FM_STAND_DOWN_RECORDED")" "$backend" "$window" "$FM_STAND_DOWN_REASON"
+        ;;
+      *)
+        if fm_backend_target_exists "$backend" "${target:-$window}" "fm-$id"; then
+          printf 'endpoint: alive (backend=%s window=%s)\n' "$backend" "$window"
+        else
+          printf 'endpoint: dead (backend=%s window=%s)\n' "$backend" "$window"
+        fi
+        ;;
+    esac
   else
     printf 'endpoint: unknown (no window recorded)\n'
   fi

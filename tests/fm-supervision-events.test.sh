@@ -32,7 +32,7 @@ wake() { printf '%s\n' "$1" >> "$WAKE_LOG"; return 0; }
 sleep() { printf 'SLEEP\n' >> "$SLEEP_LOG"; }
 
 reset_state() {
-  rm -f "$STATE_DIR"/*.meta "$STATE_DIR"/*.status "$STATE_DIR"/.wake-queue \
+  rm -f "$STATE_DIR"/*.meta "$STATE_DIR"/*.status "$STATE_DIR"/*.stood-down "$STATE_DIR"/.wake-queue \
     "$STATE_DIR"/.wake-queue.seq "$STATE_DIR"/.watch-triage.log \
     "$STATE_DIR"/.herdr-escalated-* "$TMP"/panes "$TMP"/wtcalls "$TMP"/wtcalled 2>/dev/null || true
   : > "$WAKE_LOG"
@@ -94,6 +94,29 @@ fi
 [ ! -s "$WAKE_LOG" ] || fail "a captain-held crew must not wake the supervisor from the event fast-path"
 grep -q 'absorbed push' "$STATE_DIR/.watch-triage.log" 2>/dev/null || fail "the captain-held absorb should be logged to the triage log"
 pass "handle_push_transition: a captain-held crew is absorbed (no fast wake), left to the poll loop's long cadence"
+
+# --- handle_push_transition: a stand-down never absorbs a push ------------------
+# A stand-down asserts the agent is GONE. A herdr agent-status push can only come
+# from a RUNNING agent, so the push itself refutes the record - the same rule the
+# watcher applies to a busy pane. Absorbing here would swallow a live worker's
+# decision point under a record claiming no worker is there, which is exactly the
+# contradiction this work exists to remove, and it needs no probe: the evidence
+# arrived with the event. `paused:` and captain-held keep absorbing, because a
+# live agent is compatible with both.
+
+reset_state
+fm_write_meta "$STATE_DIR/tk2s.meta" "window=default:wG:pQ" "backend=herdr" "kind=ship"
+printf 'done: PR 42 pushed, awaiting the captain\nstood-down: captain stopped this crewmate on purpose\n' \
+  > "$STATE_DIR/tk2s.status"
+printf 'recorded=%s\nreason=captain stopped this crewmate on purpose\n' "$(date +%s)" \
+  > "$STATE_DIR/tk2s.stood-down"
+handle_push_transition herdr default "$(mkrec wG:pQ blocked)"
+[ -e "$STATE_DIR/.wake-queue" ] \
+  || fail "a stand-down must not absorb a push that proves its agent is running"
+grep -q 'herdr: agent blocked' "$STATE_DIR/.wake-queue" \
+  || fail "the enqueued wake must name the herdr-blocked cause: $(cat "$STATE_DIR/.wake-queue")"
+[ -s "$WAKE_LOG" ] || fail "a live agent asking for input must wake the supervisor, record or no record"
+pass "handle_push_transition: a stood-down crew is escalated, because the push itself proves an agent is running"
 
 # --- event_wait_or_sleep: secondmate windows are excluded from the pane list --
 

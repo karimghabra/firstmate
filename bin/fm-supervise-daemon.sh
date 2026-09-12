@@ -181,6 +181,11 @@ FM_HOME="${FM_HOME:-${FM_ROOT_OVERRIDE:-$FM_ROOT}}"
 # for the captain is never rechecked (the watcher applies the same rule).
 # shellcheck source=bin/fm-afk-contract.sh
 . "$FM_DAEMON_DIR/fm-afk-contract.sh"
+# The stand-down record's read contract. Used for exactly one thing here: the
+# stale classifier's cheap local check that a `stood-down:` declaration is backed
+# by a record that actually parses. A plain file read, never a backend probe.
+# shellcheck source=bin/fm-stand-down-lib.sh
+. "$FM_DAEMON_DIR/fm-stand-down-lib.sh"
 
 # Supervisor-pane discovery (FM_SUPERVISOR_TARGET_DEFAULT,
 # FM_SUPERVISOR_BACKEND_DEFAULT, discover_supervisor_target,
@@ -424,14 +429,25 @@ classify_stale() {  # <window> <state> [<span-record> <span-status>]
     printf 'escalate|stale + actionable status: %s' "$event"
     return
   fi
-  if [ -n "$last" ] && status_is_paused_or_captain_held "$last"; then
-    # A DECLARED external-wait pause or a verified captain-held transfer
-    # (fm-classify-lib.sh owns which declarations qualify): an idle pane is
-    # EXPECTED, so this is not a wedge. The caller records a pause marker (long
-    # re-surface cadence in housekeeping) rather than a wedge stale marker. Cheap:
-    # reuses the status line already read, no fm-crew-state.sh call, mirroring the
-    # daemon's existing status-log classification.
-    printf 'pause|paused (awaiting external), rechecked on a long cadence: %s' "$last"
+  if [ -n "$last" ] && fm_stand_down_declared_wait_admissible "$state" "$task" "$last"; then
+    # A DECLARED wait - an external-wait pause, a verified captain-held transfer,
+    # or a recorded stand-down (fm-classify-lib.sh owns which declarations
+    # qualify): an idle pane is EXPECTED, so this is not a wedge. The caller
+    # records a pause marker (long re-surface cadence in housekeeping) rather than
+    # a wedge stale marker. Cheap: reuses the status line already read, no
+    # fm-crew-state.sh call, mirroring the daemon's existing status-log
+    # classification.
+    # The routing is one routing, but the wording is not: nothing EXTERNAL is
+    # going to clear a stand-down, so naming it an external wait would send the
+    # reader of this log looking for a dependency that does not exist - the same
+    # reason the housekeeping digest and the watcher's recheck each give it its
+    # own wording. Whether the declaration is admissible at all was settled once
+    # by the condition above; neither wording arm restates it.
+    if status_is_stood_down "$last"; then
+      printf 'pause|stood down (no agent by intent, it clears when the work resumes or lands), rechecked on a long cadence: %s' "$last"
+    else
+      printf 'pause|paused (awaiting external), rechecked on a long cadence: %s' "$last"
+    fi
     return
   fi
   if [ -n "$last" ] && status_is_captain_relevant "$last"; then
@@ -524,13 +540,23 @@ clear_pause_tracking() {  # <window> <state>
     "$state/.writing-since-$watcher_key" "$state/.writing-resurfaced-$watcher_key"
 }
 
+# bin/fm-stand-down-lib.sh's fm_stand_down_declared_wait_admissible is the ONE
+# admission test for a declared wait, shared with the always-on watcher so the two
+# cannot drift. Every site in this file that
+# creates, keeps, or rechecks a pause marker asks it - not just where the wake is
+# first classified. The marker is what actually absorbs a pane here, and
+# housekeeping re-derives it from the status log on every tick: gating only the
+# classifier left migrate_watcher_pause_markers recreating the marker ~16 times
+# per STALE_ESCALATE_SECS window, so the wedge marker never matured and an
+# unparseable record kept the pane on the four-hour cadence anyway.
+#
 reconcile_pause_tracking() {  # <window> <state> <last-status-line>
   local win=$1 state=$2 last=$3 task key marker watcher_key
   task=$(window_to_task "$win" "$state")
   key=$(_stale_key "$task")
   marker="$state/.subsuper-paused-$key"
   watcher_key=$(_stale_key "$win")
-  if status_is_paused_or_captain_held "$last"; then
+  if fm_stand_down_declared_wait_admissible "$state" "$task" "$last"; then
     stale_marker_remove "$win" "$state"
     pause_marker_record "$win" "$state"
   elif [ -e "$marker" ] || [ -e "$state/.paused-$watcher_key" ]; then
@@ -548,7 +574,7 @@ migrate_watcher_pause_markers() {  # <state>
     key=$(_stale_key "$task")
     watcher_key=$(_stale_key "$win")
     last=$(last_status_line "$state/$task.status")
-    if status_is_paused_or_captain_held "$last" || [ -e "$state/.subsuper-paused-$key" ] || [ -e "$state/.paused-$watcher_key" ]; then
+    if fm_stand_down_declared_wait_admissible "$state" "$task" "$last" || [ -e "$state/.subsuper-paused-$key" ] || [ -e "$state/.paused-$watcher_key" ]; then
       reconcile_pause_tracking "$win" "$state" "$last"
     fi
   done
@@ -1066,7 +1092,7 @@ housekeeping() {  # <state>
     fi
     task=$(window_to_task "$win" "$state")
     last=$(last_status_line "$state/$task.status")
-    if [ -n "$last" ] && status_is_paused_or_captain_held "$last"; then
+    if [ -n "$last" ] && fm_stand_down_declared_wait_admissible "$state" "$task" "$last"; then
       reconcile_pause_tracking "$win" "$state" "$last"
       continue
     fi
@@ -1083,14 +1109,18 @@ housekeeping() {  # <state>
   done
 
   # (2b) pause re-surface recheck. A declared wait is waiting, not wedged (fm-classify-lib.sh's
-  # status_is_paused_or_captain_held owns which declarations qualify), so it is
+  # fm_stand_down_declared_wait_admissible owns which qualify here), so it is
   # rechecked on a much longer cadence than a wedge (PAUSE_RESURFACE_SECS) and never
   # escalated as one - but it MUST re-surface, so neither a forgotten pause nor a
   # forgotten captain hold can rot invisibly. Past the window: gone -> drop; still
   # declaring the wait -> escalate a recheck digest and reset the marker so the window
   # repeats. The digest names WHICH human the wait is on, because the captain is the
   # one reading it: an external dependency for a paused: declaration, and the captain
-  # themself for a verified hold transfer.
+  # themself for a verified hold transfer, and nobody at all for a stand-down,
+  # which clears only when someone resumes or lands the work. Every declaration the
+  # combined predicate admits needs an arm here: one that reaches the final `rm -f`
+  # instead is dropped without a digest and recreated with a fresh timestamp by
+  # migrate_watcher_pause_markers on the next tick, so it is absorbed forever.
   # Pane busy state does NOT end the wait. A declared wait can legitimately hold a
   # pane busy - a worker parked on a long foreground call it keeps live for as long
   # as the wait lasts - so reading busy as "the crew resumed" retires the window of
@@ -1107,7 +1137,7 @@ housekeeping() {  # <state>
     fi
     task=$(window_to_task "$win" "$state")
     last=$(last_status_line "$state/$task.status")
-    if [ -z "$last" ] || ! status_is_paused_or_captain_held "$last"; then
+    if [ -z "$last" ] || ! fm_stand_down_declared_wait_admissible "$state" "$task" "$last"; then
       reconcile_pause_tracking "$win" "$state" "$last"
       continue
     fi
@@ -1131,15 +1161,31 @@ housekeeping() {  # <state>
     else
       [ "$age" -ge "$pause_secs" ] || continue
     fi
-    # Endpoint-readability probe only: exit code 2 means the capture failed, so the
-    # endpoint is gone and there is nothing left to re-surface. The busy/idle verdict
-    # is deliberately discarded here. Do NOT reinstate a `0)` arm dropping the marker
-    # on busy: migrate_watcher_pause_markers recreates it with a fresh timestamp on
-    # the very next tick while the declaration still stands, so the window would
-    # restart forever and the wait would never mature into its one recheck.
+    # Endpoint-readability probe only: exit code 2 means the capture failed, so for
+    # an ordinary declared wait the endpoint is gone and there is nothing left to
+    # re-surface. The busy/idle verdict is deliberately discarded here. Do NOT
+    # reinstate a `0)` arm dropping the marker on busy: migrate_watcher_pause_markers
+    # recreates it with a fresh timestamp on the very next tick while the declaration
+    # still stands, so the window would restart forever and the wait would never
+    # mature into its one recheck.
+    # A stand-down is the exception, and for the same reason: a gone endpoint is the
+    # state it DECLARES, not a reason it has nothing to say. The captain stopping a
+    # crewmate whose window is killed outright is the shape the record was written
+    # for, so treating a failed capture as "nothing to re-surface" dropped the marker
+    # every tick and its digest could never fire - the very trap the note above
+    # describes, reached through the other arm.
     stale_window_is_busy "$win" "$state"
     case "$?" in
-      2) rm -f "$marker" ;;
+      2)
+        last=$(last_status_line "$state/$task.status")
+        if [ -n "$last" ] && status_is_stood_down "$last" && fm_stand_down_read "$state" "$task"; then
+          if escalate_add "$state" "stood-down ${age}s (no agent by intent, it clears when the work resumes or lands; confirm the stop still stands): $win"; then
+            _now > "$marker"
+          fi
+        else
+          rm -f "$marker"
+        fi
+        ;;
       *)
         last=$(last_status_line "$state/$task.status")
         if [ -n "$last" ] && status_is_captain_held "$last"; then
@@ -1157,6 +1203,10 @@ housekeeping() {  # <state>
             if [ -n "$until" ] && [ "$now" -ge "$until" ]; then
               printf '%s\n' "$until" > "$due"
             fi
+          fi
+        elif [ -n "$last" ] && status_is_stood_down "$last" && fm_stand_down_read "$state" "$task"; then
+          if escalate_add "$state" "stood-down ${age}s (no agent by intent, it clears when the work resumes or lands; confirm the stop still stands): $win"; then
+            _now > "$marker"
           fi
         else
           rm -f "$marker"
@@ -1387,7 +1437,7 @@ handle_wake() {  # <reason> <state>
                 *) case "$stale_detail" in
                      idle\ *s,\ possible\ wedge,\ escalation\ *)
                        last=$(last_status_line "$state/$task.status")
-                       status_is_paused_or_captain_held "$last" \
+                       fm_stand_down_declared_wait_admissible "$state" "$task" "$last" \
                          || decision="escalate|${reason#stale: }"
                        ;;
                    esac ;;

@@ -315,6 +315,40 @@ SH
   chmod +x "$fakebin/tmux"
 }
 
+# make_fake_tmux_agent_state <fakebin>: a tmux whose ADDRESSED calls and window
+# INVENTORY answer independently, because that is the only way to express the
+# endpoint shape a deliberate stop actually leaves behind. `bin/fm-control.sh <id>
+# exit` returns once the agent is gone, and on tmux the window and its shell
+# survive that, so the pane still answers every addressed call while holding no
+# agent. A fake that can only be present-or-absent cannot represent it, and the
+# stand-down reader is gated on exactly that distinction.
+#   FM_FAKE_TMUX_INVENTORY   window names the session inventory reports (may be empty)
+#   FM_FAKE_TMUX_ADDRESSABLE 1 when addressed calls succeed
+#   FM_FAKE_TMUX_AGENT       the pane's foreground command, which decides the verdict
+make_fake_tmux_agent_state() {
+  local fakebin=$1
+  cat > "$fakebin/tmux" <<'SH'
+#!/usr/bin/env bash
+set -u
+case "${1:-}" in
+  list-windows)
+    printf '%s\n' "${FM_FAKE_TMUX_INVENTORY:-}"
+    exit 0 ;;
+  display-message)
+    [ "${FM_FAKE_TMUX_ADDRESSABLE:-1}" = 1 ] || exit 1
+    case "$*" in
+      # A tty that cannot exist, so `ps -t` finds no foreground group and the
+      # verdict comes from the current-command source rather than the real host.
+      *pane_tty*) printf '/dev/fm-fake-absent-tty\n'; exit 0 ;;
+      *pane_current_command*) printf '%s\n' "${FM_FAKE_TMUX_AGENT:-claude}"; exit 0 ;;
+    esac
+    printf '%%1\n'; exit 0 ;;
+esac
+exit 1
+SH
+  chmod +x "$fakebin/tmux"
+}
+
 # make_fake_tmux_secondmate_recovery <fakebin>: a stateful tmux boundary
 # fixture for the real session-start -> bootstrap -> spawn path.
 # FM_FAKE_TMUX_MODE selects missing, ambiguous, unreadable, or shell; missing
@@ -1357,6 +1391,61 @@ EOF
   assert_contains "$out" "endpoint: dead (backend=tmux window=fm-sess:dead-window)" "dead tmux endpoint not reported dead"
 
   pass "tmux endpoint liveness is reported per task: alive for a live window, dead for a gone one"
+}
+
+# The alarm this separates out: a missing agent on a task that is genuinely still
+# open sends the supervisor to the recovery playbook, and without a way to say
+# "stopped on purpose, still open" that investigation repeated every single
+# session - the only silence on offer being a teardown that records a completion
+# that did not happen.
+#
+# The gate is proven AGENT death, not an absent endpoint, and this pins why that
+# distinction had to change. `bin/fm-control.sh <id> exit` returns once the agent
+# is gone; on tmux the window and its shell survive, so the endpoint still answers.
+# Gated on the endpoint, this line was unreachable for the one stop the playbook
+# prescribes: the operator got "recorded" and the digest still said alive.
+test_endpoint_liveness_stood_down() {
+  local rec root home fakebin out
+  rec=$(new_world liveness-stood-down)
+  IFS='|' read -r root home fakebin <<EOF
+$rec
+EOF
+  make_fake_toolchain "$fakebin"
+  make_fake_ps_claude "$fakebin"
+  make_fake_tmux_agent_state "$fakebin"
+
+  printf 'window=fm-sess:stopped-window\nkind=ship\n' > "$home/state/task-stood.meta"
+  # The endpoint is fully present and answers every addressed call; only the
+  # agent is gone. This is the shape `exit` leaves, not a vanished window.
+  export FM_FAKE_TMUX_INVENTORY=stopped-window
+  export FM_FAKE_TMUX_ADDRESSABLE=1
+  export FM_FAKE_TMUX_AGENT=bash
+
+  out=$(run_session_start "$home" "$root" "$fakebin:$BASE_PATH")
+  assert_contains "$out" "endpoint: alive (backend=tmux window=fm-sess:stopped-window)" \
+    "with no record, a live shell reports alive exactly as before"
+
+  printf 'recorded=%s\nreason=captain stopped it; work pushed, waiting to land\n' "$(date +%s)" \
+    > "$home/state/task-stood.stood-down"
+  out=$(run_session_start "$home" "$root" "$fakebin:$BASE_PATH")
+  assert_contains "$out" "endpoint: stood down since " "a recorded deliberate stop is not reported as a live or dead endpoint"
+  assert_contains "$out" "not a recovery trigger (backend=tmux window=fm-sess:stopped-window)" \
+    "the stood-down line does not say it is not a recovery trigger"
+  assert_contains "$out" "captain stopped it; work pushed, waiting to land" \
+    "the stood-down line does not carry the recorded reason"
+  assert_not_contains "$out" "endpoint: alive (backend=tmux window=fm-sess:stopped-window)" \
+    "the surviving pane shell must not keep reporting the stopped agent as alive"
+
+  # The safety half: the agent comes back - or never left, which is what a wedge
+  # looks like - and the same record on disk must change nothing.
+  FM_FAKE_TMUX_AGENT=claude
+  out=$(run_session_start "$home" "$root" "$fakebin:$BASE_PATH")
+  assert_contains "$out" "endpoint: alive (backend=tmux window=fm-sess:stopped-window)" \
+    "a live agent must report alive and stay a recovery trigger whatever the record says"
+  assert_not_contains "$out" "stood down since " "a leftover record must never describe a live agent"
+
+  unset FM_FAKE_TMUX_INVENTORY FM_FAKE_TMUX_ADDRESSABLE FM_FAKE_TMUX_AGENT
+  pass "a deliberately stopped agent is reported as stood down even with its pane shell alive, and a live agent never is"
 }
 
 test_endpoint_liveness_herdr() {
@@ -2663,6 +2752,7 @@ test_status_tail_bounding
 test_status_tail_line_cap
 test_orphan_status_logs_are_printed
 test_endpoint_liveness_tmux
+test_endpoint_liveness_stood_down
 test_endpoint_liveness_herdr
 test_composition_invokes_real_scripts
 test_branch_outcome_replay_respects_captain_barrier_and_lease_sweep

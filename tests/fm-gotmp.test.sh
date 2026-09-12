@@ -60,6 +60,9 @@ SH
   ln -s "$ROOT/bin/fm-cursor-lib.sh" "$fake/bin/fm-cursor-lib.sh"
   ln -s "$ROOT/bin/fm-composer-lib.sh" "$fake/bin/fm-composer-lib.sh"
   ln -s "$ROOT/bin/fm-nm-run-lib.sh" "$fake/bin/fm-nm-run-lib.sh"
+  # fm-stand-down-lib.sh: teardown sources it for fm_stand_down_path, which
+  # names the stand-down record it removes with the rest of the task state.
+  ln -s "$ROOT/bin/fm-stand-down-lib.sh" "$fake/bin/fm-stand-down-lib.sh"
   # fm-lock-lib.sh: teardown sources it for the shared lock-staleness proof.
   ln -s "$ROOT/bin/fm-lock-lib.sh" "$fake/bin/fm-lock-lib.sh"
   # fm-lease-lib.sh: teardown sources it for the supervision lease guard.
@@ -163,6 +166,9 @@ SH
   ln -s "$ROOT/bin/fm-cursor-lib.sh" "$fake/bin/fm-cursor-lib.sh"
   ln -s "$ROOT/bin/fm-composer-lib.sh" "$fake/bin/fm-composer-lib.sh"
   ln -s "$ROOT/bin/fm-nm-run-lib.sh" "$fake/bin/fm-nm-run-lib.sh"
+  # fm-stand-down-lib.sh: teardown sources it for fm_stand_down_path, which
+  # names the stand-down record it removes with the rest of the task state.
+  ln -s "$ROOT/bin/fm-stand-down-lib.sh" "$fake/bin/fm-stand-down-lib.sh"
   ln -s "$ROOT/bin/fm-lock-lib.sh" "$fake/bin/fm-lock-lib.sh"
   # fm-lease-lib.sh: teardown sources it for the supervision lease guard.
   ln -s "$ROOT/bin/fm-lease-lib.sh" "$fake/bin/fm-lease-lib.sh"

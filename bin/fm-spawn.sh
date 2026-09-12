@@ -432,6 +432,10 @@ fm_backlog_directory_present "$STATE" "state directory" || {
 . "$SCRIPT_DIR/fm-pr-lib.sh"
 # shellcheck source=bin/fm-dod-lib.sh
 . "$SCRIPT_DIR/fm-dod-lib.sh"
+# shellcheck source=bin/fm-classify-lib.sh
+. "$SCRIPT_DIR/fm-classify-lib.sh"
+# shellcheck source=bin/fm-stand-down-lib.sh
+. "$SCRIPT_DIR/fm-stand-down-lib.sh"
 # shellcheck source=bin/fm-trace-context-lib.sh
 . "$SCRIPT_DIR/fm-trace-context-lib.sh"
 # shellcheck source=bin/fm-remote-readiness-lib.sh
@@ -1322,6 +1326,26 @@ if [ "$RELAUNCH" -eq 1 ]; then
   ARG3=${HARNESS_ARG:-$RELAUNCH_PRIOR_HARNESS}
   [ -n "$ARG3" ] || {
     echo "error: task $ID has no recorded harness; pass --harness to relaunch it" >&2
+    exit 1
+  }
+  # A relaunch is the one supported way an existing task gets an agent back, so it
+  # is where a stand-down stops being true. Retiring it takes both halves, since a
+  # status log left declaring the wait would keep the relaunched worker's pane
+  # absorbed until it wrote a line of its own. Readers additionally ignore a record
+  # beside a live agent, so this is the tidy path rather than the only guard
+  # (bin/fm-stand-down-lib.sh).
+  # Placed after every refusal in this adoption block, because retiring it is not
+  # reversible and no rollback path restores it: a refusal that reports the task
+  # untouched must leave the captain's recorded decision exactly as it found it
+  # rather than silently dropping the task back onto the two alarms the record
+  # exists to retire.
+  # It is NOT after every way this spawn can still fail - lease acquisition,
+  # worktree and brief preparation, and the launch itself all come later, and any
+  # of them can abort with the record already retired. That residual fails toward
+  # alarming rather than toward silence, and the operator can record again, which
+  # is why it is left rather than wrapped in a rollback.
+  fm_stand_down_release "$STATE" "$ID" || {
+    echo "error: task $ID's stand-down could not be retired before relaunch" >&2
     exit 1
   }
 elif [ "$KIND" = secondmate ]; then

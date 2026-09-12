@@ -1860,8 +1860,11 @@ test_stale_terminal_status_overridden_by_active_run() {
   reap "$pid"
   ack_stopped_cycle "$state" || fail "could not acknowledge the intentional phase-A watcher stop"
 
-  # Phase B: backdate the idle timer past the threshold; the run genuinely
-  # wedges and the next poll escalates exactly like the non-terminal case.
+  # Phase B: the run no longer owns the work - the pane is still quiet, the
+  # status log still shows the same pre-validation "done:", and the idle timer is
+  # backdated past the threshold. With nothing running to explain the silence, the
+  # wedge timer escalates exactly like the non-terminal case.
+  export FM_FAKE_CREW_STATE='state: unknown · source: none · no current-state source available'
   echo $(( $(date +%s) - 500 )) > "$state/.stale-since-$key"
   : > "$out"
   PATH="$fakebin:$PATH" FM_FAKE_TMUX_WINDOW="$window" FM_FAKE_TMUX_CAPTURE="$capture_file" \
@@ -1872,13 +1875,18 @@ test_stale_terminal_status_overridden_by_active_run() {
   grep -F "stale: $window" "$out" >/dev/null || fail "escalation did not print a stale wake"
   grep -F "possible wedge" "$out" >/dev/null || fail "escalation did not flag a possible wedge"
   unset FM_FAKE_CREW_STATE
-  pass "a stale terminal-looking status is overridden and absorbed while a run is actively working, then wedge-escalated"
+  pass "a stale terminal-looking status is overridden and absorbed while a run is actively working, then wedge-escalated once no run owns the work"
 }
 
 # --- non-terminal stale, crew provably working: absorbed, then wedge-escalated ---
-# A provably-working crew (an actively-running pipeline) legitimately sits on a
-# static pane (e.g. waiting on CI), so a non-terminal stale is absorbed and only
-# the wedge timer eventually escalates it - the low-churn behavior preserved.
+# A provably-working crew legitimately sits on a static pane for a while, so a
+# non-terminal stale is absorbed and only the wedge timer eventually escalates it
+# - the low-churn behavior preserved.
+# The evidence here is a BUSY PANE, which is the agent itself working, and it keeps
+# the ordinary escalation schedule. Nothing about an active no-mistakes run step
+# changes that: there is no run-step deferral, so a crew whose pipeline owns the
+# work escalates on this same schedule. The one deferral that exists is the
+# worktree-write probe, which this case does not exercise.
 
 test_nonterminal_stale_provably_working_absorbed_then_escalated() {
   local dir state fakebin out drain_out capture_file window key pane_hash sig pid
@@ -1895,8 +1903,8 @@ test_nonterminal_stale_provably_working_absorbed_then_escalated() {
   pane_hash=$(hash_text "idle building output")
   printf '%s' "$pane_hash" > "$state/.hash-$key"
   printf '1\n' > "$state/.count-$key"
-  # The crew's pipeline is actively running: a static pane is normal (waiting on CI).
-  export FM_FAKE_CREW_STATE='state: working · source: run-step · ci running'
+  # The crew's own pane reads busy: a momentarily static render is normal.
+  export FM_FAKE_CREW_STATE='state: working · source: pane · harness busy'
 
   # Phase A: a high escalation threshold means the first sighting is absorbed.
   PATH="$fakebin:$PATH" FM_FAKE_TMUX_WINDOW="$window" FM_FAKE_TMUX_CAPTURE="$capture_file" \
@@ -2881,7 +2889,11 @@ test_paused_authoritative_working_preserves_wedge_timer() {
   printf '%s' "$pane_hash" > "$state/.stale-$key"
   printf '1\n' > "$state/.count-$key"
   : > "$state/.paused-$key"
-  export FM_FAKE_CREW_STATE='state: working · source: run-step · validating (running)'
+  # A busy PANE keeps this test on its own subject - the wedge timer a declared
+  # pause's working override preserves, and the escalation it still reaches. The
+  # crew-state source is stubbed rather than left to vary because the verdict, not
+  # its provenance, is what this case turns on; no source earns a deferral here.
+  export FM_FAKE_CREW_STATE='state: working · source: pane · harness busy'
 
   PATH="$fakebin:$PATH" FM_FAKE_TMUX_WINDOW="$window" FM_FAKE_TMUX_CAPTURE="$capture_file" \
     FM_STATE_OVERRIDE="$state" FM_CREW_STATE_BIN="$fakebin/fm-crew-state.sh" FM_STALE_ESCALATE_SECS=999 FM_POLL=1 FM_SIGNAL_GRACE=1 \
@@ -2932,8 +2944,10 @@ test_wedge_escalation_marks_demand_deep_inspection_after_threshold() {
   pane_hash=$(hash_text "idle building output")
   printf '%s' "$pane_hash" > "$state/.hash-$key"
   printf '1\n' > "$state/.count-$key"
-  # The crew's pipeline is actively running: a static pane is normal (waiting on CI).
-  export FM_FAKE_CREW_STATE='state: working · source: run-step · validating (running)'
+  # A busy PANE keeps this test on its own subject - the escalation ladder. The
+  # crew-state source is stubbed rather than left to vary because the verdict, not
+  # its provenance, is what this case turns on; no source earns a deferral here.
+  export FM_FAKE_CREW_STATE='state: working · source: pane · harness busy'
 
   # Priming round: first sighting of this stale hash classifies and absorbs it
   # (establishing .stale-$key and starting the wedge timer) without going
@@ -3087,6 +3101,382 @@ test_busy_pane_stable_hash_escalates_past_turn_age_bound() {
   grep -F "possible wedge" "$out" >/dev/null || fail "busy turn-age escalation did not flag a possible wedge"
   pass "a busy worker with a stable pane hash still escalates once its completed-turn age reaches the bound"
 }
+
+
+# The deferral this branch twice dropped by accident, pinned so a third attempt
+# cannot. A busy pane past its completed-turn bound whose own worktree is being
+# written defers rather than escalating, and has since long before this work. Two
+# successive attempts to condition that probe - first on which caller asked, then on
+# whether a pipeline owned the work - each removed this case, so a crewmate visibly
+# writing code behind a stuck-looking busy footer went back to escalating every
+# FM_STALE_ESCALATE_SECS, which is the healthy-crew noise the whole task exists to
+# remove. Both were reverted; the probe is unconditional again.
+test_busy_turn_bound_defers_when_the_agents_own_writes_explain_it() {
+  local dir state fakebin out capture_file window key pane_hash sig pid wt back
+  dir=$(make_case busy-bound-agent-writing); state="$dir/state"; fakebin="$dir/fakebin"
+  out="$dir/watch.out"; capture_file="$dir/pane.txt"
+  window="test:fm-busy-own-writes"; wt="$dir/wt"
+  mkdir -p "$wt/src"
+  printf 'Working...' > "$capture_file"
+  printf 'window=%s\nkind=ship\nharness=pi\nworktree=%s\n' "$window" "$wt" > "$state/busy-own.meta"
+  record_pi_busy "$state" busy-own
+  printf 'working: implementing\n' > "$state/busy-own.status"
+  sig=$(seen_sig "$state/busy-own.status"); printf '%s' "$sig" > "$state/.seen-busy-own_status"
+  key=$(printf '%s' "$window" | tr ':/.' '___')
+  pane_hash=$(hash_text "Working...")
+  printf '%s' "$pane_hash" > "$state/.hash-$key"
+  printf '1\n' > "$state/.count-$key"
+  # No completed turn ever recorded, so the spawn record itself ages past the bound.
+  touch -t 200001010000 "$state/busy-own.meta"
+  back=$(( $(date +%s) - 500 ))
+  echo "$back" > "$state/.stale-since-$key"
+  # Backdated so the write below is unambiguously newer than the probe's anchor.
+  set_mtime "$back" "$state/.stale-since-$key"
+  # No run owns this crew's work, so the files appearing in its worktree are the
+  # agent's own output - the one positive liveness signal a static pane cannot show.
+  export FM_FAKE_CREW_STATE='state: unknown · source: none · no current-state source available'
+  printf 'the agent just wrote this\n' > "$wt/src/main.c"
+  crew_worktree_written_since busy-own "$state" "$state/.stale-since-$key" \
+    || fail "the fixture's own worktree write is not visible to the probe, so this case pins nothing"
+
+  PATH="$fakebin:$PATH" FM_FAKE_TMUX_WINDOW="$window" FM_FAKE_TMUX_CAPTURE="$capture_file" \
+    FM_STATE_OVERRIDE="$state" FM_CREW_STATE_BIN="$fakebin/fm-crew-state.sh" \
+    FM_BUSY_TURN_MAX_SECS=1 FM_STALE_ESCALATE_SECS=240 FM_PAUSE_RESURFACE_SECS=999 \
+    FM_POLL=1 FM_SIGNAL_GRACE=1 FM_CHECK_INTERVAL=999999 FM_HEARTBEAT=999999 "$WATCH" > "$out" &
+  pid=$!
+  if ! wait_poll_cycle "$state" "$pid"; then
+    reap "$pid"
+    fail "a busy pane whose own agent is writing its worktree escalated instead of deferring: $(cat "$out")"
+  fi
+  [ ! -s "$out" ] || { reap "$pid"; fail "the agent's own writes should have deferred silently: $(cat "$out")"; }
+  [ -e "$state/.writing-since-$key" ] \
+    || { reap "$pid"; fail "the deferral chain was not opened for the agent's own writes"; }
+  [ ! -e "$state/.wedge-escalations-$key" ] \
+    || { reap "$pid"; fail "a deferral advanced the wedge escalation counter"; }
+  reap "$pid"
+  unset FM_FAKE_CREW_STATE
+  pass "a busy pane past its completed-turn bound defers when its own agent, not a pipeline, is writing the worktree"
+}
+
+# --- a stood-down task is absorbed ONCE per cadence, not once per poll --------
+# The defect this pins is the shape a marker-only absorb always has here, and it
+# is worse than the alarm variant two exists to retire. handle_paused_stale writes
+# a .paused-<key> flag, but the loop-top reconciliation drops that flag on any poll
+# where the status log does not declare a wait - taking .stale-<key> and the
+# re-surface throttle with it - so the hash re-classifies as a first sighting every
+# poll and, once the record is older than PAUSE_RESURFACE_SECS, wakes firstmate on
+# every single cycle. The fix is that a stand-down DECLARES itself in the log, so
+# the reconciliation keeps the marker exactly as it does for `paused:`.
+#
+# Existing stand-down cases assert the FIRST absorb, which this defect passes; the
+# only way to see it is to poll the same unchanged pane repeatedly and count wakes.
+test_stood_down_task_wakes_once_not_every_poll() {
+  local dir state fakebin out capture_file window key pane_hash sig pid round wakes recorded
+  dir=$(make_case stood-down-cadence); state="$dir/state"; fakebin="$dir/fakebin"
+  out="$dir/watch.out"; capture_file="$dir/pane.txt"
+  window="test:fm-stood"
+  printf 'the agent was stopped on purpose; this pane shell outlives it' > "$capture_file"
+  printf 'window=%s\nkind=ship\n' "$window" > "$state/stood.meta"
+  # The shape a deliberate stop leaves behind: work pushed and not landed, then
+  # firstmate's own one-line declaration of the stop.
+  printf 'done: PR 42 pushed, awaiting the captain\nstood-down: captain stopped this crewmate on purpose\n' \
+    > "$state/stood.status"
+  sig=$(seen_sig "$state/stood.status"); printf '%s' "$sig" > "$state/.seen-stood_status"
+  recorded=$(( $(date +%s) - 5000 ))
+  printf 'recorded=%s\nreason=captain stopped this crewmate on purpose\n' "$recorded" > "$state/stood.stood-down"
+  key=$(printf '%s' "$window" | tr ':/.' '___')
+  pane_hash=$(hash_text "the agent was stopped on purpose; this pane shell outlives it")
+  printf '%s' "$pane_hash" > "$state/.hash-$key"
+  printf '1\n' > "$state/.count-$key"
+  # A tmux window whose shell is alive while its agent is gone - the exact case the
+  # readers gate on proven AGENT death for.
+  export FM_FAKE_TMUX_CURRENT_COMMAND=bash
+  export FM_FAKE_CREW_STATE='state: paused · source: stood-down · stopped by intent: captain stopped this crewmate on purpose'
+
+  wakes=0
+  for round in 1 2 3 4 5; do
+    : > "$out"
+    PATH="$fakebin:$PATH" FM_FAKE_TMUX_WINDOW="$window" FM_FAKE_TMUX_CAPTURE="$capture_file" \
+      FM_STATE_OVERRIDE="$state" FM_CREW_STATE_BIN="$fakebin/fm-crew-state.sh" \
+      FM_STALE_ESCALATE_SECS=240 FM_PAUSE_RESURFACE_SECS=240 FM_POLL=1 FM_SIGNAL_GRACE=1 \
+      FM_CHECK_INTERVAL=999999 FM_HEARTBEAT=999999 "$WATCH" > "$out" &
+    pid=$!
+    if wait_poll_cycle "$state" "$pid"; then
+      reap "$pid"
+    else
+      wait "$pid" 2>/dev/null || true
+    fi
+    if [ -s "$out" ]; then
+      wakes=$(( wakes + 1 ))
+      grep -F "no agent by intent" "$out" >/dev/null \
+        || fail "round $round woke for a stood-down task without naming the intent: $(cat "$out")"
+      grep -F "possible wedge" "$out" >/dev/null \
+        && fail "round $round reported a stood-down task as a possible wedge"
+    fi
+    ack_stopped_cycle "$state" >/dev/null 2>&1 || true
+  done
+
+  [ "$wakes" -le 1 ] \
+    || fail "a stood-down task woke firstmate on $wakes of 5 consecutive polls instead of once per cadence"
+  [ -e "$state/.paused-$key" ] \
+    || fail "the stood-down absorb's pause marker did not survive the loop-top reconciliation"
+  [ ! -e "$state/.wedge-escalations-$key" ] || fail "a stood-down task advanced the wedge escalation counter"
+  unset FM_FAKE_CREW_STATE FM_FAKE_TMUX_CURRENT_COMMAND
+  pass "a stood-down task is absorbed on the bounded cadence and wakes firstmate at most once across repeated polls"
+}
+
+# --- a stand-down never outranks contradicting liveness evidence -------------
+# The rule these three cases pin, and the distinction the next reader will need:
+# `paused:` and captain-held absorb a busy pane DELIBERATELY, because there the
+# busy verdict IS the declared long foreground call the worker parked on. A
+# stand-down asserts the opposite - that the agent is GONE - so for a stand-down a
+# busy or alive verdict is positive evidence the record must not be believed.
+# Without that, recording a stand-down over an agent the backend could not prove
+# dead (fm_backend_agent_state answers `ambiguous` for a readable foreground group
+# it cannot name, and bin/fm-stand-down.sh refuses only on `alive`) moved a live,
+# possibly wedged crewmate off the wedge ladder and onto the four-hour cadence -
+# the one thing the brief marks forbidden.
+
+test_busy_stood_down_pane_still_escalates_past_its_turn_bound() {
+  local dir state fakebin out drain_out capture_file window key pane_hash sig pid
+  dir=$(make_case stood-down-busy); state="$dir/state"; fakebin="$dir/fakebin"
+  out="$dir/watch.out"; drain_out="$dir/drain.out"; capture_file="$dir/pane.txt"
+  window="test:fm-stood-busy"
+  printf 'Working...' > "$capture_file"
+  printf 'window=%s\nkind=ship\nharness=pi\n' "$window" > "$state/stood-busy.meta"
+  record_pi_busy "$state" stood-busy
+  printf 'done: PR 42 pushed, awaiting the captain\nstood-down: captain stopped this crewmate on purpose\n' \
+    > "$state/stood-busy.status"
+  sig=$(seen_sig "$state/stood-busy.status"); printf '%s' "$sig" > "$state/.seen-stood-busy_status"
+  printf 'recorded=%s\nreason=captain stopped this crewmate on purpose\n' "$(( $(date +%s) - 5000 ))" \
+    > "$state/stood-busy.stood-down"
+  key=$(printf '%s' "$window" | tr ':/.' '___')
+  pane_hash=$(hash_text "Working...")
+  printf '%s' "$pane_hash" > "$state/.hash-$key"
+  printf '1\n' > "$state/.count-$key"
+  touch -t 200001010000 "$state/stood-busy.meta"
+  echo $(( $(date +%s) - 500 )) > "$state/.stale-since-$key"
+  # The agent is demonstrably RUNNING behind the busy footer, which is exactly
+  # what the record claims is not so.
+  export FM_FAKE_TMUX_CURRENT_COMMAND=claude
+  export FM_FAKE_CREW_STATE='state: unknown · source: none · no current-state source available'
+
+  PATH="$fakebin:$PATH" FM_FAKE_TMUX_WINDOW="$window" FM_FAKE_TMUX_CAPTURE="$capture_file" \
+    FM_STATE_OVERRIDE="$state" FM_CREW_STATE_BIN="$fakebin/fm-crew-state.sh" \
+    FM_BUSY_TURN_MAX_SECS=1 FM_STALE_ESCALATE_SECS=240 FM_PAUSE_RESURFACE_SECS=999 \
+    FM_POLL=1 FM_SIGNAL_GRACE=1 FM_CHECK_INTERVAL=999999 FM_HEARTBEAT=999999 "$WATCH" > "$out" &
+  pid=$!
+  wait_for_exit "$pid" 100 || fail "a stood-down declaration suppressed the busy-turn bound escalation"
+  grep -F "possible wedge" "$out" >/dev/null \
+    || fail "a busy pane under a stood-down declaration did not flag a possible wedge: $(cat "$out")"
+  grep -F "no agent by intent" "$out" >/dev/null \
+    && fail "a live busy agent was absorbed on the stand-down cadence"
+  [ "$(cat "$state/.wedge-escalations-$key" 2>/dev/null || true)" = 1 ] \
+    || fail "the busy stood-down escalation was not counted, so the ladder cannot climb"
+  FM_STATE_OVERRIDE="$state" "$DRAIN" > "$drain_out" 2>/dev/null || fail "drain after the escalation failed"
+  grep "$(printf '\tstale\t')" "$drain_out" | grep -F "$window" >/dev/null || fail "the escalation was not queued"
+  unset FM_FAKE_CREW_STATE FM_FAKE_TMUX_CURRENT_COMMAND
+  pass "a busy pane past its completed-turn bound still escalates under a stood-down declaration"
+}
+
+# The idle twin: on a repeat poll of an unchanged stale hash, pause_state_class
+# answers its inconclusive verdict precisely BECAUSE the agent did not read dead.
+# A `paused:` worker is entitled to be alive, so it keeps the bounded cadence; a
+# stand-down is refuted by the same answer and must go back on the wedge ladder.
+test_idle_stood_down_pane_with_a_live_agent_escalates() {
+  local dir state fakebin out capture_file window key pane_hash sig pid
+  dir=$(make_case stood-down-alive); state="$dir/state"; fakebin="$dir/fakebin"
+  out="$dir/watch.out"; capture_file="$dir/pane.txt"
+  window="test:fm-stood-alive"
+  printf 'a quiet pane whose agent is still running' > "$capture_file"
+  printf 'window=%s\nkind=ship\n' "$window" > "$state/stood-alive.meta"
+  printf 'done: PR 42 pushed, awaiting the captain\nstood-down: captain stopped this crewmate on purpose\n' \
+    > "$state/stood-alive.status"
+  sig=$(seen_sig "$state/stood-alive.status"); printf '%s' "$sig" > "$state/.seen-stood-alive_status"
+  printf 'recorded=%s\nreason=captain stopped this crewmate on purpose\n' "$(( $(date +%s) - 5000 ))" \
+    > "$state/stood-alive.stood-down"
+  key=$(printf '%s' "$window" | tr ':/.' '___')
+  pane_hash=$(hash_text "a quiet pane whose agent is still running")
+  printf '%s' "$pane_hash" > "$state/.hash-$key"
+  printf '1\n' > "$state/.count-$key"
+  # A repeat poll of a hash already classified and absorbed as a declared wait.
+  printf '%s' "$pane_hash" > "$state/.stale-$key"
+  : > "$state/.paused-$key"
+  date +%s > "$state/.paused-rechecked-$key"
+  echo $(( $(date +%s) - 500 )) > "$state/.stale-since-$key"
+  export FM_FAKE_TMUX_CURRENT_COMMAND=claude
+  export FM_FAKE_CREW_STATE='state: unknown · source: none · no current-state source available'
+
+  PATH="$fakebin:$PATH" FM_FAKE_TMUX_WINDOW="$window" FM_FAKE_TMUX_CAPTURE="$capture_file" \
+    FM_STATE_OVERRIDE="$state" FM_CREW_STATE_BIN="$fakebin/fm-crew-state.sh" \
+    FM_STALE_ESCALATE_SECS=240 FM_PAUSE_RESURFACE_SECS=999 FM_POLL=1 FM_SIGNAL_GRACE=1 \
+    FM_CHECK_INTERVAL=999999 FM_HEARTBEAT=999999 "$WATCH" > "$out" &
+  pid=$!
+  wait_for_exit "$pid" 100 || fail "a stood-down declaration absorbed an idle pane whose agent is alive"
+  grep -F "possible wedge" "$out" >/dev/null \
+    || fail "an idle stood-down pane with a live agent did not flag a possible wedge: $(cat "$out")"
+  grep -F "no agent by intent" "$out" >/dev/null \
+    && fail "a live agent was absorbed on the stand-down cadence"
+  [ ! -e "$state/.paused-$key" ] \
+    || fail "the refuted stand-down kept its pause marker, so the next poll re-absorbs it"
+  unset FM_FAKE_CREW_STATE FM_FAKE_TMUX_CURRENT_COMMAND
+  pass "an idle stood-down pane whose agent is not provably gone escalates instead of being absorbed"
+}
+
+# bin/fm-stand-down-lib.sh promises that a record nobody can parse restores the
+# ordinary ALARM, not merely the reader's verdict. The two halves of the state can
+# disagree - the log's declaration would otherwise keep absorbing the pane on its
+# own - so this drives the watcher with a well-formed declaration over a corrupt
+# record and asserts the pane is not absorbed. The agent here is provably DEAD, so
+# only the unreadable record can decide it.
+test_stood_down_with_an_unreadable_record_is_not_absorbed() {
+  local dir state fakebin out capture_file window key pane_hash sig pid
+  dir=$(make_case stood-down-corrupt); state="$dir/state"; fakebin="$dir/fakebin"
+  out="$dir/watch.out"; capture_file="$dir/pane.txt"
+  window="test:fm-stood-corrupt"
+  printf 'a quiet pane behind a corrupt record' > "$capture_file"
+  printf 'window=%s\nkind=ship\n' "$window" > "$state/stood-corrupt.meta"
+  printf 'done: PR 42 pushed, awaiting the captain\nstood-down: captain stopped this crewmate on purpose\n' \
+    > "$state/stood-corrupt.status"
+  sig=$(seen_sig "$state/stood-corrupt.status"); printf '%s' "$sig" > "$state/.seen-stood-corrupt_status"
+  # Half-written: the epoch never landed, so fm_stand_down_read refuses it.
+  printf 'recorded=notanumber\nreason=captain stopped this crewmate on purpose\n' \
+    > "$state/stood-corrupt.stood-down"
+  key=$(printf '%s' "$window" | tr ':/.' '___')
+  pane_hash=$(hash_text "a quiet pane behind a corrupt record")
+  printf '%s' "$pane_hash" > "$state/.hash-$key"
+  printf '1\n' > "$state/.count-$key"
+  printf '%s' "$pane_hash" > "$state/.stale-$key"
+  : > "$state/.paused-$key"
+  date +%s > "$state/.paused-rechecked-$key"
+  echo $(( $(date +%s) - 500 )) > "$state/.stale-since-$key"
+  # The pane shell outlives the agent, so the agent itself reads dead: with a
+  # READABLE record this pane would be absorbed, which is what isolates the record.
+  export FM_FAKE_TMUX_CURRENT_COMMAND=bash
+  export FM_FAKE_CREW_STATE='state: unknown · source: none · no current-state source available'
+
+  PATH="$fakebin:$PATH" FM_FAKE_TMUX_WINDOW="$window" FM_FAKE_TMUX_CAPTURE="$capture_file" \
+    FM_STATE_OVERRIDE="$state" FM_CREW_STATE_BIN="$fakebin/fm-crew-state.sh" \
+    FM_STALE_ESCALATE_SECS=240 FM_PAUSE_RESURFACE_SECS=999 FM_POLL=1 FM_SIGNAL_GRACE=1 \
+    FM_CHECK_INTERVAL=999999 FM_HEARTBEAT=999999 "$WATCH" > "$out" &
+  pid=$!
+  wait_for_exit "$pid" 100 || fail "a corrupt stand-down record left its pane absorbed"
+  grep -F "possible wedge" "$out" >/dev/null \
+    || fail "a corrupt stand-down record did not restore the ordinary alarm: $(cat "$out")"
+  grep -F "no agent by intent" "$out" >/dev/null \
+    && fail "a corrupt record was honored as a stand-down"
+  grep -F "awaiting external" "$out" >/dev/null \
+    && fail "a corrupt stand-down record was absorbed under the generic external-wait wording"
+  unset FM_FAKE_CREW_STATE FM_FAKE_TMUX_CURRENT_COMMAND
+  pass "a stood-down declaration over an unreadable record restores the ordinary alarm rather than absorbing the pane"
+}
+
+# The record says WHAT a stand-down is; the LOG says which kind of wait a pane is
+# in. Selecting the stand-down wording on the record alone let a leftover record
+# hijack a worker's own `paused:` wait - a reachable state, because a relaunch is
+# the only path that retires a record, so an agent restarted by any other route
+# leaves one behind. The damage was not only the wrong label: the re-surface
+# throttle was bound to the record's identity, which never changes, so the
+# worker's brand-new declaration inherited the silence of the stand-down window
+# before it. This fixture puts that stale throttle on disk and asserts the new
+# wait still gets its own window.
+test_a_leftover_record_does_not_hijack_a_workers_own_paused_wait() {
+  local dir state fakebin out capture_file window key pane_hash sig pid recorded
+  dir=$(make_case stood-down-leftover); state="$dir/state"; fakebin="$dir/fakebin"
+  out="$dir/watch.out"; capture_file="$dir/pane.txt"
+  window="test:fm-leftover"
+  printf 'a quiet pane whose worker declared its own wait' > "$capture_file"
+  printf 'window=%s\nkind=ship\n' "$window" > "$state/leftover.meta"
+  # Stood down once, then resumed without a relaunch, and the worker declared a
+  # wait of its OWN before its agent exited again.
+  printf 'stood-down: captain stopped this crewmate on purpose\npaused: waiting on the captain to answer the routing question\n' \
+    > "$state/leftover.status"
+  sig=$(seen_sig "$state/leftover.status"); printf '%s' "$sig" > "$state/.seen-leftover_status"
+  recorded=$(( $(date +%s) - 90000 ))
+  printf 'recorded=%s\nreason=captain stopped this crewmate on purpose\n' "$recorded" \
+    > "$state/leftover.stood-down"
+  key=$(printf '%s' "$window" | tr ':/.' '___')
+  pane_hash=$(hash_text "a quiet pane whose worker declared its own wait")
+  printf '%s' "$pane_hash" > "$state/.hash-$key"
+  printf '1\n' > "$state/.count-$key"
+  printf '%s' "$pane_hash" > "$state/.stale-$key"
+  : > "$state/.paused-$key"
+  date +%s > "$state/.paused-rechecked-$key"
+  # The throttle the previous stand-down window left behind, freshly stamped: if
+  # the absorber scopes this wait to the record again, this marker silences it.
+  printf 'stood-down:%s' "$recorded" > "$state/.paused-resurfaced-$key"
+  # The pane shell outlives the agent, so the agent reads dead and the declared
+  # wait is admitted - isolating this case to WHICH wait the absorber names.
+  export FM_FAKE_TMUX_CURRENT_COMMAND=bash
+  export FM_FAKE_CREW_STATE='state: paused · source: status-log · declared wait'
+
+  PATH="$fakebin:$PATH" FM_FAKE_TMUX_WINDOW="$window" FM_FAKE_TMUX_CAPTURE="$capture_file" \
+    FM_STATE_OVERRIDE="$state" FM_CREW_STATE_BIN="$fakebin/fm-crew-state.sh" \
+    FM_STALE_ESCALATE_SECS=240 FM_PAUSE_RESURFACE_SECS=240 FM_POLL=1 FM_SIGNAL_GRACE=1 \
+    FM_CHECK_INTERVAL=999999 FM_HEARTBEAT=999999 "$WATCH" > "$out" &
+  pid=$!
+  wait_for_exit "$pid" 100 \
+    || fail "the worker's own declared wait inherited the stand-down window's silence: $(cat "$out")"
+  grep -F "awaiting external" "$out" >/dev/null \
+    || fail "a worker-declared pause was not reported as an external wait: $(cat "$out")"
+  grep -F "no agent by intent" "$out" >/dev/null \
+    && fail "a leftover record relabelled the worker's own pause as a stand-down"
+  grep -F "$(( $(date +%s) - recorded ))" "$out" >/dev/null \
+    && fail "the wake reported the record's age instead of the declaration's"
+  unset FM_FAKE_CREW_STATE FM_FAKE_TMUX_CURRENT_COMMAND
+  pass "a leftover stand-down record never relabels or re-scopes a worker's own declared pause"
+}
+
+# The record alone must never classify a pane as a declared wait. A stand-down
+# record outlives an agent restarted by any route but a relaunch, and the crew
+# state it produces for the restarted-then-exited agent is `paused · stood-down`
+# while the log's last line declares no wait at all. Absorbing that as a pause
+# labels it an external wait nobody declared, and the loop-top reconciliation
+# then strips the marker and its re-surface throttle on the next poll, so the
+# wake repeats every cycle. This fixture holds the record and the crew-state
+# verdict while the log says `working:`, and asserts the ordinary stale path.
+test_a_record_without_a_declaration_is_not_absorbed_as_a_pause() {
+  local dir state fakebin out capture_file window key pane_hash sig pid back
+  dir=$(make_case stood-down-undeclared); state="$dir/state"; fakebin="$dir/fakebin"
+  out="$dir/watch.out"; capture_file="$dir/pane.txt"
+  window="test:fm-undeclared"
+  printf 'a quiet pane whose log declares no wait at all' > "$capture_file"
+  printf 'window=%s\nkind=ship\n' "$window" > "$state/undeclared.meta"
+  # Resumed without a relaunch, so the record survives; the restarted agent wrote
+  # its own working: line and then exited, leaving the pane shell behind.
+  printf 'working: reindexing the backlog\n' > "$state/undeclared.status"
+  back=$(( $(date +%s) - 5000 ))
+  set_mtime "$back" "$state/undeclared.status"
+  sig=$(seen_sig "$state/undeclared.status"); printf '%s' "$sig" > "$state/.seen-undeclared_status"
+  printf 'recorded=%s\nreason=captain stopped this crewmate on purpose\n' "$back" \
+    > "$state/undeclared.stood-down"
+  key=$(printf '%s' "$window" | tr ':/.' '___')
+  pane_hash=$(hash_text "a quiet pane whose log declares no wait at all")
+  printf '%s' "$pane_hash" > "$state/.hash-$key"
+  printf '1\n' > "$state/.count-$key"
+  # The pane shell outlives the agent, so fm-crew-state.sh honors the record and
+  # reports the stand-down verdict - the only thing that could class this paused.
+  export FM_FAKE_TMUX_CURRENT_COMMAND=bash
+  export FM_FAKE_CREW_STATE='state: paused · source: stood-down · stopped by intent: captain stopped this crewmate on purpose'
+
+  PATH="$fakebin:$PATH" FM_FAKE_TMUX_WINDOW="$window" FM_FAKE_TMUX_CAPTURE="$capture_file" \
+    FM_STATE_OVERRIDE="$state" FM_CREW_STATE_BIN="$fakebin/fm-crew-state.sh" \
+    FM_STALE_ESCALATE_SECS=240 FM_PAUSE_RESURFACE_SECS=1 FM_POLL=1 FM_SIGNAL_GRACE=1 \
+    FM_CHECK_INTERVAL=999999 FM_HEARTBEAT=999999 "$WATCH" > "$out" &
+  pid=$!
+  wait_for_exit "$pid" 100 || fail "an undeclared pane behind a stand-down record was absorbed instead of surfaced"
+  grep -F "awaiting external" "$out" >/dev/null \
+    && fail "a record with no declaration was absorbed under the generic external-wait wording: $(cat "$out")"
+  grep -F "no agent by intent" "$out" >/dev/null \
+    && fail "a record with no declaration was absorbed on the stand-down cadence: $(cat "$out")"
+  grep -F "stale: $window" "$out" >/dev/null \
+    || fail "the undeclared pane did not take the ordinary stale path: $(cat "$out")"
+  [ ! -e "$state/.paused-$key" ] \
+    || fail "an undeclared pane kept a pause marker the next poll would strip, re-waking every cycle"
+  unset FM_FAKE_CREW_STATE FM_FAKE_TMUX_CURRENT_COMMAND
+  pass "a stand-down record with no declaration on the log is not absorbed as a declared pause"
+}
+
 
 # Regression fixture for the incident's actual masking condition: Pi's rendered
 # elapsed-time footer changes every poll, so the pane hash never repeats and the
@@ -4761,6 +5151,13 @@ test_paused_authoritative_working_preserves_wedge_timer
 test_nonterminal_stale_repairs_missing_or_corrupt_timer
 test_wedge_escalation_deferred_while_worktree_is_written
 test_write_deferral_resurfaces_on_the_bounded_cadence
+test_busy_turn_bound_defers_when_the_agents_own_writes_explain_it
+test_stood_down_task_wakes_once_not_every_poll
+test_busy_stood_down_pane_still_escalates_past_its_turn_bound
+test_idle_stood_down_pane_with_a_live_agent_escalates
+test_stood_down_with_an_unreadable_record_is_not_absorbed
+test_a_leftover_record_does_not_hijack_a_workers_own_paused_wait
+test_a_record_without_a_declaration_is_not_absorbed_as_a_pause
 test_secondmate_home_supervision_churn_is_not_write_evidence
 test_timer_repair_drops_a_finished_write_deferral_chain
 test_terminal_first_sight_drops_a_finished_write_deferral_chain
