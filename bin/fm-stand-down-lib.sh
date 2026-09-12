@@ -75,29 +75,31 @@
 #     next genuine death, an unreachable or unverifiable answer is not proof of
 #     death and keeps its existing verdict, an active run step still outranks it,
 #     and bin/fm-spawn.sh's relaunch path retires it outright.
-#   - NOT PROTECTED IN THREE PLACES. This list exists to be the honest inventory
-#     of where the LIVENESS half is not gated, so it names every one of them: an
+#   - NOT PROTECTED IN TWO PLACES. This list exists to be the honest inventory of
+#     where the LIVENESS half is not gated, so it names every one of them: an
 #     inventory with an unnamed exception is worse than none, because it earns
 #     trust it does not deserve. They are the away-mode daemon's stale classifier
-#     (bin/fm-supervise-daemon.sh), the herdr push-transition handler
-#     (bin/fm-push-transition-lib.sh), and - inside the always-on watcher itself -
-#     a SECONDMATE window, whose endpoint liveness pause_state_class deliberately
-#     never reads. All three trust a `stood-down:` declaration from the status LOG
-#     alone for liveness: none asks the backend whether an agent is running. So a
-#     live worker - including a wedged one, and including one restarted in the
+#     (bin/fm-supervise-daemon.sh) and - inside the always-on watcher itself - a
+#     SECONDMATE window, whose endpoint liveness pause_state_class deliberately
+#     never reads. Both trust a `stood-down:` declaration from the status LOG
+#     alone for liveness: neither asks the backend whether an agent is running. So
+#     a live worker - including a wedged one, and including one restarted in the
 #     same pane by any route other than a relaunch, which is the only path that
-#     retires the record - IS NOT ESCALATED by any of them. In away mode it takes
-#     the recheck cadence instead of the wedge ladder for as long as away mode
-#     lasts; on the herdr path its decision-point transition is absorbed instead
-#     of woken; a running mate is absorbed on that same recheck cadence.
-#     The RECORD half IS gated in all three (a record that does not parse falls
-#     through and keeps alarming, so the paragraph above holds everywhere); the
-#     LIVENESS half is not. The watcher gates both halves for an ORDINARY crew,
-#     which is the only claim that survives checking. This is a known gap,
-#     written down rather than closed: closing it means putting a backend probe
-#     where a cost contract or a deliberate design choice forbids one, which is
-#     filed as separate work - and that work has to cover all three, not just the
-#     daemon.
+#     retires the record - IS NOT ESCALATED by either. In away mode it takes the
+#     recheck cadence instead of the wedge ladder for as long as away mode lasts;
+#     a running mate is absorbed on that same recheck cadence.
+#     The RECORD half IS gated in both (a record that does not parse falls through
+#     and keeps alarming, so the paragraph above holds everywhere); the LIVENESS
+#     half is not. The watcher gates both halves for an ORDINARY crew, which is
+#     the only claim that survives checking. This is a known gap, written down
+#     rather than closed: closing it means putting a backend probe where a cost
+#     contract or a deliberate design choice forbids one, which is filed as
+#     separate work - and that work has to cover both, not just the daemon.
+#     The herdr push-transition handler was on this list and is not any more: a
+#     herdr agent-status push can only come from a RUNNING agent, so the evidence
+#     was already in hand at that call site and needed no probe. It now refuses
+#     the absorb, which is the rule the rest of this change enforces - a stand-down
+#     asserts the agent is GONE, so live-agent evidence refutes it.
 #   - Not enforceable here: no tool can read INTENT. An agent that crashed and
 #     one the captain stopped both leave the same dead agent, so the record asserts
 #     something only the person writing it knows. That is why the reason is
@@ -201,7 +203,7 @@ FM_STAND_DOWN_RELEASE_LINE="${FM_CLASSIFY_NOTE_VERB_DEFAULT:-note}: stand-down r
 # <reason>. bin/fm-classify-lib.sh owns the verb; the reason is already validated
 # as one bounded line of printable text where it entered the record.
 fm_stand_down_declaration_line() {  # <reason>
-  printf '%s: %s' "${FM_CLASSIFY_STOOD_DOWN_VERB:-$FM_CLASSIFY_STOOD_DOWN_VERB_DEFAULT}" "$1"
+  printf '%s: %s' "$FM_CLASSIFY_STOOD_DOWN_VERB_DEFAULT" "$1"
 }
 
 # Append <line> to <task-id>'s status log as firstmate's own bookkeeping, through

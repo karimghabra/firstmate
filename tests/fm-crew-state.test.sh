@@ -713,47 +713,6 @@ test_daemon_claim_over_live_run_reads_run_alive() {
   pass "daemon/timeout blocked claim over a live fixing run reads as run alive"
 }
 
-# The wedge alarm's pipeline deferral buys a crew out of the 240s escalation and
-# onto a four-hour recheck, so it may only be earned by a run that is MOVING. An
-# active ledger row proves a run EXISTS; it proves nothing about whether anything
-# is executing it, and a run whose daemon died mid-step keeps that row forever.
-# The state stays `working` - the attribution is still authoritative and every
-# other reader is unchanged - and the detail carries the marker that lets the one
-# deferral reader require movement.
-test_a_working_run_with_no_recent_activity_is_marked_stalled() {
-  reset_fakes
-  local d out; d=$(new_case run-activity-marker)
-  make_repo_on_branch "$d/wt" fm/feat-mv
-  make_fakebin "$d" >/dev/null
-  fm_write_meta "$d/state/feat-mv.meta" "window=fm:fm-feat-mv" "worktree=$d/wt" "kind=ship"
-
-  # Moving: the client's own recency verdict is fresh, so no marker and the
-  # deferral stays available - the healthy validating crew this alarm work exists
-  # to stop nagging.
-  FM_FAKE_AXI_STATUS="$(run_fixing_active_recent fm/feat-mv)"
-  out=$(run_crew_state "$d" feat-mv)
-  assert_contains "$out" "state: working" "a moving run is working"
-  assert_contains "$out" "source: run-step" "a moving run is attributed to the run step"
-  assert_not_contains "$out" "run activity not recent" "a moving run must not be marked stalled"
-
-  # The daemon dies under the step: the client prefixes last_activity with `quiet`,
-  # which is the whole signal. Whether the daemon itself still answers is not asked
-  # - no reader branches on it, so probing for it would spend a timed subprocess on
-  # wording - and the verdict is the same either way.
-  FM_FAKE_AXI_STATUS="$(run_fixing_active_quiet fm/feat-mv)"
-  out=$(FM_FAKE_DAEMON_DOWN=1 run_crew_state "$d" feat-mv)
-  assert_contains "$out" "state: working" "an orphaned run keeps its authoritative attribution"
-  assert_contains "$out" "source: run-step" "an orphaned run keeps its run-step source"
-  assert_contains "$out" "run activity not recent" "an orphaned run must be marked stalled"
-
-  # Quiet with the daemon still up is also not movement: the pipeline's own client
-  # is the authority on what counts as recent, not a second threshold invented here.
-  out=$(run_crew_state "$d" feat-mv)
-  assert_contains "$out" "state: working" "a quiet run keeps its authoritative attribution"
-  assert_contains "$out" "run activity not recent" "a quiet run must be marked stalled"
-  pass "a working run is marked stalled unless the pipeline reports recent activity on it"
-}
-
 # A genuine refused socket outranks the persisted fixing record, which can
 # survive after the daemon exits.
 test_socket_refusal_over_stale_fixing_run_reports_blocked() {
@@ -1535,47 +1494,6 @@ EOF
   assert_contains "$out" "state: working" "this branch's own run attributed via the runs list"
   assert_contains "$out" "source: run-step" "runs-list-resolved run -> run-step source"
   pass "cross-branch run is attributed via the real runs list"
-}
-
-# Two crews validating on one shared daemon. A bare `axi status` answers with
-# whichever run was touched most recently, so the OTHER crew is attributed from
-# the runs ledger instead - and the run output left in hand then describes a
-# different task entirely. Deciding movement from it is a read of the wrong
-# object, and it fails in both directions: a fresh foreign run would hand this
-# crew a four-hour deferral it never earned, and a terminal one would strip the
-# deferral from a healthy crew. The ledger carries no run id (its rows are
-# status, branch, head and time), so there is nothing to ask `axi status --run`
-# about; movement is UNKNOWN here, and unknown movement never earns the deferral.
-test_coarse_attribution_never_judges_movement_from_another_crews_run() {
-  reset_fakes
-  local d short out; d=$(new_case coarse-foreign-activity)
-  make_repo_on_branch "$d/wt" fm/feat-mine
-  short=$(git -C "$d/wt" rev-parse --short=7 HEAD)
-  make_fakebin "$d" >/dev/null
-  fm_write_meta "$d/state/feat-mine.meta" "window=fm:fm-feat-mine" "worktree=$d/wt" "kind=ship"
-  FM_FAKE_RUNS_LIST="$(cat <<EOF
-  running    fm/other-crew aaaaaaa  2026-07-02 22:10
-  running    fm/feat-mine ${short}  2026-07-02 22:05
-EOF
-)"
-
-  # The other crew's run is MOVING. Judged from it, this crew would be handed the
-  # deferral on evidence about a task it has nothing to do with.
-  FM_FAKE_AXI_STATUS="$(run_fixing_active_recent fm/other-crew)"
-  out=$(run_crew_state "$d" feat-mine)
-  assert_contains "$out" "state: working" "the crew's own run is still attributed from the ledger"
-  assert_contains "$out" "source: run-step" "a ledger-resolved run keeps the run-step source"
-  assert_contains "$out" "run activity not recent" \
-    "another crew's fresh activity must not earn this crew the deferral"
-
-  # The other crew's run is TERMINAL, so it carries no active-step table at all.
-  # The verdict must not change: it was never about that run either way.
-  FM_FAKE_AXI_STATUS="$(run_passed fm/other-crew)"
-  out=$(run_crew_state "$d" feat-mine)
-  assert_contains "$out" "state: working" "a foreign terminal run does not unseat this crew's attribution"
-  assert_contains "$out" "run activity not recent" \
-    "the verdict must come from this crew's own run, not swing with a foreign one"
-  pass "a coarse-attributed crew never judges its run's movement from another crew's run"
 }
 
 # The runs list is newest-first; a branch with an OLDER completed run must not
@@ -3142,7 +3060,6 @@ test_active_run_is_authoritative
 test_stale_needs_decision_superseded
 test_stale_blocked_superseded
 test_daemon_claim_over_live_run_reads_run_alive
-test_a_working_run_with_no_recent_activity_is_marked_stalled
 test_socket_refusal_over_stale_fixing_run_reports_blocked
 test_socket_refusal_over_terminal_run_reports_blocked
 test_ordinary_blocked_over_live_run_keeps_plain_superseded
@@ -3180,7 +3097,6 @@ test_terminal_failed_ci_orphan_status_only_reads_done
 test_terminal_failed_ci_genuine_red_stays_failed
 test_terminal_failed_ci_orphan_second_failed_step_stays_failed
 test_cross_branch_attribution_via_runs_list
-test_coarse_attribution_never_judges_movement_from_another_crews_run
 test_coarse_socket_refusal_reports_blocked
 test_coarse_failed_ledger_with_daemon_down_reports_unknown
 test_cross_branch_attribution_picks_most_recent_row

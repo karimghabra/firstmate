@@ -95,44 +95,28 @@ fi
 grep -q 'absorbed push' "$STATE_DIR/.watch-triage.log" 2>/dev/null || fail "the captain-held absorb should be logged to the triage log"
 pass "handle_push_transition: a captain-held crew is absorbed (no fast wake), left to the poll loop's long cadence"
 
-# --- handle_push_transition: a stand-down absorbs only when its record reads ---
-# The declaration is half the state; the record is the other half, and a record
-# nobody can parse must never be trusted to quieten an alarm. This handler is the
-# third consumer of that rule, so it asks the same shared admission test the
-# watcher and the away daemon ask rather than the declaration alone.
+# --- handle_push_transition: a stand-down never absorbs a push ------------------
+# A stand-down asserts the agent is GONE. A herdr agent-status push can only come
+# from a RUNNING agent, so the push itself refutes the record - the same rule the
+# watcher applies to a busy pane. Absorbing here would swallow a live worker's
+# decision point under a record claiming no worker is there, which is exactly the
+# contradiction this work exists to remove, and it needs no probe: the evidence
+# arrived with the event. `paused:` and captain-held keep absorbing, because a
+# live agent is compatible with both.
 
 reset_state
 fm_write_meta "$STATE_DIR/tk2s.meta" "window=default:wG:pQ" "backend=herdr" "kind=ship"
-printf 'done: PR 42 pushed, awaiting the captain
-stood-down: captain stopped this crewmate on purpose
-'   > "$STATE_DIR/tk2s.status"
-printf 'recorded=%s
-reason=captain stopped this crewmate on purpose
-' "$(date +%s)"   > "$STATE_DIR/tk2s.stood-down"
+printf 'done: PR 42 pushed, awaiting the captain\nstood-down: captain stopped this crewmate on purpose\n' \
+  > "$STATE_DIR/tk2s.status"
+printf 'recorded=%s\nreason=captain stopped this crewmate on purpose\n' "$(date +%s)" \
+  > "$STATE_DIR/tk2s.stood-down"
 handle_push_transition herdr default "$(mkrec wG:pQ blocked)"
-if [ -e "$STATE_DIR/.wake-queue" ] && grep -q 'stale' "$STATE_DIR/.wake-queue"; then
-  fail "a backed stand-down must NOT be fast-escalated: $(cat "$STATE_DIR/.wake-queue")"
-fi
-[ ! -s "$WAKE_LOG" ] || fail "a backed stand-down must not wake the supervisor from the event fast-path"
-grep -q 'absorbed push' "$STATE_DIR/.watch-triage.log" 2>/dev/null || fail "the stand-down absorb should be logged to the triage log"
-pass "handle_push_transition: a stood-down crew whose record reads is absorbed (no fast wake)"
-
-# The regression: same declaration, half-written record. Before the shared gate
-# reached this handler the declaration alone absorbed the transition, so a
-# leftover or corrupt record swallowed a live agent's decision point.
-reset_state
-fm_write_meta "$STATE_DIR/tk2u.meta" "window=default:wG:pQ" "backend=herdr" "kind=ship"
-printf 'done: PR 42 pushed, awaiting the captain
-stood-down: captain stopped this crewmate on purpose
-'   > "$STATE_DIR/tk2u.status"
-printf 'recorded=notanumber
-reason=captain stopped this crewmate on purpose
-'   > "$STATE_DIR/tk2u.stood-down"
-handle_push_transition herdr default "$(mkrec wG:pQ blocked)"
-[ -e "$STATE_DIR/.wake-queue" ]   || fail "a stand-down whose record does not parse must still enqueue the transition"
-grep -q 'herdr: agent blocked' "$STATE_DIR/.wake-queue"   || fail "the enqueued wake must name the herdr-blocked cause: $(cat "$STATE_DIR/.wake-queue")"
-[ -s "$WAKE_LOG" ] || fail "an unparseable stand-down record must not absorb a live agent's decision point"
-pass "handle_push_transition: a stood-down crew whose record does not parse escalates as usual"
+[ -e "$STATE_DIR/.wake-queue" ] \
+  || fail "a stand-down must not absorb a push that proves its agent is running"
+grep -q 'herdr: agent blocked' "$STATE_DIR/.wake-queue" \
+  || fail "the enqueued wake must name the herdr-blocked cause: $(cat "$STATE_DIR/.wake-queue")"
+[ -s "$WAKE_LOG" ] || fail "a live agent asking for input must wake the supervisor, record or no record"
+pass "handle_push_transition: a stood-down crew is escalated, because the push itself proves an agent is running"
 
 # --- event_wait_or_sleep: secondmate windows are excluded from the pane list --
 

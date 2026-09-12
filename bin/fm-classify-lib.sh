@@ -140,7 +140,14 @@ FM_CLASSIFY_CAPTAIN_HELD_VERB_DEFAULT='captain-held'
 # send the reader looking for one that does not exist. The declaration lives in the
 # status log because that is where every supervisor's pause bookkeeping is
 # reconciled; bin/fm-stand-down-lib.sh's header owns the split between it and the
-# record. FM_CLASSIFY_STOOD_DOWN_VERB overrides it.
+# record.
+# Deliberately NOT overridable, for the same reason as the informational verb
+# below: the settable declared-wait verbs exist because an operator may need to
+# fit an existing WORKER vocabulary, and this verb is never written by a worker -
+# only bin/fm-stand-down.sh writes it. An override would also be a live hazard
+# rather than dead weight: setting it to `paused` would make
+# status_wait_explains_a_busy_pane admit a stand-down, defeating the one exclusion
+# that predicate exists to enforce.
 FM_CLASSIFY_STOOD_DOWN_VERB_DEFAULT='stood-down'
 
 # The informational verb: a line that records something for a human to read and
@@ -199,7 +206,7 @@ status_is_captain_relevant() {
   status_is_paused "$line" && return 1
   verb=$(status_line_verb "$line")
   case "$verb" in
-    working|resolved|captain-held|"${FM_CLASSIFY_PAUSED_VERB:-$FM_CLASSIFY_PAUSED_VERB_DEFAULT}"|"${FM_CLASSIFY_STOOD_DOWN_VERB:-$FM_CLASSIFY_STOOD_DOWN_VERB_DEFAULT}")
+    working|resolved|captain-held|"${FM_CLASSIFY_PAUSED_VERB:-$FM_CLASSIFY_PAUSED_VERB_DEFAULT}"|"$FM_CLASSIFY_STOOD_DOWN_VERB_DEFAULT")
       return 1
       ;;
   esac
@@ -243,7 +250,7 @@ status_is_stood_down() {  # <status-line>
   local line=$1 verb
   [ -n "$line" ] || return 1
   verb=$(status_line_verb "$line")
-  [ "$verb" = "${FM_CLASSIFY_STOOD_DOWN_VERB:-$FM_CLASSIFY_STOOD_DOWN_VERB_DEFAULT}" ]
+  [ "$verb" = "$FM_CLASSIFY_STOOD_DOWN_VERB_DEFAULT" ]
 }
 
 # 0 if a status line declares a wait that can legitimately hold a pane BUSY.
@@ -1850,31 +1857,20 @@ status_span_has_actionable() {  # <status-file> <start-offset>
   status_span_first_actionable_record "$1" "${2:-0}" > /dev/null
 }
 
-# The marker bin/fm-crew-state.sh appends to an attributed run's detail when the
-# pipeline shows no RECENT activity on it - a step its own client has flagged
-# quiet, or a coarse ledger row with no step table to flag at all. Part of that
-# script's one-line output contract, defined here because this library is the
-# reader; it writes it from this constant so the token has a single owner.
-# An active ledger row is evidence a run EXISTS, not evidence it is progressing,
-# and only the latter may buy a crew out of the wedge ladder.
-FM_CLASSIFY_RUN_STALLED_MARKER='run activity not recent'
-
 # The shared parse behind every predicate below: one bin/fm-crew-state.sh read for
-# <id>, printed as "<state> <source> <moving|stalled>". The first two are single
-# tokens by that script's own output contract, so a space separates them
-# unambiguously; the third is this library's reading of the marker above. Returns
-# 1 and prints nothing when the crew has no readable authoritative verdict, so
-# every caller treats an unreadable state as no evidence rather than as a verdict.
+# <id>, printed as "<state> <source>". Both fields are single tokens by that
+# script's own output contract, so a space separates them unambiguously. Returns 1
+# and prints nothing when the crew has no readable authoritative verdict, so every
+# caller treats an unreadable state as no evidence rather than as a verdict.
 # FM_CREW_STATE_BIN lets tests stub it.
 crew_state_fields() {  # <id>
-  local id=$1 line state src moving=moving
+  local id=$1 line state src
   [ -n "$id" ] || return 1
   line=$("$FM_CREW_STATE_BIN" "$id" 2>/dev/null) || true
   case "$line" in state:*) ;; *) return 1 ;; esac
   state=${line#state: }; state=${state%% *}
   src=${line#*source: }; src=${src%% *}
-  case "$line" in *"$FM_CLASSIFY_RUN_STALLED_MARKER"*) moving=stalled ;; esac
-  printf '%s %s %s' "$state" "$src" "$moving"
+  printf '%s %s' "$state" "$src"
 }
 
 # Classify WHY an idle/stale crew MIGHT be safely absorbed instead of surfaced,
@@ -1893,9 +1889,9 @@ crew_state_fields() {  # <id>
 # NOT a pure read: fm-crew-state.sh may make a bounded no-mistakes call, so callers
 # run it only on no-verb signal and first-sighting stale paths, never every wake.
 crew_absorb_class() {  # <id>
-  local id=$1 fields state src rest
+  local id=$1 fields state src
   fields=$(crew_state_fields "$id") || { printf 'none'; return; }
-  state=${fields%% *}; rest=${fields#* }; src=${rest%% *}
+  state=${fields%% *}; src=${fields#* }
   if [ "$state" = paused ]; then printf 'paused'; return; fi
   if [ "$state" = working ]; then
     case "$src" in run-step|pane) printf 'working'; return ;; esac
@@ -1922,38 +1918,6 @@ crew_is_provably_working() {  # <id>
 # escalating a possible wedge.
 crew_is_paused() {  # <id>
   [ "$(crew_absorb_class "$1")" = paused ]
-}
-
-# 0 if crew <id>'s no-mistakes PIPELINE currently owns the work: the authoritative
-# current state is `working` attributed to the run-step source, not to the crew's
-# own pane. That is a strictly narrower claim than crew_is_provably_working, and
-# the distinction is the whole point: while a pipeline step runs, the daemon is
-# doing the work and the crew's pane is SUPPOSED to be idle, so an idle pane is
-# expected behavior rather than a missing heartbeat.
-#
-# This predicate does NOT rule out a busy pane, and callers must not assume it
-# does: bin/fm-crew-state.sh evaluates the run step BEFORE it reads busy state, so
-# a busy crewmate with an active run answers 0 here too. Only an idle pane is
-# explained by pipeline ownership; a busy pane is the agent itself, with its own
-# separate bound, so whether this answer may defer an escalation belongs to the
-# caller. fm-watch.sh's wedge_timer_check owns that decision through its
-# pipeline-eligible parameter, and its busy-turn caller opts out.
-# It also requires the run to be MOVING, not merely present. An active ledger row
-# is evidence a run EXISTS; a step the pipeline's own client has not seen activity
-# on, or a coarse row with no step table to judge, is not evidence anything is
-# executing it. Without that bound an orphaned or daemon-dead run converted a
-# 240s wedge escalation into a four-hour recheck - the same shape as every other
-# defect this alarm work exists to close, where liveness is inferred from a signal
-# that only proves something exists.
-# The claim then expires on its own the moment the pipeline stops owning the work
-# or stops moving: a gate parks the run, a terminal step reports done or failed,
-# the daemon dies so activity goes quiet, each of which answers 1 here and
-# restores the ordinary escalation schedule. That self-expiry is why this may
-# bound a wedge alarm without weakening it.
-crew_pipeline_owns_work() {  # <id>
-  local fields
-  fields=$(crew_state_fields "$1") || return 1
-  [ "$fields" = "working run-step moving" ]
 }
 
 # Directories excluded from the worktree write probe below, and the depth it walks.

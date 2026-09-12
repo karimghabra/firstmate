@@ -72,13 +72,6 @@
 #      FAILED record whose daemon an explicit probe proves down reads unknown,
 #      never failed: an instrument failure must not read as work failure
 #      (nm_daemon_probe_down).
-#      A `working` run-step verdict additionally carries
-#      FM_CLASSIFY_RUN_STALLED_MARKER in its detail whenever this crew's OWN run
-#      cannot be shown to be moving: a quiet step on the full path, or any coarse
-#      row, whose ledger carries no run id to ask about. The state stays working -
-#      the attribution is still authoritative - but the marker is what lets the
-#      wedge alarm's deferral require a run that is MOVING rather than one that
-#      merely exists.
 #   3. Reconcile the status log: if its last line says needs-decision/blocked but
 #      the run-step shows the run moved on, the log is deterministically stale and
 #      is flagged superseded. A genuinely parked run plus a needs-decision log
@@ -943,31 +936,6 @@ if [ "$HAVE_RUN" = 1 ]; then
       ;;
   esac
 
-  # An active ledger row is evidence a run EXISTS, not evidence it is progressing.
-  # A `working` verdict from that row is still the authoritative attribution and
-  # stays one - every existing reader is unchanged - but it carries a marker when
-  # this crew's OWN run shows no recent activity, so the one reader that may buy a
-  # crew out of the wedge ladder (crew_pipeline_owns_work) can require movement
-  # rather than mere presence. Otherwise a run whose daemon died mid-step kept
-  # converting a 240s escalation into a four-hour recheck.
-  #
-  # WHOSE run is the whole question. nm_run_activity_is_recent parses $RUN_OUT,
-  # which holds this crew's own run ONLY on the full path. On the coarse path
-  # $RUN_OUT is whatever a bare `axi status` answered with - another crew's run
-  # when that crew's branch won the most-recently-touched race, or this branch's
-  # superseded terminal run - so reading it there decides movement from the wrong
-  # object, and wrongly in both directions: a fresh foreign run would hand this
-  # crew a four-hour deferral it never earned.
-  # A targeted per-run read is not available to repair it: the coarse answer comes
-  # from the `no-mistakes runs` ledger, whose rows carry a status word, branch,
-  # head and time but no run id, and `axi status --run` needs an id. With no way
-  # to ask about this crew's own run, movement is UNKNOWN - and unknown movement
-  # is not evidence of movement, so the coarse path never earns the deferral. That
-  # only ever costs a deferral; it can never silence an alarm.
-  if [ "$RUN_STATE" = working ] \
-    && { [ "$RUN_SOURCE" = coarse ] || ! nm_run_activity_is_recent; }; then
-    RUN_DETAIL="$RUN_DETAIL${SEP}$FM_CLASSIFY_RUN_STALLED_MARKER"
-  fi
   emit "$RUN_STATE" run-step "$RUN_DETAIL"
 fi
 
