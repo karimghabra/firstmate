@@ -1,0 +1,148 @@
+LIVE DRIVE - stand-down state at head bf8b127
+tmux: tmux 3.4   host: Linux 6.6.87.2-microsoft-standard-WSL2
+isolated firstmate home: /tmp/fmlive-nd/home   isolated tmux socket: /tmp/fmlive-nd/tmux/default
+fmlive:fm-stop is a REAL tmux window whose agent was stopped; its shell survives
+
+
+========== 1  RECORD: the state the fleet could not express ==========
+$ (tmux backend agent-state probe) -> dead
+$ bin/fm-crew-state.sh stop   (before)
+state: unknown · source: pane · harness state unavailable (unknown missing)
+
+$ bin/fm-stand-down.sh stop --reason "captain stopped it; PR 9 pushed, waiting to land"
+recorded: stop is stood down (open, no agent by intent): captain stopped it; PR 9 pushed, waiting to land
+[exit 0]
+
+--- the two halves of the state ---
+$ cat state/stop.stood-down
+recorded=1789206793
+reason=captain stopped it; PR 9 pushed, waiting to land
+$ cat state/stop.status
+done: PR 9 pushed, waiting on the captain to land it
+stood-down: captain stopped it; PR 9 pushed, waiting to land
+
+$ bin/fm-crew-state.sh stop   (after)
+state: paused · source: stood-down · stopped by intent since 2026-09-12 09:53Z: captain stopped it; PR 9 pushed, waiting to land
+
+
+========== 2  IT RECORDS NO COMPLETION AND DISCARDS NO WORK ==========
+$ tasks-axi list --file home/data/backlog.md
+count: 1
+tasks[1]{id,state,kind,repo,title}:
+  stop,in_flight,ship,"-","stand-down live drive: PR 9 pushed, not landed"
+$ git -C wt log --oneline -1 && git -C wt status --short
+a67cdbc pushed, not landed
+(clean: the branch and its unlanded commit are untouched)
+
+
+========== 3  THE SESSION-START DIGEST STOPS CALLING IT A RECOVERY TRIGGER ==========
+$ bin/fm-session-start.sh | grep ^endpoint:
+endpoint: stood down since 2026-09-12 09:53Z, no agent by intent - not a recovery trigger (backend=tmux window=fmlive:fm-stop): captain stopped it; PR 9 pushed, waiting to land
+
+
+========== 4  THE ALARM: the same idle pane, with and without the record ==========
+FM_STALE_ESCALATE_SECS=1 for both halves, so the wedge ladder is as eager as it can be.
+
+--- 4a  WITH the stand-down recorded (record aged past the re-surface cadence) ---
+round 1 -> stale: fmlive:fm-stop (stood down 5002s, no agent by intent - captain stopped it; PR 9 pushed, waiting to land; rechecked on a long cadence not a wedge, and it clears when the work resumes or lands)
+round 2 -> (no wake - the watcher polled for 15s and never woke firstmate)
+round 3 -> (no wake - the watcher polled for 15s and never woke firstmate)
+$ ls state/.paused-fmlive_fm-stop state/.wedge-escalations-fmlive_fm-stop
+  .paused-fmlive_fm-stop      present (the absorb survived the loop-top reconciliation)
+  .wedge-escalations-fmlive_fm-stop  absent (the wedge ladder never advanced)
+$ what the watcher decided on every other poll (triage log, timestamps and ages folded):
+       16 absorbed stale (stood down, no agent by intent, age Ns): fmlive:fm-stop
+
+--- 4b  ADVERSARIAL: release it, and the wedge ladder is exactly what it was ---
+$ bin/fm-stand-down.sh stop --release
+released: stop is no longer stood down
+$ tail -1 state/stop.status -> note: stand-down released by firstmate; this task declares no wait
+round 1 -> stale: fmlive:fm-stop
+round 2 -> stale: fmlive:fm-stop (idle 1s, possible wedge, escalation 1)
+round 3 -> stale: fmlive:fm-stop (idle 1s, possible wedge, escalation 2)
+round 4 -> stale: fmlive:fm-stop (idle 1s, possible wedge, escalation 3, demand-deep-inspection: same pane has wedge-escalated 3 times in a row - do not re-absorb on the run-step/pane state alone; read the pane and confirm the worker itself is moving)
+
+
+========== 5  HEAD FIX (bf8b127): a RECORD with no DECLARATION is not a pause ==========
+The pane was resumed without a relaunch, so the record survived; the restarted agent
+wrote its own working: line and then exited. fm-crew-state.sh honors the record (the
+agent really is gone), so the crew verdict is paused - but the log declares no wait.
+
+$ bin/fm-crew-state.sh stop
+state: paused · source: stood-down · stopped by intent since 2026-09-12 08:30Z: captain stopped it; PR 9 pushed, waiting to land
+$ tail -1 state/stop.status -> working: reindexing the backlog
+
+--- 5a  the PARENT commit (c50ec8b) watcher on this fixture: the defect ---
+round 1 -> stale: fmlive:fm-stop (paused 5004s, awaiting external - declared pause, rechecked on a long cadence not a wedge; confirm the wait still holds)
+round 2 -> stale: fmlive:fm-stop (paused 5005s, awaiting external - declared pause, rechecked on a long cadence not a wedge; confirm the wait still holds)
+round 3 -> stale: fmlive:fm-stop (paused 5007s, awaiting external - declared pause, rechecked on a long cadence not a wedge; confirm the wait still holds)
+  .paused-fmlive_fm-stop present - and the next poll's reconciliation strips it, which is why every round wakes again
+
+--- 5b  THIS head (bf8b127) on the identical fixture ---
+round 1 -> stale: fmlive:fm-stop
+round 2 -> stale: fmlive:fm-stop (idle 1s, possible wedge, escalation 1)
+round 3 -> stale: fmlive:fm-stop (idle 1s, possible wedge, escalation 2)
+  .paused-fmlive_fm-stop absent (no pause marker for a wait nobody declared)
+  .wedge-escalations-fmlive_fm-stop = 2  (the ordinary ladder, once per threshold)
+
+
+========== 6  ADVERSARIAL: a record nobody can parse restores the ordinary alarm ==========
+$ cat state/stop.stood-down -> reason=captain stopped it
+$ tail -1 state/stop.status -> stood-down: captain stopped it
+$ bin/fm-crew-state.sh stop
+state: unknown · source: pane · harness state unavailable (unknown missing)
+round 1 -> stale: fmlive:fm-stop
+round 2 -> stale: fmlive:fm-stop (idle 2s, possible wedge, escalation 1)
+
+
+========== 7  ADVERSARIAL: it must not quieten a crewmate that is actually running ==========
+$ (the agent is started again in the same pane, by a route that is not a relaunch)
+$ tmux list-panes -t fmlive:fm-stop -F "#{pane_current_command}" -> claude
+$ (tmux backend agent-state probe) -> alive
+
+$ bin/fm-stand-down.sh stop --reason "quiet this alarm"
+error: stop's agent is still running; stop it first (bin/fm-control.sh stop exit), then record why
+[exit 1]
+$ ls state/stop.stood-down
+ls: cannot access '/tmp/fmlive-nd/home/state/stop.stood-down': No such file or directory
+$ cat state/stop.status   (untouched)
+done: PR 9 pushed, waiting on the captain
+
+--- 7b  and a record written while it WAS stopped never covers for it afterwards ---
+$ bin/fm-crew-state.sh stop
+state: unknown · source: pane · harness state unavailable (unknown missing)
+$ bin/fm-session-start.sh | grep ^endpoint:
+endpoint: alive (backend=tmux window=fmlive:fm-stop)
+round 1 -> stale: fmlive:fm-stop
+round 2 -> stale: fmlive:fm-stop (idle 2s, possible wedge, escalation 1)
+round 3 -> stale: fmlive:fm-stop (idle 1s, possible wedge, escalation 2)
+  .paused-fmlive_fm-stop absent (a live agent is never absorbed on the stand-down cadence)
+
+
+========== 8  ADVERSARIAL: the argument and backend refusals ==========
+$ bin/fm-stand-down.sh stop --reason "captain stopped it" --release
+error: --reason and --release are opposite requests; pass exactly one
+[exit 2]
+$ bin/fm-stand-down.sh stop --release --reason "captain stopped it"
+error: --reason and --release are opposite requests; pass exactly one
+[exit 2]
+$ bin/fm-stand-down.sh stop
+error: one of --reason or --release is required
+[exit 2]
+$ bin/fm-stand-down.sh stop --reason "<two lines>"
+error: --reason must be one line of at most 200 printable characters
+[exit 2]
+$ bin/fm-stand-down.sh ../escape --reason x
+error: invalid task id
+[exit 2]
+$ bin/fm-stand-down.sh zel --reason "captain stopped it"   (a backend that cannot prove liveness)
+error: task zel runs on the zellij backend, which has no recovery-grade agent-state classifier, so it cannot prove whether an agent is still alive; refusing rather than recording a stand-down that could be quietening a live wedge (only tmux and herdr can prove it)
+[exit 1]
+$ bin/fm-stand-down.sh nowin --reason "captain stopped it"   (no endpoint recorded)
+error: task nowin's metadata records no endpoint, so nothing here can prove whether an agent is still running and no reader could honor the record; reconcile the task's ownership first with the stuck-crewmate-recovery playbook (AGENTS.md section 5), which owns a missing window
+[exit 1]
+$ bin/fm-stand-down.sh ghost --reason x   (no such task)
+error: ghost has no task record in this home
+[exit 1]
+
+=== END OF LIVE DRIVE ===

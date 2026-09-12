@@ -1,0 +1,19 @@
+WORKTREE-WRITE DEFERRAL LIVE DRIVE - head bf8b127
+fmlive:fm-busy: a real tmux window with a quiet pane; its task worktree is /tmp/fmlive-wd/wt
+FM_STALE_ESCALATE_SECS=3
+
+--- first sighting of the quiet pane ---
+stale: fmlive:fm-busy
+
+--- the crew keeps writing its own worktree while the pane stays quiet ---
+(no wake - the watcher polled for 30s and never woke firstmate)
+$ ls state/.writing-since-fmlive_fm-busy -> present
+$ what the watcher decided (triage log, timestamps and ages folded):
+        9 absorbed non-terminal stale (worktree written since the idle window opened, idle Ns): fmlive:fm-busy
+        1 absorbed non-terminal stale timer reset: fmlive:fm-busy
+
+--- and it is a DEFERRAL, not a silencer: the writes stop, the alarm returns ---
+stale: fmlive:fm-busy (idle 3s, possible wedge, escalation 1)
+$ cat state/.wedge-escalations-fmlive_fm-busy -> 1
+
+=== END ===
