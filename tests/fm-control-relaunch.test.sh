@@ -1544,6 +1544,37 @@ test_spawn_relaunch_refusal_preserves_the_stand_down() {
   pass "fm-spawn --relaunch: a refused relaunch leaves a recorded stand-down exactly as it found it"
 }
 
+# The positive half of the retirement, and the one the feature actually promises:
+# a relaunch that PROCEEDS retires both halves of the stand-down. Its sibling above
+# pins only the refusal direction, which is why an ordering bug - the retirement
+# sitting ahead of pre-flight refusals - survived in this branch until a review
+# caught it by reading. Both halves matter: the record must be gone so no reader
+# honors it beside the new agent, and the log must stop declaring the wait so the
+# relaunched worker's pane is not absorbed on the four-hour cadence until it
+# happens to write a line of its own.
+test_spawn_relaunch_retires_the_stand_down() {
+  local dir home last
+  dir=$(new_case standdownok rl31)
+  add_ship_task "$dir" rl31 claude
+  home="$dir/home"
+  printf 'zsh' > "$dir/fake/command"
+  printf 'done: PR 42 pushed, awaiting the captain\nstood-down: captain stopped this crewmate on purpose\n' \
+    > "$home/state/rl31.status"
+  printf 'recorded=%s\nreason=captain stopped this crewmate on purpose\n' "$(date +%s)" \
+    > "$home/state/rl31.stood-down"
+
+  run_spawn "$dir" rl31 --relaunch >/dev/null \
+    || fail "a relaunch past every pre-flight refusal should proceed"
+  assert_absent "$home/state/rl31.stood-down" \
+    "a completed relaunch must retire the stand-down record"
+  last=$(grep -v '^[[:space:]]*$' "$home/state/rl31.status" | tail -1)
+  case "$last" in
+    stood-down:*) fail "a relaunched worker's log still declares the stand-down: $last" ;;
+  esac
+  assert_grep "PR 42 pushed" "$home/state/rl31.status" "the worker's own lines survive the retirement"
+  pass "fm-spawn --relaunch: a completed relaunch retires both halves of the stand-down"
+}
+
 test_spawn_relaunch_refuses_a_pane_outside_the_worktree() {
   local dir out rc
   dir=$(new_case wrongcwd rl18)
@@ -1642,6 +1673,7 @@ test_spawn_relaunch_refuses_a_pending_authoritative_close
 test_spawn_relaunch_refuses_contradicting_flags
 test_spawn_relaunch_refuses_an_unrecorded_task
 test_spawn_relaunch_refusal_preserves_the_stand_down
+test_spawn_relaunch_retires_the_stand_down
 test_spawn_relaunch_refuses_a_pane_outside_the_worktree
 test_relaunch_reverifies_an_already_in_flight_item_instead_of_rewriting_it
 test_relaunch_moves_a_drifted_item_back_in_flight

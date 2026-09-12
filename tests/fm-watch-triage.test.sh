@@ -1882,11 +1882,11 @@ test_stale_terminal_status_overridden_by_active_run() {
 # A provably-working crew legitimately sits on a static pane for a while, so a
 # non-terminal stale is absorbed and only the wedge timer eventually escalates it
 # - the low-churn behavior preserved.
-# The evidence here is a BUSY PANE, which is the agent itself working. That is a
-# different claim from the pipeline owning the work, and it deliberately keeps the
-# ordinary schedule: only run-step ownership earns the deferral
-# (test_wedge_defers_while_the_pipeline_owns_the_work), because only then is
-# something other than this agent doing the work.
+# The evidence here is a BUSY PANE, which is the agent itself working, and it keeps
+# the ordinary escalation schedule. Nothing about an active no-mistakes run step
+# changes that: there is no run-step deferral, so a crew whose pipeline owns the
+# work escalates on this same schedule. The one deferral that exists is the
+# worktree-write probe, which this case does not exercise.
 
 test_nonterminal_stale_provably_working_absorbed_then_escalated() {
   local dir state fakebin out drain_out capture_file window key pane_hash sig pid
@@ -2890,9 +2890,9 @@ test_paused_authoritative_working_preserves_wedge_timer() {
   printf '1\n' > "$state/.count-$key"
   : > "$state/.paused-$key"
   # A busy PANE keeps this test on its own subject - the wedge timer a declared
-  # pause's working override preserves, and the escalation it still reaches. Run-step
-  # ownership is the separate, narrower claim that earns a deferral instead
-  # (test_wedge_defers_while_the_pipeline_owns_the_work).
+  # pause's working override preserves, and the escalation it still reaches. The
+  # crew-state source is stubbed rather than left to vary because the verdict, not
+  # its provenance, is what this case turns on; no source earns a deferral here.
   export FM_FAKE_CREW_STATE='state: working · source: pane · harness busy'
 
   PATH="$fakebin:$PATH" FM_FAKE_TMUX_WINDOW="$window" FM_FAKE_TMUX_CAPTURE="$capture_file" \
@@ -2944,9 +2944,9 @@ test_wedge_escalation_marks_demand_deep_inspection_after_threshold() {
   pane_hash=$(hash_text "idle building output")
   printf '%s' "$pane_hash" > "$state/.hash-$key"
   printf '1\n' > "$state/.count-$key"
-  # A busy PANE keeps this test on its own subject - the escalation ladder. A crew
-  # whose run step owns the work is deferred instead of escalated, which is the
-  # separate contract test_wedge_defers_while_the_pipeline_owns_the_work pins.
+  # A busy PANE keeps this test on its own subject - the escalation ladder. The
+  # crew-state source is stubbed rather than left to vary because the verdict, not
+  # its provenance, is what this case turns on; no source earns a deferral here.
   export FM_FAKE_CREW_STATE='state: working · source: pane · harness busy'
 
   # Priming round: first sighting of this stale hash classifies and absorbs it
@@ -3102,13 +3102,13 @@ test_busy_pane_stable_hash_escalates_past_turn_age_bound() {
   pass "a busy worker with a stable pane hash still escalates once its completed-turn age reaches the bound"
 }
 
-# The sibling half of the case above, and the reason the opt-out is a flag on BOTH
-# probes rather than on the run-step one. A no-mistakes fix round edits source under
-# the crew's OWN recorded worktree, so a busy pane hung mid-turn while its pipeline
-# fixes code answers the worktree-write probe too. With only the run-step probe
-# gated, the escalation was replaced by a worktree-write deferral recheck once per
-# PAUSE_RESURFACE_SECS - no escalation count, no demand-deep-inspection - which is
-# the exact narrowing the opt-out exists to prevent, reached by a different door.
+# The sibling half of the case above, and the reason the busy-turn caller opts out
+# of the deferral at all. A no-mistakes fix round edits source under the crew's OWN
+# recorded worktree, so a busy pane hung mid-turn while its pipeline fixes code
+# answers the worktree-write probe. Ungated, the escalation would be replaced by a
+# worktree-write deferral recheck once per PAUSE_RESURFACE_SECS - no escalation
+# count, no demand-deep-inspection - which is the exact narrowing the opt-out
+# exists to prevent.
 test_busy_turn_bound_escalates_even_while_its_worktree_is_written() {
   local dir state fakebin out drain_out capture_file window key pane_hash sig pid wt back
   dir=$(make_case busy-bound-writing); state="$dir/state"; fakebin="$dir/fakebin"

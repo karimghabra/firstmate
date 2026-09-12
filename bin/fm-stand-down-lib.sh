@@ -108,8 +108,8 @@
 #     mislabeling a failure, not using this feature.
 #
 # Sourced by bin/fm-stand-down.sh, bin/fm-crew-state.sh, bin/fm-session-start.sh,
-# bin/fm-teardown.sh, bin/fm-spawn.sh, bin/fm-supervise-daemon.sh,
-# bin/fm-watch.sh, and bin/fm-push-transition-lib.sh.
+# bin/fm-teardown.sh, bin/fm-spawn.sh, bin/fm-supervise-daemon.sh, and
+# bin/fm-watch.sh.
 
 # The record's path for <state-dir> <task-id>. Callers that already validated the
 # task id use this; it performs no validation of its own.
