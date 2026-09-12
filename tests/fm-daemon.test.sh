@@ -809,6 +809,65 @@ test_stood_down_wait_resurfaces_on_the_pause_cadence() {
   pass "a stood-down task re-surfaces once per pause cadence in away mode instead of being absorbed forever"
 }
 
+# The record half of the away-mode gate. bin/fm-stand-down-lib.sh promises that a
+# record nobody can parse "restores the ordinary ALARM, not merely the reader's
+# verdict" - and that promise has to hold in whichever supervisor is running, or
+# it is one sentence that is true in the watcher and a lie in the daemon. The
+# declaration alone therefore does not earn the pause routing here: a half-written
+# record falls through to the ordinary wedge aging. This checks a local file read,
+# not a backend probe, so the classifier's no-fm-crew-state.sh cost rule is intact.
+# The LIVENESS half is deliberately absent here and documented as a gap; this case
+# pins only what is actually protected.
+test_stood_down_with_an_unreadable_record_still_alarms_in_away_mode() {
+  local dir state fakebin task win pane key verdict
+  dir=$(make_supercase stood-down-corrupt-record)
+  state="$dir/state"; fakebin="$dir/fakebin"
+  task=stood-corrupt; win="sess:fm-$task"; pane="$dir/pane.txt"
+  key=$(printf '%s' "$task" | tr ':/.' '___')
+  fm_write_meta "$state/$task.meta" "window=$win" "backend=tmux"
+  # A non-captain-relevant line beneath the declaration, so the actionable-span
+  # check above the declared-wait arm finds nothing and this case stays about the
+  # record gate rather than about an unread delivery.
+  printf 'working: implementation committed, handed to validation\nstood-down: captain stopped this crewmate on purpose\n' \
+    > "$state/$task.status"
+  printf 'idle prompt $\n' > "$pane"
+
+  # Control: a well-formed record DOES earn the pause routing, so the corrupt case
+  # below is isolated to the record rather than to the declaration or the fixture.
+  printf 'recorded=%s\nreason=captain stopped this crewmate on purpose\n' "$(date +%s)" \
+    > "$state/$task.stood-down"
+  verdict=$(FM_STATE_OVERRIDE="$state" classify_stale "$win" "$state")
+  case "$verdict" in
+    pause\|*) ;;
+    *) fail "a backed stand-down did not take the pause routing: $verdict" ;;
+  esac
+  case "$verdict" in
+    *"no agent by intent"*) ;;
+    *) fail "the backed stand-down verdict did not name the deliberate stop: $verdict" ;;
+  esac
+
+  # Half-written: the epoch never landed, so nothing backs the declaration.
+  printf 'recorded=notanumber\nreason=captain stopped this crewmate on purpose\n' \
+    > "$state/$task.stood-down"
+  verdict=$(FM_STATE_OVERRIDE="$state" classify_stale "$win" "$state")
+  case "$verdict" in
+    pause\|*) fail "an unreadable stand-down record still absorbed the pane: $verdict" ;;
+  esac
+  case "$verdict" in
+    *"awaiting external"*) fail "an unreadable record fell through to the external-wait wording: $verdict" ;;
+  esac
+
+  # And the consequence the verdict exists for: the wake records wedge aging
+  # rather than a pause marker, so housekeeping escalates it on the ordinary bound.
+  LOG="$dir/daemon.log" FM_STATE_OVERRIDE="$state" \
+    handle_wake "stale: $win (idle 250s, possible wedge, escalation 2)" "$state"
+  [ ! -e "$state/.subsuper-paused-$key" ] \
+    || fail "an unreadable stand-down record recorded a pause marker, putting a live pane on the long cadence"
+  [ -e "$state/.subsuper-stale-$key" ] \
+    || fail "an unreadable stand-down record left no wedge aging behind, so nothing escalates it"
+  pass "an unreadable stand-down record keeps its pane on the ordinary wedge schedule in away mode"
+}
+
 test_stale_terminal_escalates() {
   local dir state out
   dir=$(make_supercase stale-terminal)
@@ -2726,6 +2785,7 @@ test_stale_transient_self_records_marker
 test_stale_diagnostic_wedge_survives_busy_housekeeping
 test_enriched_wedge_under_declared_wait_uses_pause_cadence
 test_stood_down_wait_resurfaces_on_the_pause_cadence
+test_stood_down_with_an_unreadable_record_still_alarms_in_away_mode
 test_stale_terminal_escalates
 test_stale_actionable_wait_escalates_and_keeps_pause_cadence
 test_stale_paused_classifies_pause

@@ -908,13 +908,18 @@ wedge_defer() {  # <window> <since-file> <triage-label> <idle-age> <pipeline|wri
   [ -e "$dsf" ] || date +%s > "$dsf"
   dage=$(age_of "$dsf")
   date +%s > "$since_file"
+  # <dage> is the age of the whole quiet stretch, which the two evidence kinds
+  # share and may have carried in turn, so it is reported as the stretch's own
+  # length and the evidence carrying THIS threshold is named separately. Spending
+  # it as "the pipeline has owned the work for <dage>s" would state a duration
+  # that is false whenever the other probe carried part of the stretch.
   case "$evidence" in
     pipeline)
       detail="validation pipeline owns the work"
-      reason="its validation pipeline has owned the work for ${dage}s, rechecked on a long cadence not a wedge; confirm the pipeline is still progressing" ;;
+      reason="deferred ${dage}s, currently explained by its validation pipeline owning the work, rechecked on a long cadence not a wedge; confirm the pipeline is still progressing" ;;
     *)
       detail="worktree written since the idle window opened"
-      reason="writing its worktree for ${dage}s, rechecked on a long cadence not a wedge; confirm the writes are real progress" ;;
+      reason="deferred ${dage}s, currently explained by writes to its own task worktree, rechecked on a long cadence not a wedge; confirm the writes are real progress" ;;
   esac
   resurface_absorbed "$win" "$STATE/.defer-resurfaced-$key" "$dage" \
     "stale: $win (idle ${age}s, $reason)"
@@ -2314,25 +2319,19 @@ EOF
           # authoritative source fm-crew-state.sh itself already prioritizes
           # over the log) a chance to override before trusting the log.
           if [ "$(cat "$sf" 2>/dev/null || true)" != "$h" ]; then
-            # ONE crew-state read for both verdicts. crew_absorb_class is the
-            # costly, deliberately first-sighting-only read (it may make a bounded
-            # no-mistakes call), so the two questions this branch asks of it -
-            # provably working, or in an admitted wait - are asked together, the
-            # way the non-terminal path below already asks them.
-            absorb_class=$(crew_absorb_class "$task")
-            if [ "$absorb_class" = working ]; then
+            # ONE crew-state read, taken once per distinct stale hash: this is the
+            # costly, deliberately first-sighting-only check (it may make a bounded
+            # no-mistakes call). Reaching here means the log's LAST line is
+            # captain-relevant, which no declared wait ever is, so a declared-wait
+            # verdict cannot arise on this path and is not asked for: a pause flag
+            # written under a captain-relevant line would be stripped by the
+            # loop-top reconciliation on the very next poll anyway, taking the
+            # re-surface throttle with it.
+            if crew_is_provably_working "$task"; then
               printf '%s' "$h" > "$sf"
               date +%s > "$ssf"
               clear_defer_tracking "$key"
               triage_log "absorbed stale (provably working, overriding a stale captain-relevant status): $w"
-            elif [ "$absorb_class" = paused ]; then
-              # A wait the crew state admits while the LOG's last line still reads
-              # captain-relevant: the log moved on past the declaration (a worker
-              # that appended `done: PR ...` after it). Without this branch that
-              # line would re-alarm on every new pane hash for as long as the wait
-              # lasted. The same absorber and the same long cadence as the idle
-              # path, so it still cannot rot invisibly.
-              handle_paused_stale "$w" "$task" "$h"
             elif captain_call_stale_bound "$key" "$task"; then
               # The line is captain-relevant and stays so, but the backlog says
               # the captain already holds this work: further NEW pane hashes with

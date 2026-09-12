@@ -3137,7 +3137,7 @@ test_busy_turn_bound_escalates_even_with_an_active_run_step() {
   wait_for_exit "$pid" 100 || fail "an active run step suppressed the busy-turn bound escalation"
   grep -F "stale: $window" "$out" >/dev/null || fail "the busy-turn bound did not print its stale wake"
   grep -F "possible wedge" "$out" >/dev/null || fail "the busy-turn bound did not flag a possible wedge"
-  grep -F "validation pipeline has owned the work" "$out" >/dev/null \
+  grep -F "currently explained by its validation pipeline owning the work" "$out" >/dev/null \
     && fail "a busy pane past its turn bound was deferred as pipeline-owned"
   [ ! -e "$state/.defer-since-$key" ] || fail "a busy pane past its turn bound opened a pipeline-deferral chain"
   FM_STATE_OVERRIDE="$state" "$DRAIN" > "$drain_out" 2>/dev/null || fail "drain after the busy-turn escalation failed"
@@ -3150,7 +3150,7 @@ test_busy_turn_bound_escalates_even_with_an_active_run_step() {
 # probes rather than on the run-step one. A no-mistakes fix round edits source under
 # the crew's OWN recorded worktree, so a busy pane hung mid-turn while its pipeline
 # fixes code answers the worktree-write probe too. With only the run-step probe
-# gated, the escalation was replaced by a "writing its worktree" recheck once per
+# gated, the escalation was replaced by a worktree-write deferral recheck once per
 # PAUSE_RESURFACE_SECS - no escalation count, no demand-deep-inspection - which is
 # the exact narrowing the opt-out exists to prevent, reached by a different door.
 test_busy_turn_bound_escalates_even_while_its_worktree_is_written() {
@@ -3191,7 +3191,7 @@ test_busy_turn_bound_escalates_even_while_its_worktree_is_written() {
   wait_for_exit "$pid" 100 || fail "a written worktree suppressed the busy-turn bound escalation"
   grep -F "stale: $window" "$out" >/dev/null || fail "the busy-turn bound did not print its stale wake"
   grep -F "possible wedge" "$out" >/dev/null || fail "the busy-turn bound did not flag a possible wedge"
-  grep -F "writing its worktree" "$out" >/dev/null \
+  grep -F "currently explained by writes to its own task worktree" "$out" >/dev/null \
     && fail "a busy pane past its turn bound was deferred as writing its worktree"
   [ ! -e "$state/.defer-since-$key" ] || fail "a busy pane past its turn bound opened a deferral chain"
   [ "$(cat "$state/.wedge-escalations-$key" 2>/dev/null || true)" = 1 ] \
@@ -3242,7 +3242,7 @@ test_deferral_chains_do_not_leak_age_across_a_switch() {
   wait_for_exit "$pid" 100 \
     || fail "switching evidence restarted the stretch, so its due re-surface never fired: $(cat "$out")"
   grep -F "stale: $window" "$out" >/dev/null || fail "the due re-surface printed no stale wake"
-  grep -F "validation pipeline has owned the work" "$out" >/dev/null \
+  grep -F "currently explained by its validation pipeline owning the work" "$out" >/dev/null \
     || fail "the re-surface did not name the evidence that carried this threshold"
   grep -F "possible wedge" "$out" >/dev/null && fail "a bounded re-surface was mislabeled a possible wedge"
   [ ! -e "$state/.wedge-escalations-$key" ] || fail "a bounded re-surface advanced the wedge escalation counter"
@@ -4253,7 +4253,7 @@ test_pipeline_deferral_resurfaces_on_the_bounded_cadence() {
   pid=$!
   wait_for_exit "$pid" 100 || fail "a long-running pipeline deferral never re-surfaced on the bounded cadence"
   grep -F "stale: $window" "$out" >/dev/null || fail "the pipeline-deferral recheck did not print a stale wake"
-  grep -F "validation pipeline has owned the work" "$out" >/dev/null || fail "the pipeline-deferral recheck was not labeled as such"
+  grep -F "currently explained by its validation pipeline owning the work" "$out" >/dev/null || fail "the pipeline-deferral recheck was not labeled as such"
   grep -F "possible wedge" "$out" >/dev/null && fail "a pipeline-deferral recheck was mislabeled a possible wedge"
   [ -e "$state/.defer-resurfaced-$key" ] || fail "the pipeline-deferral re-surface throttle marker was not recorded"
   [ ! -e "$state/.wedge-escalations-$key" ] || fail "a pipeline-deferral recheck advanced the wedge escalation counter"
@@ -4332,7 +4332,7 @@ test_write_deferral_resurfaces_on_the_bounded_cadence() {
   pid=$!
   wait_for_exit "$pid" 100 || fail "a long-running write deferral never re-surfaced on the bounded cadence"
   grep -F "stale: $window" "$out" >/dev/null || fail "the write-deferral recheck did not print a stale wake"
-  grep -F "writing its worktree" "$out" >/dev/null || fail "the write-deferral recheck was not labeled as such"
+  grep -F "currently explained by writes to its own task worktree" "$out" >/dev/null || fail "the write-deferral recheck was not labeled as such"
   grep -F "possible wedge" "$out" >/dev/null && fail "a write-deferral recheck was mislabeled a possible wedge"
   [ -e "$state/.defer-resurfaced-$key" ] || fail "the write-deferral re-surface throttle marker was not recorded"
   [ ! -e "$state/.wedge-escalations-$key" ] || fail "a write-deferral recheck advanced the wedge escalation counter"

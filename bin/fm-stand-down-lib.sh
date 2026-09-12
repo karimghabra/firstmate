@@ -75,6 +75,19 @@
 #     next genuine death, an unreachable or unverifiable answer is not proof of
 #     death and keeps its existing verdict, an active run step still outranks it,
 #     and bin/fm-spawn.sh's relaunch path retires it outright.
+#   - NOT PROTECTED IN AWAY MODE. While state/.afk is active the away-mode
+#     daemon (bin/fm-supervise-daemon.sh) owns triage, and its stale classifier
+#     is deliberately probe-free: it never asks the backend whether an agent is
+#     alive. It therefore trusts a `stood-down:` declaration from the status LOG
+#     alone for liveness. A live worker - including a wedged one - under a
+#     stand-down record IS NOT ESCALATED there; it takes the four-hour recheck
+#     cadence instead of the wedge ladder, for as long as away mode lasts. The
+#     RECORD half is gated there (a record that does not parse falls through and
+#     keeps alarming, so the paragraph above holds in both supervisors); the
+#     LIVENESS half is not. The always-on watcher gates both. This is a known
+#     gap, written down rather than closed, because closing it means putting a
+#     backend probe inside a classifier whose cost contract forbids one - a
+#     design decision filed as separate work.
 #   - Not enforceable here: no tool can read INTENT. An agent that crashed and
 #     one the captain stopped both leave the same dead agent, so the record asserts
 #     something only the person writing it knows. That is why the reason is
@@ -83,7 +96,7 @@
 #     mislabeling a failure, not using this feature.
 #
 # Sourced by bin/fm-stand-down.sh, bin/fm-crew-state.sh, bin/fm-session-start.sh,
-# bin/fm-teardown.sh, and bin/fm-spawn.sh.
+# bin/fm-teardown.sh, bin/fm-spawn.sh, and bin/fm-supervise-daemon.sh.
 
 # The record's path for <state-dir> <task-id>. Callers that already validated the
 # task id use this; it performs no validation of its own.
@@ -105,10 +118,12 @@ fm_stand_down_path() {  # <state-dir> <task-id>
 # This answer restores the ordinary ALARM, not merely the reader's verdict, and
 # the difference is load-bearing because the two halves of the state can disagree:
 # the log's `stood-down:` declaration would otherwise keep absorbing the pane on
-# its own while the record backing it was unreadable. bin/fm-watch.sh's
-# pause_state_class is what closes that - it refuses to admit a stood-down
-# declaration whose record does not read here, so the pane goes back on the wedge
-# schedule rather than sitting absorbed behind a record nobody can parse.
+# its own while the record backing it was unreadable. BOTH supervisors close that,
+# so the sentence above is true wherever triage happens to be running -
+# bin/fm-watch.sh's pause_state_class and bin/fm-supervise-daemon.sh's
+# classify_stale each refuse to admit a stood-down declaration whose record does
+# not read here, so the pane goes back on the wedge schedule rather than sitting
+# absorbed behind a record nobody can parse.
 fm_stand_down_read() {  # <state-dir> <task-id>
   local path line
   FM_STAND_DOWN_RECORDED=

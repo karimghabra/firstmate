@@ -181,6 +181,11 @@ FM_HOME="${FM_HOME:-${FM_ROOT_OVERRIDE:-$FM_ROOT}}"
 # for the captain is never rechecked (the watcher applies the same rule).
 # shellcheck source=bin/fm-afk-contract.sh
 . "$FM_DAEMON_DIR/fm-afk-contract.sh"
+# The stand-down record's read contract. Used for exactly one thing here: the
+# stale classifier's cheap local check that a `stood-down:` declaration is backed
+# by a record that actually parses. A plain file read, never a backend probe.
+# shellcheck source=bin/fm-stand-down-lib.sh
+. "$FM_DAEMON_DIR/fm-stand-down-lib.sh"
 
 # Supervisor-pane discovery (FM_SUPERVISOR_TARGET_DEFAULT,
 # FM_SUPERVISOR_BACKEND_DEFAULT, discover_supervisor_target,
@@ -437,12 +442,23 @@ classify_stale() {  # <window> <state> [<span-record> <span-status>]
     # reader of this log looking for a dependency that does not exist - the same
     # reason the housekeeping digest and the watcher's recheck each give it its
     # own wording.
+    #
+    # A stand-down is also the one declaration whose truth depends on a record
+    # OUTSIDE the log, so the declaration alone does not earn the pause routing
+    # here: a record that does not parse falls through to the ordinary stale
+    # classification below and keeps alarming. That is a plain local file read,
+    # so it does not touch the no-fm-crew-state.sh cost rule this classifier
+    # keeps. What this cannot check is LIVENESS - see the gap this function's
+    # caller documents, and bin/fm-stand-down-lib.sh's header.
     if status_is_stood_down "$last"; then
-      printf 'pause|stood down (no agent by intent, it clears when the work resumes or lands), rechecked on a long cadence: %s' "$last"
+      if fm_stand_down_read "$state" "$task"; then
+        printf 'pause|stood down (no agent by intent, it clears when the work resumes or lands), rechecked on a long cadence: %s' "$last"
+        return
+      fi
+    else
+      printf 'pause|paused (awaiting external), rechecked on a long cadence: %s' "$last"
       return
     fi
-    printf 'pause|paused (awaiting external), rechecked on a long cadence: %s' "$last"
-    return
   fi
   if [ -n "$last" ] && status_is_captain_relevant "$last"; then
     # Independent of free-text captain-relevant matching: a nonterminal progress

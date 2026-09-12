@@ -1291,17 +1291,6 @@ if [ "$RELAUNCH" -eq 1 ]; then
     echo "error: task $ID's endpoint reads '$RELAUNCH_STATE'; a relaunch requires a positively agent-free endpoint (stop the agent first with bin/fm-control.sh $ID exit)" >&2
     exit 1
   }
-  # A relaunch is the one supported way an existing task gets an agent back, so it
-  # is where a stand-down stops being true. Retiring it here keeps the state from
-  # ever disagreeing with the running agent - both halves, since a status log left
-  # declaring the wait would keep the relaunched worker's pane absorbed until it
-  # wrote a line of its own. Readers additionally ignore a record beside a live
-  # agent, so this is the tidy path rather than the only guard
-  # (bin/fm-stand-down-lib.sh).
-  fm_stand_down_release "$STATE" "$ID" || {
-    echo "error: task $ID's stand-down could not be retired before relaunch" >&2
-    exit 1
-  }
   RELAUNCH_PRIOR_HARNESS=$(fm_meta_get "$RELAUNCH_META" harness)
   KIND=$(fm_meta_get "$RELAUNCH_META" kind)
   [ -n "$KIND" ] || KIND=ship
@@ -1337,6 +1326,21 @@ if [ "$RELAUNCH" -eq 1 ]; then
   ARG3=${HARNESS_ARG:-$RELAUNCH_PRIOR_HARNESS}
   [ -n "$ARG3" ] || {
     echo "error: task $ID has no recorded harness; pass --harness to relaunch it" >&2
+    exit 1
+  }
+  # A relaunch is the one supported way an existing task gets an agent back, so it
+  # is where a stand-down stops being true. Retiring it takes both halves, since a
+  # status log left declaring the wait would keep the relaunched worker's pane
+  # absorbed until it wrote a line of its own. Readers additionally ignore a record
+  # beside a live agent, so this is the tidy path rather than the only guard
+  # (bin/fm-stand-down-lib.sh).
+  # LAST, after every pre-flight refusal above, because retiring it is not
+  # reversible and no rollback path restores it: a refused relaunch reports that
+  # the task is untouched, so it must leave the captain's recorded decision
+  # exactly as it found it rather than silently dropping the task back onto the
+  # two alarms the record exists to retire.
+  fm_stand_down_release "$STATE" "$ID" || {
+    echo "error: task $ID's stand-down could not be retired before relaunch" >&2
     exit 1
   }
 elif [ "$KIND" = secondmate ]; then
