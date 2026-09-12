@@ -1,0 +1,196 @@
+LIVE DRIVE - firstmate wedge alarm / stand-down state
+repo head: ffc5474   tmux: tmux 3.4   host: Linux 6.6.87.2-microsoft-standard-WSL2
+isolated firstmate home: /tmp/fmlive/home2      isolated tmux socket: /tmp/fmlive/tmux2/default
+task window fmlive:fm-harbor is a REAL tmux window; its agent is a REAL process
+
+
+========== S2  ADVERSARIAL - a stand-down must be refused while the agent is running ==========
+$ tmux list-panes -t fmlive:fm-harbor -F "#{pane_current_command}"
+claude
+$ (tmux backend agent-state probe) -> alive
+
+$ fm-stand-down.sh harbor --reason 'captain stopped this crewmate on purpose'
+error: harbor's agent is still running; stop it first (bin/fm-control.sh harbor exit), then record why
+[exit 1]
+
+--- nothing may have been written ---
+ls: cannot access '/tmp/fmlive/home2/state/harbor.stood-down': No such file or directory
+(no record)
+done: PR 118 pushed, awaiting the captain
+
+
+========== S1  Record the stand-down once the agent really is stopped ==========
+(the captain stops the agent in its pane; the tmux window and shell survive - the shape fm-control.sh exit leaves)
+$ tmux list-panes -t fmlive:fm-harbor -F "#{pane_current_command}"
+bash
+$ (tmux backend agent-state probe) -> dead
+$ (tmux backend endpoint-exists probe) -> endpoint still there
+
+$ fm-stand-down.sh harbor --reason 'captain stopped this crewmate on purpose; work pushed, not landed'
+recorded: harbor is stood down (open, no agent by intent): captain stopped this crewmate on purpose; work pushed, not landed
+[exit 0]
+
+--- the two halves of the state ---
+$ cat state/harbor.stood-down
+recorded=1789198961
+reason=captain stopped this crewmate on purpose; work pushed, not landed
+$ cat state/harbor.status
+done: PR 118 pushed, awaiting the captain
+stood-down: captain stopped this crewmate on purpose; work pushed, not landed
+
+
+========== S13 It records NO completion and discards NO work ==========
+$ ls state/
+harbor.meta
+harbor.status
+harbor.stood-down
+$ git -C wt/harbor log --oneline -1 && git -C wt/harbor status --short
+45c4ce9 harbor migration, pushed not landed
+(worktree untouched, branch untouched, no backlog transition file written)
+
+
+========== S4  fm-crew-state.sh now has a state for it ==========
+
+$ fm-crew-state.sh harbor
+state: paused · source: stood-down · stopped by intent since 2026-09-12 07:42Z: captain stopped this crewmate on purpose; work pushed, not landed
+[exit 0]
+
+
+========== S3  fm-session-start.sh stops calling it a recovery trigger ==========
+$ fm-session-start.sh | grep ^endpoint:
+endpoint: stood down since 2026-09-12 07:42Z, no agent by intent - not a recovery trigger (backend=tmux window=fmlive:fm-harbor): captain stopped this crewmate on purpose; work pushed, not landed
+
+
+========== S6  THE ALARM ITSELF - a stood-down crew across ~60 consecutive watcher polls ==========
+(the defect this replaced: the absorb's pause marker was stripped every poll, so the pane re-alarmed as a first sighting EVERY cycle)
+t+05s  watcher still in its poll loop; wakes delivered to firstmate: 0
+t+10s  watcher still in its poll loop; wakes delivered to firstmate: 0
+t+15s  watcher still in its poll loop; wakes delivered to firstmate: 0
+t+20s  watcher still in its poll loop; wakes delivered to firstmate: 0
+t+25s  watcher still in its poll loop; wakes delivered to firstmate: 0
+t+30s  watcher still in its poll loop; wakes delivered to firstmate: 0
+t+35s  watcher still in its poll loop; wakes delivered to firstmate: 0
+t+40s  watcher still in its poll loop; wakes delivered to firstmate: 0
+t+45s  watcher still in its poll loop; wakes delivered to firstmate: 0
+t+50s  watcher still in its poll loop; wakes delivered to firstmate: 0
+t+55s  watcher still in its poll loop; wakes delivered to firstmate: 0
+t+60s  watcher still in its poll loop; wakes delivered to firstmate: 0
+
+--- wake queue after 60s of polling ---
+(EMPTY - firstmate was never woken)
+
+--- what the watcher decided, every poll ---
+     34 absorbed stale (stood down, no agent by intent, age Ns): fmlive:fm-harbor
+
+--- the absorb's pause marker survived the loop-top reconciliation ---
+.paused-fmlive_fm-harbor
+.paused-rechecked-fmlive_fm-harbor
+
+
+========== S6b The absorb is BOUNDED - it re-surfaces once per cadence, in its own words ==========
+stale: fmlive:fm-harbor (stood down 70s, no agent by intent - captain stopped this crewmate on purpose; work pushed, not landed; rechecked on a long cadence not a wedge, and it clears when the work resumes or lands)
+
+
+========== S5  ADVERSARIAL - the record must never silence an agent that is actually running ==========
+(the agent comes back in the same pane by a route that is not a relaunch - or never left, which is what a wedge looks like)
+$ tmux list-panes -t fmlive:fm-harbor -F "#{pane_current_command}" -> claude
+$ (tmux backend agent-state probe) -> alive
+$ cat state/harbor.stood-down   (a valid record is still on disk)
+recorded=1789198961
+reason=captain stopped this crewmate on purpose; work pushed, not landed
+$ tail -1 state/harbor.status   (and the log still declares it)
+stood-down: captain stopped this crewmate on purpose; work pushed, not landed
+
+--- fm-session-start.sh ---
+endpoint: alive (backend=tmux window=fmlive:fm-harbor)
+
+--- the watcher, three consecutive rounds ---
+round 1 -> stale: fmlive:fm-harbor
+round 2 -> stale: fmlive:fm-harbor (idle 4s, possible wedge, escalation 1)
+round 3 -> stale: fmlive:fm-harbor (idle 4s, possible wedge, escalation 2)
+
+
+========== S7  ADVERSARIAL - with NO stand-down, the wedge ladder is exactly what it was ==========
+
+$ fm-stand-down.sh harbor --release
+released: harbor is no longer stood down
+[exit 0]
+$ ls state/harbor.stood-down
+ls: cannot access '/tmp/fmlive/home2/state/harbor.stood-down': No such file or directory
+(record retired)
+$ tail -2 state/harbor.status
+stood-down: captain stopped this crewmate on purpose; work pushed, not landed
+note: stand-down released by firstmate; this task declares no wait
+
+--- the same stopped pane, five consecutive watcher rounds ---
+round 1 -> stale: fmlive:fm-harbor
+round 2 -> stale: fmlive:fm-harbor (idle 3s, possible wedge, escalation 1)
+round 3 -> stale: fmlive:fm-harbor (idle 3s, possible wedge, escalation 2)
+round 4 -> stale: fmlive:fm-harbor (idle 3s, possible wedge, escalation 3, demand-deep-inspection: same pane has wedge-escalated 3 times in a row - do not re-absorb on the run-step/pane state alone; read the pane and confirm the worker itself is moving)
+round 5 -> stale: fmlive:fm-harbor (idle 3s, possible wedge, escalation 4, demand-deep-inspection: same pane has wedge-escalated 4 times in a row - do not re-absorb on the run-step/pane state alone; read the pane and confirm the worker itself is moving)
+
+
+========== S8  ADVERSARIAL - a record nobody can parse restores the ordinary alarm ==========
+$ (truncate the record while the log still declares the wait)
+recorded=
+reason=
+$ tail -1 state/harbor.status -> stood-down: captain stopped this crewmate on purpose
+watcher -> stale: fmlive:fm-harbor
+
+
+========== S11 ADVERSARIAL - opposite verbs in one request are refused, not last-wins ==========
+
+$ fm-stand-down.sh harbor --reason 'captain stopped it' --release
+error: --reason and --release are opposite requests; pass exactly one
+[exit 2]
+
+$ fm-stand-down.sh harbor --release --reason 'captain stopped it'
+error: --reason and --release are opposite requests; pass exactly one
+[exit 2]
+
+
+========== S12 ADVERSARIAL - refused where liveness cannot be proven, or nothing can be asked ==========
+
+$ fm-stand-down.sh zel --reason 'captain stopped it'   (zellij: no recovery-grade classifier)
+error: task zel runs on the zellij backend, which has no recovery-grade agent-state classifier, so it cannot prove whether an agent is still alive; refusing rather than recording a stand-down that could be quietening a live wedge (only tmux and herdr can prove it)
+[exit 1]
+
+$ fm-stand-down.sh nowin --reason 'captain stopped it'   (no endpoint recorded)
+error: task nowin's metadata records no endpoint, so nothing here can prove whether an agent is still running and no reader could honor the record; reconcile the task's ownership first with the stuck-crewmate-recovery playbook (AGENTS.md section 5), which owns a missing window
+[exit 1]
+
+$ fm-stand-down.sh ghost --reason 'x'   (no such task)
+error: ghost has no task record in this home
+[exit 1]
+
+$ fm-stand-down.sh ../escape --reason 'x'
+error: invalid task id
+[exit 2]
+
+$ fm-stand-down.sh harbor   (no verb)
+error: one of --reason or --release is required
+[exit 2]
+
+$ fm-stand-down.sh harbor --reason '<201 chars>'
+error: --reason must be one line of at most 200 printable characters
+[exit 2]
+
+
+========== S10 A relaunch retires the stand-down; a REFUSED relaunch leaves it alone ==========
+$ (agent alive again) fm-spawn.sh harbor --relaunch
+/home/mars/.no-mistakes/worktrees/a8c0c72d0935/01M29PX1Q4JF548VNWPBRRYDVX/bin/fm-spawn.sh: line 448: /tmp/fmlive/root2/bin/fm-guard.sh: No such file or directory
+error: task harbor's endpoint reads 'alive'; a relaunch requires a positively agent-free endpoint (stop the agent first with bin/fm-control.sh harbor exit)
+[exit 1]
+$ cat state/harbor.stood-down   (the captain's record survives a refusal)
+recorded=1789199082
+reason=captain stopped this crewmate on purpose
+
+$ (agent stopped) fm-spawn.sh harbor --relaunch
+/home/mars/.no-mistakes/worktrees/a8c0c72d0935/01M29PX1Q4JF548VNWPBRRYDVX/bin/fm-spawn.sh: line 448: /tmp/fmlive/root2/bin/fm-guard.sh: No such file or directory
+/home/mars/.no-mistakes/worktrees/a8c0c72d0935/01M29PX1Q4JF548VNWPBRRYDVX/bin/fm-spawn.sh: line 2204: cd: harbor: No such file or directory
+$ ls state/harbor.stood-down
+ls: cannot access '/tmp/fmlive/home2/state/harbor.stood-down': No such file or directory
+(retired by the relaunch)
+$ tail -1 state/harbor.status -> note: stand-down released by firstmate; this task declares no wait
+
+=== END OF LIVE DRIVE ===

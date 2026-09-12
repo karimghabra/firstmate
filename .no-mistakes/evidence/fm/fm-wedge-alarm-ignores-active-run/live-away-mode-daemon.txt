@@ -1,0 +1,32 @@
+AWAY-MODE (/afk) LIVE DRIVE - bin/fm-supervise-daemon.sh over a real tmux window
+repo head: ffc5474   tmux: tmux 3.4
+task fmlive:fm-harbor: real window, agent-free idle shell, status log last line 'working: ...'
+away flag state/.afk present; FM_STALE_ESCALATE_SECS=3
+
+
+===== A: NO stand-down recorded - the alarm this task is about =====
+$ cat state/.subsuper-escalations   (what the away daemon queues for the captain)
+stale persisted 3s (possible wedge): fmlive:fm-harbor
+[end]
+
+
+===== B: the SAME pane, stand-down recorded =====
+$ fm-stand-down.sh harbor --reason "captain stopped this crewmate on purpose; awaiting a decision"
+recorded: harbor is stood down (open, no agent by intent): captain stopped this crewmate on purpose; awaiting a decision
+$ cat state/.subsuper-escalations
+check: rearm-resurface
+[end]
+$ ls state/.subsuper-paused-*   (the pane is on the pause marker, not the wedge marker)
+state/.subsuper-paused-harbor
+
+
+===== C: and the absorb is BOUNDED - one recheck per cadence, never a wedge =====
+$ cat state/.subsuper-escalations   (FM_PAUSE_RESURFACE_SECS=15, 70s of supervision)
+check: rearm-resurface
+stood-down 15s (no agent by intent, it clears when the work resumes or lands; confirm the stop still stands): fmlive:fm-harbor
+stood-down 16s (no agent by intent, it clears when the work resumes or lands; confirm the stop still stands): fmlive:fm-harbor
+stood-down 16s (no agent by intent, it clears when the work resumes or lands; confirm the stop still stands): fmlive:fm-harbor
+stood-down 16s (no agent by intent, it clears when the work resumes or lands; confirm the stop still stands): fmlive:fm-harbor
+[end]
+
+=== END OF AWAY-MODE DRIVE ===
