@@ -1908,6 +1908,33 @@ crew_is_paused() {  # <id>
   [ "$(crew_absorb_class "$1")" = paused ]
 }
 
+# 0 if crew <id>'s no-mistakes PIPELINE currently owns the work: the authoritative
+# current state is `working` attributed to the run-step source rather than to the
+# crew's own pane.
+#
+# This exists to SUPPRESS a deferral, never to grant one, and the direction is the
+# whole reason it is safe. An earlier version of this branch used the same question
+# to buy a crew out of the wedge ladder, which needed a bound on whether the run was
+# actually moving; that bound failed three different ways and the deferral was
+# removed. Nothing here restores it. Asked this way round the failure modes invert:
+# a wrong `yes` suppresses the worktree-write deferral and the pane escalates, which
+# is noise, and only a wrong `no` could defer - which is exactly the pre-existing
+# behaviour the write probe already had before any of this.
+#
+# NOT a pure read: fm-crew-state.sh may make a bounded no-mistakes call, so the one
+# caller asks it only in the at-threshold branch that is about to escalate, never
+# per poll. FM_CREW_STATE_BIN lets tests stub the verdict.
+crew_pipeline_owns_work() {  # <id>
+  local id=$1 line state src
+  [ -n "$id" ] || return 1
+  line=$("$FM_CREW_STATE_BIN" "$id" 2>/dev/null) || true
+  case "$line" in state:*) ;; *) return 1 ;; esac
+  state=${line#state: }; state=${state%% *}
+  [ "$state" = working ] || return 1
+  src=${line#*source: }; src=${src%% *}
+  [ "$src" = run-step ]
+}
+
 # Directories excluded from the worktree write probe below, and the depth it walks.
 # The excluded set is everything a supervisor read or a package manager can write
 # without the crew doing any work - .git first, so firstmate's own read-only git

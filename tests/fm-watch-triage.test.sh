@@ -3102,13 +3102,13 @@ test_busy_pane_stable_hash_escalates_past_turn_age_bound() {
   pass "a busy worker with a stable pane hash still escalates once its completed-turn age reaches the bound"
 }
 
-# The sibling half of the case above, and the reason the busy-turn caller opts out
-# of the deferral at all. A no-mistakes fix round edits source under the crew's OWN
+# The sibling half of the case above, and the reason the write probe is gated on
+# PIPELINE OWNERSHIP. A no-mistakes fix round edits source under the crew's OWN
 # recorded worktree, so a busy pane hung mid-turn while its pipeline fixes code
-# answers the worktree-write probe. Ungated, the escalation would be replaced by a
-# worktree-write deferral recheck once per PAUSE_RESURFACE_SECS - no escalation
-# count, no demand-deep-inspection - which is the exact narrowing the opt-out
-# exists to prevent.
+# answers the worktree-write probe on evidence that says nothing about the agent.
+# Ungated, the escalation would be replaced by a worktree-write deferral recheck
+# once per PAUSE_RESURFACE_SECS - no escalation count, no demand-deep-inspection -
+# rescuing exactly the crewmate the busy-turn bound exists to catch.
 test_busy_turn_bound_escalates_even_while_its_worktree_is_written() {
   local dir state fakebin out drain_out capture_file window key pane_hash sig pid wt back
   dir=$(make_case busy-bound-writing); state="$dir/state"; fakebin="$dir/fakebin"
@@ -3156,6 +3156,60 @@ test_busy_turn_bound_escalates_even_while_its_worktree_is_written() {
   grep "$(printf '\tstale\t')" "$drain_out" | grep -F "$window" >/dev/null || fail "the busy-turn escalation was not queued"
   unset FM_FAKE_CREW_STATE
   pass "a busy pane past its completed-turn bound still escalates even while its pipeline writes its worktree"
+}
+
+# The other half, and the deferral this branch nearly dropped by accident: with NO
+# pipeline owning the work, a busy pane's worktree writes are the AGENT's own, and
+# they defer exactly as they did before any of this work. Gating the probe on the
+# busy-turn caller rather than on pipeline ownership killed this case along with
+# the one above, so a crewmate visibly writing code behind a stuck-looking busy
+# footer went back to escalating every FM_STALE_ESCALATE_SECS - the healthy-crew
+# noise the whole task exists to remove. Only the pipeline case is excluded.
+test_busy_turn_bound_defers_when_the_agents_own_writes_explain_it() {
+  local dir state fakebin out capture_file window key pane_hash sig pid wt back
+  dir=$(make_case busy-bound-agent-writing); state="$dir/state"; fakebin="$dir/fakebin"
+  out="$dir/watch.out"; capture_file="$dir/pane.txt"
+  window="test:fm-busy-own-writes"; wt="$dir/wt"
+  mkdir -p "$wt/src"
+  printf 'Working...' > "$capture_file"
+  printf 'window=%s\nkind=ship\nharness=pi\nworktree=%s\n' "$window" "$wt" > "$state/busy-own.meta"
+  record_pi_busy "$state" busy-own
+  printf 'working: implementing\n' > "$state/busy-own.status"
+  sig=$(seen_sig "$state/busy-own.status"); printf '%s' "$sig" > "$state/.seen-busy-own_status"
+  key=$(printf '%s' "$window" | tr ':/.' '___')
+  pane_hash=$(hash_text "Working...")
+  printf '%s' "$pane_hash" > "$state/.hash-$key"
+  printf '1\n' > "$state/.count-$key"
+  # No completed turn ever recorded, so the spawn record itself ages past the bound.
+  touch -t 200001010000 "$state/busy-own.meta"
+  back=$(( $(date +%s) - 500 ))
+  echo "$back" > "$state/.stale-since-$key"
+  # Backdated so the write below is unambiguously newer than the probe's anchor.
+  set_mtime "$back" "$state/.stale-since-$key"
+  # No run owns this crew's work, so the files appearing in its worktree are the
+  # agent's own output - the one positive liveness signal a static pane cannot show.
+  export FM_FAKE_CREW_STATE='state: unknown · source: none · no current-state source available'
+  printf 'the agent just wrote this\n' > "$wt/src/main.c"
+  crew_worktree_written_since busy-own "$state" "$state/.stale-since-$key" \
+    || fail "the fixture's own worktree write is not visible to the probe, so this case pins nothing"
+
+  PATH="$fakebin:$PATH" FM_FAKE_TMUX_WINDOW="$window" FM_FAKE_TMUX_CAPTURE="$capture_file" \
+    FM_STATE_OVERRIDE="$state" FM_CREW_STATE_BIN="$fakebin/fm-crew-state.sh" \
+    FM_BUSY_TURN_MAX_SECS=1 FM_STALE_ESCALATE_SECS=240 FM_PAUSE_RESURFACE_SECS=999 \
+    FM_POLL=1 FM_SIGNAL_GRACE=1 FM_CHECK_INTERVAL=999999 FM_HEARTBEAT=999999 "$WATCH" > "$out" &
+  pid=$!
+  if ! wait_poll_cycle "$state" "$pid"; then
+    reap "$pid"
+    fail "a busy pane whose own agent is writing its worktree escalated instead of deferring: $(cat "$out")"
+  fi
+  [ ! -s "$out" ] || { reap "$pid"; fail "the agent's own writes should have deferred silently: $(cat "$out")"; }
+  [ -e "$state/.defer-since-$key" ] \
+    || { reap "$pid"; fail "the deferral chain was not opened for the agent's own writes"; }
+  [ ! -e "$state/.wedge-escalations-$key" ] \
+    || { reap "$pid"; fail "a deferral advanced the wedge escalation counter"; }
+  reap "$pid"
+  unset FM_FAKE_CREW_STATE
+  pass "a busy pane past its completed-turn bound defers when its own agent, not a pipeline, is writing the worktree"
 }
 
 # --- a stood-down task is absorbed ONCE per cadence, not once per poll --------
@@ -5101,6 +5155,7 @@ test_nonterminal_stale_repairs_missing_or_corrupt_timer
 test_wedge_escalation_deferred_while_worktree_is_written
 test_write_deferral_resurfaces_on_the_bounded_cadence
 test_busy_turn_bound_escalates_even_while_its_worktree_is_written
+test_busy_turn_bound_defers_when_the_agents_own_writes_explain_it
 test_stood_down_task_wakes_once_not_every_poll
 test_busy_stood_down_pane_still_escalates_past_its_turn_bound
 test_idle_stood_down_pane_with_a_live_agent_escalates

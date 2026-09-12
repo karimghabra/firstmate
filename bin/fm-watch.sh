@@ -39,17 +39,20 @@
 #                          also carries a "demand-deep-inspection" marker so the
 #                          wake payload itself, not just repetition, forces a
 #                          closer look instead of another routine supervision
-#                          resume. Unless afk is active. ONE liveness probe bounds
-#                          that escalation, checked only at the threshold
-#                          (wedge_defer). A pane whose own task worktree was
-#                          written during the quiet window is deferred rather than
-#                          escalated, because files appearing there are liveness
-#                          the pane itself cannot show. That deferral re-surfaces
-#                          once per PAUSE_RESURFACE_SECS, and a pane with no write
-#                          evidence keeps the unchanged schedule. An active
-#                          no-mistakes run step does NOT defer: see wedge_defer for
-#                          why that probe was removed rather than repaired, and
-#                          what its removal costs.
+#                          resume. Unless afk is active. ONE deferral bounds that
+#                          escalation, decided only at the threshold (wedge_defer).
+#                          A pane whose own task worktree was written during the
+#                          quiet window is deferred rather than escalated, because
+#                          files appearing there are liveness the pane itself
+#                          cannot show - but only where no no-mistakes run step
+#                          owns the work, since a fix round writes that same tree
+#                          and those writes are the pipeline's, not the agent's.
+#                          That deferral re-surfaces once per PAUSE_RESURFACE_SECS,
+#                          and a pane with no write evidence of its own keeps the
+#                          unchanged schedule. An active run step does not defer on
+#                          its own account either: see wedge_defer for why that
+#                          probe was removed rather than repaired, and what its
+#                          removal costs.
 #                          A genuinely busy pane
 #                          (window_is_busy true) is exempt from the above, but
 #                          only up to BUSY_TURN_MAX_SECS with no completed turn
@@ -66,10 +69,9 @@
 #                          escalation count, and demand-deep-inspection marker,
 #                          for human inspection only - never an automatic
 #                          interrupt, signal, or restart of the worker or its
-#                          tool process. The threshold deferral does not apply
-#                          past that bound: a worktree write explains an idle
-#                          pane, and says nothing about whether the agent behind
-#                          a busy one is progressing.
+#                          tool process. Past that bound the same rule decides the
+#                          deferral as everywhere else: the crew's own writes still
+#                          defer, a pipeline's do not.
 #   stale: <window> (unread firstmate instruction: ...)
 #                          the steering-inbox ladder spent its delivery-attempt
 #                          budget on an idle pane without an acknowledgement
@@ -922,30 +924,30 @@ clear_defer_tracking() {  # <window-key>
 # Repeat-poll wedge-timer bookkeeping for an already-classified stale hash
 # absorbed as provably-working - repairs a missing/corrupt timer (self-heals a
 # watcher restart between recording the hash and recording the timer), or
-# escalates once STALE_ESCALATE_SECS have elapsed. Never reads the crew state at
-# all: the costly authoritative check ran once already, at classification time, and
-# nothing here repeats it. Shared by both places a hash can be absorbed this way:
-# the plain non-terminal path, and the stale_is_terminal-overridden path (a
-# captain-relevant status-log line that an active run/busy pane outranked).
-# ONE liveness probe stands between this function and an escalation, and it runs
-# ONLY inside the at-threshold branch that is about to escalate: a single bounded
-# worktree walk per window per STALE_ESCALATE_SECS, never per poll. It answers from
-# positive evidence, so a failed or unreadable walk is no evidence and leaves the
-# escalation schedule exactly as it was.
+# escalates once STALE_ESCALATE_SECS have elapsed. Shared by both places a hash can
+# be absorbed this way: the plain non-terminal path, and the
+# stale_is_terminal-overridden path (a captain-relevant status-log line that an
+# active run/busy pane outranked).
+# The deferral decision runs ONLY inside the at-threshold branch that is about to
+# escalate - at most one crew-state read and one bounded worktree walk per window
+# per STALE_ESCALATE_SECS, never per poll.
 #
-# <defer-eligible> (default 1) says whether the threshold deferral applies, and the
-# one caller that passes 0 is the reason the parameter exists. The write probe is a
-# claim about an IDLE pane, and it does not survive a BUSY pane that has gone
-# BUSY_TURN_MAX_SECS with no completed turn - a bound that exists precisely because
-# a hung foreground call can hide behind a busy signature.
 # A worktree write is evidence that SOMETHING is writing, and is evidence about the
-# agent only when nothing else is writing that tree - a no-mistakes fix round edits
-# source under the crew's own recorded worktree, and FM_WORKTREE_WRITE_PRUNE
-# excludes .git and generated trees, not source. Past the busy-turn bound nothing
-# establishes whose writes those are, so the probe would defer exactly the
-# hung-mid-turn crewmate the bound exists to catch, and it is skipped there.
-wedge_timer_check() {  # <window> <since-file> <triage-label> <escalation-count-file> <task> [defer-eligible]
-  local win=$1 since_file=$2 label=$3 escalation_file=$4 task=$5 defer_eligible=${6:-1} since age n reason
+# AGENT only when no pipeline owns the work. That is the whole rule, and it is what
+# the code below asks: a no-mistakes fix round edits source under the crew's own
+# recorded worktree (FM_WORKTREE_WRITE_PRUNE excludes .git and generated trees, not
+# source), so while a run step owns the work those writes are the pipeline's and
+# prove nothing about the agent - deferring on them would rescue exactly the
+# hung-mid-turn crewmate the busy-turn bound exists to catch. With no pipeline
+# owning the work the writes are the agent's own, and they defer the escalation
+# exactly as they always have, on every path.
+# Gating this on the CALLER instead - a busy-turn eligibility flag - conflated those
+# two cases and silently dropped a deferral that predates this work entirely: a busy
+# pane whose own agent was visibly writing its worktree went back to escalating
+# every STALE_ESCALATE_SECS. The question is about the work, not about which caller
+# asked, so it is asked here.
+wedge_timer_check() {  # <window> <since-file> <triage-label> <escalation-count-file> <task>
+  local win=$1 since_file=$2 label=$3 escalation_file=$4 task=$5 since age n reason
   since=$(cat "$since_file" 2>/dev/null || true)
   case "$since" in
     ''|*[!0-9]*)
@@ -958,7 +960,7 @@ wedge_timer_check() {  # <window> <since-file> <triage-label> <escalation-count-
     *)
       age=$(( $(date +%s) - since ))
       if [ "$age" -ge "$STALE_ESCALATE_SECS" ]; then
-        if [ "$defer_eligible" -eq 1 ] \
+        if ! crew_pipeline_owns_work "$task" \
           && crew_worktree_written_since "$task" "$STATE" "$since_file"; then
           wedge_defer "$win" "$since_file" "$label" "$age"
           return 0
@@ -967,7 +969,7 @@ wedge_timer_check() {  # <window> <since-file> <triage-label> <escalation-count-
         echo "$n" > "$escalation_file"
         reason="stale: $win (idle ${age}s, possible wedge, escalation $n)"
         if [ "$n" -ge "$FM_WEDGE_DEMAND_INSPECT_COUNT" ]; then
-          reason="stale: $win (idle ${age}s, possible wedge, escalation $n, demand-deep-inspection: same pane has wedge-escalated $n times in a row - inspect the worker itself)"
+          reason="stale: $win (idle ${age}s, possible wedge, escalation $n, demand-deep-inspection: same pane has wedge-escalated $n times in a row - do not re-absorb on the run-step/pane state alone; read the pane and confirm the worker itself is moving)"
         fi
         fm_wake_append stale "$win" "$reason" || exit 1
         rm -f "$since_file"
@@ -1141,11 +1143,7 @@ busy_turn_bound_check() {  # <window> <task> <hash> <since-file> <escalation-fil
     handle_paused_stale "$win" "$task" "$h"
     return 0
   fi
-  # 0: a busy pane past its completed-turn bound gets no threshold deferral (see
-  # wedge_timer_check's header). A worktree write is a claim about an idle pane,
-  # and is evidence about the AGENT only where nothing else is writing that tree -
-  # which nothing establishes here.
-  wedge_timer_check "$win" "$since_file" "busy (no completed turn)" "$escalation_file" "$task" 0
+  wedge_timer_check "$win" "$since_file" "busy (no completed turn)" "$escalation_file" "$task"
   return 1
 }
 
