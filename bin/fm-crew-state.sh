@@ -97,7 +97,8 @@
 #      capture as gone. A task whose agent is gone by INTENT rather than by
 #      failure - recorded with bin/fm-stand-down.sh, still open, work not landed -
 #      reports paused · stood-down instead of unknown, but only from a branch that
-#      already proved the endpoint gone (emit_stand_down_or below owns that gate).
+#      already proved the AGENT gone, never merely the endpoint (the stand-down
+#      gate at the head of the fallback below owns that decision).
 #      The fallback's own comment owns the per-verdict rules.
 #
 # Read-only and side-effect free. Always exits 0 on a successful read regardless
@@ -163,32 +164,6 @@ emit() {  # <state> <source> [detail]
   [ -n "${3:-}" ] && line="$line${SEP}$3"
   printf '%s\n' "$line"
   exit 0
-}
-
-# Emit a recorded stand-down (bin/fm-stand-down-lib.sh) in place of the caller's
-# death verdict, or that verdict unchanged when no stand-down is recorded. Like
-# emit, it never returns.
-#
-# Every caller is a branch that has ALREADY established the endpoint is
-# positively gone, and that is the whole safety argument: an alive endpoint never
-# reaches one, and an unreachable endpoint deliberately calls plain emit, so the
-# record can only ever explain a death that is already proven, never manufacture
-# one or hide a live worker. An absent agent on an open task is otherwise
-# indistinguishable from a failure, and `unknown` is the honest verdict for that;
-# a recorded stand-down is the missing evidence that makes it knowable.
-#
-# `paused` is the honest class here, not a euphemism: the crew is not working and
-# is EXPECTED to idle, which is exactly what that token means in the absorb
-# vocabulary (crew_absorb_class in bin/fm-classify-lib.sh), so every absorb
-# consumer follows with no second mapping to keep in step. The source is what
-# separates it from a worker-declared `paused:` wait, which clears on its own,
-# where this one clears when someone resumes or lands the work.
-emit_stand_down_or() {  # <fallback-state> <fallback-source> [fallback-detail]
-  if fm_stand_down_read "$STATE" "$ID"; then
-    emit paused stood-down \
-      "stopped by intent since $(fm_stand_down_format_time "$FM_STAND_DOWN_RECORDED"): $FM_STAND_DOWN_REASON"
-  fi
-  emit "$@"
 }
 
 # --- meta resolution --------------------------------------------------------
@@ -973,6 +948,36 @@ fi
 # verdict reports unknown rather than trusting a possibly-stale status log as
 # the current state.
 [ -n "$BACKEND_TARGET" ] || emit unknown none "no backend target recorded"
+# A stand-down is a claim about the AGENT, so it is honored on proven agent death
+# and nowhere else. Endpoint absence used to stand in for that, and on tmux the
+# proxy simply does not hold: bin/backends/tmux.sh creates the task window with no
+# command, so the shell outlives the agent and pane_readable below still succeeds.
+# The stop this fleet's own playbook prescribes - bin/fm-control.sh <id> exit -
+# returns on exactly that `dead` verdict, so every reader gated on the endpoint
+# sailed past the record and reported the task as though nothing had been recorded.
+#
+# The probe is bounded by reading the RECORD first: fm_stand_down_read is a local
+# file read, while fm_backend_agent_state is a real backend call, so a task with no
+# stand-down record costs exactly what it always did and never pays for this path.
+#
+# Only `dead` and `missing` qualify. An `alive` agent - including a wedged one,
+# looping or hung behind a frozen busy footer - is not stood down whatever the
+# record says, so it falls through to the ordinary classification below and stays
+# fully visible to the wedge ladder. Anything else is a probe that failed to
+# answer, which is not proof of anything and keeps its existing verdict.
+if fm_stand_down_read "$STATE" "$ID"; then
+  case "$TASK_BACKEND" in
+    tmux|herdr) STAND_DOWN_AGENT=$(fm_backend_agent_state "$TASK_BACKEND" "$BACKEND_TARGET" 2>/dev/null) || STAND_DOWN_AGENT=unreadable ;;
+    *) STAND_DOWN_AGENT=unverified ;;
+  esac
+  case "$STAND_DOWN_AGENT" in
+    dead|missing)
+      emit paused stood-down \
+        "stopped by intent since $(fm_stand_down_format_time "$FM_STAND_DOWN_RECORDED"): $FM_STAND_DOWN_REASON"
+      ;;
+  esac
+fi
+
 if ! pane_readable "$BACKEND_TARGET"; then
   # A failed probe is not itself evidence the pane is gone: the herdr CLI can
   # error or stall under load, and tmux can fail to be executed at all (a
@@ -1006,16 +1011,22 @@ if ! pane_readable "$BACKEND_TARGET"; then
     tmux:alive|herdr:alive)
       ;;
     tmux:missing|herdr:missing)
-      emit_stand_down_or unknown none "backend target gone: $BACKEND_TARGET"
+      emit unknown none "backend target gone: $BACKEND_TARGET"
       ;;
     tmux:dead|herdr:dead)
-      emit_stand_down_or unknown none "backend target gone: $BACKEND_TARGET (agent gone, pane shell remains)"
+      emit unknown none "backend target gone: $BACKEND_TARGET (agent gone, pane shell remains)"
       ;;
     tmux:*|herdr:*)
       emit unknown none "backend unreachable ($TASK_BACKEND endpoint state: $AGENT_STATE)"
       ;;
     *)
-      emit_stand_down_or unknown none "backend target gone: $BACKEND_TARGET"
+      # A backend with no recovery-grade classifier, where a failed capture is
+      # the legacy capture-means-gone heuristic rather than proven death, so this
+      # branch could never have satisfied the stand-down gate's proven-death
+      # requirement. It does not have to: a stand-down cannot be recorded on such
+      # a backend at all (bin/fm-stand-down.sh refuses), and the gate above reads
+      # the agent state rather than this endpoint verdict.
+      emit unknown none "backend target gone: $BACKEND_TARGET"
       ;;
   esac
 fi

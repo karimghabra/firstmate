@@ -1851,10 +1851,15 @@ crew_is_paused() {  # <id>
 # own pane. That is a strictly narrower claim than crew_is_provably_working, and
 # the distinction is the whole point: while a pipeline step runs, the daemon is
 # doing the work and the crew's pane is SUPPOSED to be idle, so an idle pane is
-# expected behavior rather than a missing heartbeat. A busy pane is deliberately
-# excluded - that is the agent itself working, which the stale path has already
-# ruled out by the time it asks, and which carries its own separate bound
-# (fm-watch.sh's BUSY_TURN_MAX_SECS).
+# expected behavior rather than a missing heartbeat.
+#
+# This predicate does NOT rule out a busy pane, and callers must not assume it
+# does: bin/fm-crew-state.sh evaluates the run step BEFORE it reads busy state, so
+# a busy crewmate with an active run answers 0 here too. Only an idle pane is
+# explained by pipeline ownership; a busy pane is the agent itself, with its own
+# separate bound, so whether this answer may defer an escalation belongs to the
+# caller. fm-watch.sh's wedge_timer_check owns that decision through its
+# pipeline-eligible parameter, and its busy-turn caller opts out.
 # The claim expires on its own the moment the pipeline stops owning the work: a
 # gate parks the run, a terminal step reports done or failed, and a probe-proven
 # dead daemon reads unknown, each of which answers 1 here and restores the

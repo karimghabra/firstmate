@@ -44,14 +44,20 @@
 #     one), so on every other backend recording is refused OUTRIGHT rather than
 #     written with no check behind it: a record whose guard silently never ran
 #     would claim a safety that was never checked. Retiring and reading a record
-#     stay available on every backend. Readers additionally gate the
-#     record on positive evidence the endpoint is gone, so a record beside a live
-#     agent is ignored rather than honored, a resumed task's leftover record
-#     cannot silence its next genuine death, an unreachable endpoint keeps its
-#     unknown verdict, an active run step still outranks it, and
-#     bin/fm-spawn.sh's relaunch path retires it outright.
+#     stay available on every backend. Readers additionally gate the record on
+#     proven death of the AGENT - fm_backend_agent_state answering `dead` or
+#     `missing` - and never on an absent endpoint. That is not a distinction
+#     without a difference: a tmux task window is created with no command, so its
+#     shell outlives the agent, and the stop the recovery playbook prescribes
+#     (bin/fm-control.sh <id> exit) returns on exactly that `dead` verdict. Gated
+#     on the endpoint, every reader sailed straight past the record for the one
+#     stop we tell operators to make. So a record beside a live agent is ignored
+#     rather than honored, a resumed task's leftover record cannot silence its
+#     next genuine death, an unreachable or unverifiable answer is not proof of
+#     death and keeps its existing verdict, an active run step still outranks it,
+#     and bin/fm-spawn.sh's relaunch path retires it outright.
 #   - Not enforceable here: no tool can read INTENT. An agent that crashed and
-#     one the captain stopped both leave a dead endpoint, so the record asserts
+#     one the captain stopped both leave the same dead agent, so the record asserts
 #     something only the person writing it knows. That is why the reason is
 #     required and stored: it is the claim, in someone's own words, that this
 #     stop was deliberate. Recording one for a worker that actually died is

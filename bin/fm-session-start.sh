@@ -844,20 +844,42 @@ for meta in "$STATE"/*.meta; do
   target=$(fm_backend_target_of_meta "$meta")
   if [ -n "$window" ]; then
     backend=$(fm_backend_of_meta "$meta")
-    if fm_backend_target_exists "$backend" "${target:-$window}" "fm-$id"; then
-      printf 'endpoint: alive (backend=%s window=%s)\n' "$backend" "$window"
-    elif fm_stand_down_read "$STATE" "$id"; then
-      # A dead endpoint is a recovery trigger (AGENTS.md section 5), and correctly
-      # so - except when the agent is gone by intent. This line is what separates
-      # the two, so a deliberate stop is not re-investigated on every session start
-      # for as long as the work stays open. It is read only on the not-alive
-      # branch, so a stale record cannot mask a live agent, and it says nothing
-      # about the WORK: the item is still in flight and still unlanded.
-      printf 'endpoint: stood down since %s, no agent by intent - not a recovery trigger (backend=%s window=%s): %s\n' \
-        "$(fm_stand_down_format_time "$FM_STAND_DOWN_RECORDED")" "$backend" "$window" "$FM_STAND_DOWN_REASON"
-    else
-      printf 'endpoint: dead (backend=%s window=%s)\n' "$backend" "$window"
+    # A missing agent on an open task is a recovery trigger (AGENTS.md section 5),
+    # and correctly so - except when the agent is gone by intent. The stand-down
+    # record is what separates the two, so a deliberate stop is not re-investigated
+    # on every session start for as long as the work stays open.
+    #
+    # The record is honored on proven AGENT death, not on an absent endpoint. That
+    # distinction is the whole fix: on tmux the task window is created with no
+    # command, so its shell outlives the agent and fm_backend_target_exists still
+    # succeeds - which is exactly the shape `bin/fm-control.sh <id> exit` leaves
+    # behind, since it returns on the `dead` verdict. Gated on the endpoint, this
+    # line was unreachable for the stop the recovery playbook itself prescribes.
+    #
+    # Reading the local record first keeps the extra agent-state probe off the
+    # ordinary path: a task with no record costs exactly what it did before.
+    # An `alive` agent is never stood down whatever the record says, so a wedged
+    # worker still reports as it always did and stays a recovery trigger.
+    stood_down_state=
+    if fm_stand_down_read "$STATE" "$id"; then
+      case "$backend" in
+        tmux|herdr) stood_down_state=$(fm_backend_agent_state "$backend" "${target:-$window}" 2>/dev/null) || stood_down_state=unreadable ;;
+        *) stood_down_state=unverified ;;
+      esac
     fi
+    case "$stood_down_state" in
+      dead|missing)
+        printf 'endpoint: stood down since %s, no agent by intent - not a recovery trigger (backend=%s window=%s): %s\n' \
+          "$(fm_stand_down_format_time "$FM_STAND_DOWN_RECORDED")" "$backend" "$window" "$FM_STAND_DOWN_REASON"
+        ;;
+      *)
+        if fm_backend_target_exists "$backend" "${target:-$window}" "fm-$id"; then
+          printf 'endpoint: alive (backend=%s window=%s)\n' "$backend" "$window"
+        else
+          printf 'endpoint: dead (backend=%s window=%s)\n' "$backend" "$window"
+        fi
+        ;;
+    esac
   else
     printf 'endpoint: unknown (no window recorded)\n'
   fi

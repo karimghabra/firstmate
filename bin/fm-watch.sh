@@ -124,6 +124,8 @@ mkdir -p "$STATE"
 . "$SCRIPT_DIR/fm-push-transition-lib.sh"
 # shellcheck source=bin/fm-pr-lib.sh
 . "$SCRIPT_DIR/fm-pr-lib.sh"
+# shellcheck source=bin/fm-stand-down-lib.sh
+. "$SCRIPT_DIR/fm-stand-down-lib.sh"
 # Single owner of durable merge-outcome publication, shared with
 # bin/fm-pr-merge.sh so self and poll origins use the same role-routed outcome.
 # The watcher still owns immediate delivery of its actionable poll result and
@@ -863,6 +865,24 @@ resurface_absorbed() {  # <window> <throttle-marker> <age> <reason> [scope] [min
   wake "$reason"
 }
 
+# Exactly one deferral chain may be live for a window at a time, because the chain
+# deferring RIGHT NOW is the one that owns the current quiet stretch. Retiring the
+# other chain here is what keeps each cadence measured from that stretch, which is
+# the invariant clear_defer_tracking states. Without it, evidence that switches
+# mid-stretch leaks an age across chains: the worktree probe wins at one threshold
+# and creates its marker, the run step wins from the next threshold onward while
+# that marker sits untouched (the stale hash never changes, so clear_defer_tracking
+# never runs), and when evidence switches back the older chain reads an age it never
+# actually deferred for - firing a re-surface immediately instead of once per
+# PAUSE_RESURFACE_SECS.
+clear_other_defer_chain() {  # <window-key> <writing|pipeline>
+  local key=$1 keep=$2
+  case "$keep" in
+    writing)  rm -f "$STATE/.pipeline-since-$key" "$STATE/.pipeline-resurfaced-$key" ;;
+    pipeline) rm -f "$STATE/.writing-since-$key" "$STATE/.writing-resurfaced-$key" ;;
+  esac
+}
+
 # Defer ONE wedge escalation for a pane that went quiet while its own task
 # worktree is demonstrably still being written (crew_worktree_written_since in
 # fm-classify-lib.sh). The pane and the run step both say nothing is happening;
@@ -880,6 +900,7 @@ resurface_absorbed() {  # <window> <throttle-marker> <age> <reason> [scope] [min
 wedge_defer_writing() {  # <window> <since-file> <triage-label> <idle-age>
   local win=$1 since_file=$2 label=$3 age=$4 key wsf wage
   key=$(window_key "$win")
+  clear_other_defer_chain "$key" writing
   wsf="$STATE/.writing-since-$key"
   [ -e "$wsf" ] || date +%s > "$wsf"
   wage=$(age_of "$wsf")
@@ -911,6 +932,7 @@ wedge_defer_writing() {  # <window> <since-file> <triage-label> <idle-age>
 wedge_defer_pipeline() {  # <window> <since-file> <triage-label> <idle-age>
   local win=$1 since_file=$2 label=$3 age=$4 key psf page
   key=$(window_key "$win")
+  clear_other_defer_chain "$key" pipeline
   psf="$STATE/.pipeline-since-$key"
   [ -e "$psf" ] || date +%s > "$psf"
   page=$(age_of "$psf")
@@ -939,16 +961,24 @@ clear_defer_tracking() {  # <window-key>
 # both places a hash can be absorbed this way: the plain non-terminal path,
 # and the stale_is_terminal-overridden path (a captain-relevant status-log
 # line that an active run/busy pane outranked).
-# The two liveness probes an escalation must clear first run ONLY here, inside the
+# The liveness probes an escalation must clear first run ONLY here, inside the
 # at-threshold branch that is about to escalate: at most one authoritative run-step
 # read and one bounded worktree walk per window per STALE_ESCALATE_SECS, never per
-# poll. The run-step read comes first because it is the authoritative answer to the
-# question the alarm is actually asking - is something other than this pane doing
-# the work - while the write probe is the weaker heuristic behind it. Both answer
-# from positive evidence, so a failed or unreadable probe is no evidence and leaves
-# the escalation schedule exactly as it was.
-wedge_timer_check() {  # <window> <since-file> <triage-label> <escalation-count-file> <task>
-  local win=$1 since_file=$2 label=$3 escalation_file=$4 task=$5 since age n reason
+# poll. Both answer from positive evidence, so a failed or unreadable probe is no
+# evidence and leaves the escalation schedule exactly as it was.
+#
+# <pipeline-eligible> (default 1) says whether the run-step deferral applies, and
+# the one caller that passes 0 is the reason the parameter exists. The run step
+# explains an IDLE pane: the daemon is working and the agent has nothing to do. It
+# explains nothing about a BUSY pane that has gone BUSY_TURN_MAX_SECS with no
+# completed turn - that bound exists precisely because a hung foreground call can
+# hide behind a busy signature, and an active run record is not evidence the AGENT
+# is progressing. bin/fm-crew-state.sh evaluates the run step before it ever reads
+# busy state, so without this opt-out a crewmate hung mid-turn on a task whose run
+# record still reads `running` would stop escalating at that bound, which is a real
+# narrowing of the alarm rather than a quietened false one.
+wedge_timer_check() {  # <window> <since-file> <triage-label> <escalation-count-file> <task> [pipeline-eligible]
+  local win=$1 since_file=$2 label=$3 escalation_file=$4 task=$5 pipeline_eligible=${6:-1} since age n reason
   since=$(cat "$since_file" 2>/dev/null || true)
   case "$since" in
     ''|*[!0-9]*)
@@ -961,7 +991,7 @@ wedge_timer_check() {  # <window> <since-file> <triage-label> <escalation-count-
     *)
       age=$(( $(date +%s) - since ))
       if [ "$age" -ge "$STALE_ESCALATE_SECS" ]; then
-        if crew_pipeline_owns_work "$task"; then
+        if [ "$pipeline_eligible" -eq 1 ] && crew_pipeline_owns_work "$task"; then
           wedge_defer_pipeline "$win" "$since_file" "$label" "$age"
           return 0
         fi
@@ -1051,6 +1081,21 @@ handle_paused_stale() {  # <window> <task> <hash>
       declaration="$declaration:due"
       min_age=0
     fi
+  elif fm_stand_down_read "$STATE" "$task"; then
+    # A stand-down reaches this absorber because bin/fm-crew-state.sh classifies it
+    # as paused, but it is NOT a declared external wait and must not borrow that
+    # wording: nothing external is going to clear it, so "confirm the wait still
+    # holds" would send the reader looking for a dependency that does not exist.
+    # It clears when someone resumes or lands the work, so the recheck says that.
+    # The age is the record's own, not the status file's, because the status log's
+    # last line predates the stop; and the cadence is bound to the record's
+    # identity, so releasing and re-recording a stand-down starts its own window
+    # instead of inheriting the silence of the one before it.
+    age=$(( now - FM_STAND_DOWN_RECORDED ))
+    [ "$age" -ge 0 ] || age=0
+    declaration="stood-down:$FM_STAND_DOWN_RECORDED"
+    detail="stood down, no agent by intent"
+    reason="stood down ${age}s, no agent by intent - $FM_STAND_DOWN_REASON; rechecked on a long cadence not a wedge, and it clears when the work resumes or lands"
   else
     detail="paused, awaiting external"
     reason="paused ${age}s, awaiting external - declared pause, rechecked on a long cadence not a wedge; confirm the wait still holds"
@@ -1117,7 +1162,10 @@ busy_turn_bound_check() {  # <window> <task> <hash> <since-file> <escalation-fil
     handle_paused_stale "$win" "$task" "$h"
     return 0
   fi
-  wedge_timer_check "$win" "$since_file" "busy (no completed turn)" "$escalation_file" "$task"
+  # 0: a busy pane past its completed-turn bound gets no run-step deferral (see
+  # wedge_timer_check's header). The worktree-write probe still applies, because
+  # files appearing in the crew's own worktree are evidence the AGENT is working.
+  wedge_timer_check "$win" "$since_file" "busy (no completed turn)" "$escalation_file" "$task" 0
   return 1
 }
 
@@ -2262,6 +2310,16 @@ EOF
               date +%s > "$ssf"
               clear_defer_tracking "$key"
               triage_log "absorbed stale (provably working, overriding a stale captain-relevant status): $w"
+            elif crew_is_paused "$(window_to_task "$w" "$STATE")"; then
+              # A stood-down task routinely arrives HERE rather than through the
+              # non-terminal path, because the last line its worker wrote is
+              # typically `done: PR ...` - work pushed, not landed, which is the
+              # exact shape a deliberate stop leaves behind. Without this branch
+              # that line would re-alarm on every new pane hash for as long as the
+              # stop lasted, which is the alarm the record exists to retire. The
+              # same absorber and the same long cadence as the idle path, so a
+              # forgotten stop still cannot rot invisibly.
+              handle_paused_stale "$w" "$task" "$h"
             elif captain_call_stale_bound "$key" "$task"; then
               # The line is captain-relevant and stays so, but the backlog says
               # the captain already holds this work: further NEW pane hashes with

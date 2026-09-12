@@ -3102,6 +3102,102 @@ test_busy_pane_stable_hash_escalates_past_turn_age_bound() {
   pass "a busy worker with a stable pane hash still escalates once its completed-turn age reaches the bound"
 }
 
+# The narrowing the fix-review gate caught, and the one the original brief forbade:
+# an active run step must NOT buy a busy pane past its completed-turn bound out of
+# escalating. The bound exists because a hung foreground call can hide behind a
+# busy signature, and bin/fm-crew-state.sh evaluates the run step before it ever
+# reads busy state - so a crewmate hung mid-turn on a task whose run record still
+# says `running` answers "the pipeline owns the work" too. The run step explains an
+# IDLE pane, never a busy one, so this caller opts out of that deferral.
+test_busy_turn_bound_escalates_even_with_an_active_run_step() {
+  local dir state fakebin out drain_out capture_file window key pane_hash sig pid
+  dir=$(make_case busy-bound-active-run); state="$dir/state"; fakebin="$dir/fakebin"
+  out="$dir/watch.out"; drain_out="$dir/drain.out"; capture_file="$dir/pane.txt"
+  window="test:fm-busy-hung"
+  printf 'Working...' > "$capture_file"
+  printf 'window=%s\nkind=ship\nharness=pi\n' "$window" > "$state/busy-hung.meta"
+  record_pi_busy "$state" busy-hung
+  printf 'working: handed to validation\n' > "$state/busy-hung.status"
+  sig=$(seen_sig "$state/busy-hung.status"); printf '%s' "$sig" > "$state/.seen-busy-hung_status"
+  key=$(printf '%s' "$window" | tr ':/.' '___')
+  pane_hash=$(hash_text "Working...")
+  printf '%s' "$pane_hash" > "$state/.hash-$key"
+  printf '1\n' > "$state/.count-$key"
+  # No completed turn ever recorded, so the spawn record itself ages past the bound.
+  touch -t 200001010000 "$state/busy-hung.meta"
+  # The run record still reads running while the agent itself has stopped moving.
+  export FM_FAKE_CREW_STATE='state: working · source: run-step · test,running,1'
+  echo $(( $(date +%s) - 500 )) > "$state/.stale-since-$key"
+
+  PATH="$fakebin:$PATH" FM_FAKE_TMUX_WINDOW="$window" FM_FAKE_TMUX_CAPTURE="$capture_file" \
+    FM_STATE_OVERRIDE="$state" FM_CREW_STATE_BIN="$fakebin/fm-crew-state.sh" \
+    FM_BUSY_TURN_MAX_SECS=1 FM_STALE_ESCALATE_SECS=240 FM_PAUSE_RESURFACE_SECS=999 \
+    FM_POLL=1 FM_SIGNAL_GRACE=1 FM_CHECK_INTERVAL=999999 FM_HEARTBEAT=999999 "$WATCH" > "$out" &
+  pid=$!
+  wait_for_exit "$pid" 100 || fail "an active run step suppressed the busy-turn bound escalation"
+  grep -F "stale: $window" "$out" >/dev/null || fail "the busy-turn bound did not print its stale wake"
+  grep -F "possible wedge" "$out" >/dev/null || fail "the busy-turn bound did not flag a possible wedge"
+  grep -F "validation pipeline has owned the work" "$out" >/dev/null \
+    && fail "a busy pane past its turn bound was deferred as pipeline-owned"
+  [ ! -e "$state/.pipeline-since-$key" ] || fail "a busy pane past its turn bound opened a pipeline-deferral chain"
+  FM_STATE_OVERRIDE="$state" "$DRAIN" > "$drain_out" 2>/dev/null || fail "drain after the busy-turn escalation failed"
+  grep "$(printf '\tstale\t')" "$drain_out" | grep -F "$window" >/dev/null || fail "the busy-turn escalation was not queued"
+  unset FM_FAKE_CREW_STATE
+  pass "a busy pane past its completed-turn bound still escalates even while a run step is active"
+}
+
+# The two deferral chains age independently but used to be cleared only together,
+# so evidence switching inside ONE unchanged quiet stretch left the idle chain's
+# marker behind: switch back later and it reported an age it never deferred for,
+# firing a re-surface immediately instead of once per PAUSE_RESURFACE_SECS. Only
+# the chain currently deferring may exist, so the other is retired as it takes over.
+test_deferral_chains_do_not_leak_age_across_a_switch() {
+  local dir state fakebin out capture_file window key pane_hash sig pid wt back
+  dir=$(make_case defer-chain-switch); state="$dir/state"; fakebin="$dir/fakebin"
+  out="$dir/watch.out"; capture_file="$dir/pane.txt"
+  window="test:fm-switch"; wt="$dir/wt"
+  mkdir -p "$wt/src"
+  printf 'idle output' > "$capture_file"
+  printf 'window=%s\nkind=ship\nworktree=%s\n' "$window" "$wt" > "$state/switch.meta"
+  printf 'working: implementing\n' > "$state/switch.status"
+  sig=$(seen_sig "$state/switch.status"); printf '%s' "$sig" > "$state/.seen-switch_status"
+  key=$(printf '%s' "$window" | tr ':/.' '___')
+  pane_hash=$(hash_text "idle output")
+  printf '%s' "$pane_hash" > "$state/.hash-$key"
+  printf '1\n' > "$state/.count-$key"
+  printf '%s' "$pane_hash" > "$state/.stale-$key"
+  back=$(( $(date +%s) - 500 ))
+  echo "$back" > "$state/.stale-since-$key"
+  set_mtime "$back" "$state/.stale-since-$key"
+  # A long-running write-deferral chain is already established for this stretch.
+  : > "$state/.writing-since-$key"
+  set_mtime "$back" "$state/.writing-since-$key"
+  : > "$state/.writing-resurfaced-$key"
+  set_mtime "$back" "$state/.writing-resurfaced-$key"
+  # Evidence now switches: the pipeline owns the work and nothing is being written.
+  export FM_FAKE_CREW_STATE='state: working · source: run-step · test,running,1'
+
+  PATH="$fakebin:$PATH" FM_FAKE_TMUX_WINDOW="$window" FM_FAKE_TMUX_CAPTURE="$capture_file" \
+    FM_STATE_OVERRIDE="$state" FM_CREW_STATE_BIN="$fakebin/fm-crew-state.sh" \
+    FM_STALE_ESCALATE_SECS=240 FM_PAUSE_RESURFACE_SECS=240 FM_POLL=1 FM_SIGNAL_GRACE=1 \
+    FM_CHECK_INTERVAL=999999 FM_HEARTBEAT=999999 "$WATCH" > "$out" &
+  pid=$!
+  if ! wait_poll_cycle "$state" "$pid"; then
+    reap "$pid"
+    fail "the pipeline deferral inherited the write chain's age and re-surfaced at once: $(cat "$out")"
+  fi
+  [ ! -s "$out" ] || { reap "$pid"; fail "a fresh pipeline deferral re-surfaced immediately: $(cat "$out")"; }
+  [ ! -e "$state/.writing-since-$key" ] \
+    || { reap "$pid"; fail "the superseded write-deferral chain was left behind to leak its age"; }
+  [ ! -e "$state/.writing-resurfaced-$key" ] \
+    || { reap "$pid"; fail "the superseded write chain's throttle was left behind"; }
+  [ -e "$state/.pipeline-since-$key" ] \
+    || { reap "$pid"; fail "the pipeline-deferral chain was not opened for the current stretch"; }
+  reap "$pid"
+  unset FM_FAKE_CREW_STATE
+  pass "a deferral that takes over retires the other chain, so no cadence inherits an age it never deferred for"
+}
+
 # Regression fixture for the incident's actual masking condition: Pi's rendered
 # elapsed-time footer changes every poll, so the pane hash never repeats and the
 # watcher always takes the "new hash" branch, never the stable-hash one above.
@@ -4978,6 +5074,8 @@ test_wedge_defers_while_the_pipeline_owns_the_work
 test_pipeline_deferral_survives_repeated_windows
 test_pipeline_deferral_resurfaces_on_the_bounded_cadence
 test_busy_pane_evidence_does_not_borrow_the_pipeline_deferral
+test_busy_turn_bound_escalates_even_with_an_active_run_step
+test_deferral_chains_do_not_leak_age_across_a_switch
 test_secondmate_home_supervision_churn_is_not_write_evidence
 test_timer_repair_drops_a_finished_write_deferral_chain
 test_terminal_first_sight_drops_a_finished_write_deferral_chain

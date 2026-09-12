@@ -52,7 +52,8 @@ Record the intent instead:
 bin/fm-stand-down.sh <task-id> --reason "<why it was stopped>"
 ```
 
-The digest then reports that endpoint as stood down with the reason rather than as dead, so it stops arriving as a recovery trigger every session, and `bin/fm-crew-state.sh <id>` reports it as paused from the stood-down source.
+The digest then reports that endpoint as stood down with the reason rather than as dead, so it stops arriving as a recovery trigger every session, `bin/fm-crew-state.sh <id>` reports it as paused from the stood-down source, and its idle pane is rechecked on the long cadence instead of climbing the wedge ladder.
+That holds for the stop above even though the window itself usually survives it: `exit` returns once the AGENT is gone, and on tmux the pane's shell outlives it, so the readers gate on the agent being provably gone rather than on the endpoint disappearing.
 
 Be clear with yourself about what you have and have not just done:
 
@@ -64,7 +65,7 @@ Be clear with yourself about what you have and have not just done:
 And never reach for it to quieten a task that is actually stuck.
 The command refuses while the agent reads alive, so a wedged-but-running worker cannot be silenced this way - stop it first with `bin/fm-control.sh <task-id> exit`, and only then, and only if the stop was deliberate, record why.
 That refusal needs a backend that can prove whether an agent is alive, which today means tmux and herdr; on any other backend recording is refused outright rather than written with a guard that silently never ran, so such a task stays on the ordinary recovery path.
-No tool can read intent: a crash and a deliberate stop both leave a dead endpoint, so the reason you write IS the claim that this stop was on purpose.
+No tool can read intent: a crash and a deliberate stop leave the same dead agent, so the reason you write IS the claim that this stop was on purpose.
 A worker that actually died is a failure to recover or report, not a stand-down.
 
 Retire the record when the work resumes or lands - `bin/fm-stand-down.sh <task-id> --release`, which `bin/fm-control.sh <task-id> relaunch` does for you; retiring works on every backend.
