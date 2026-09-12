@@ -69,7 +69,8 @@ It is not deterministic across the verified adapters: codex, grok, and gemini re
    A ship or scout relaunch requires `--note`, because the replacement inherits the local copy but none of the conversation; the note is appended to the instructions it reads.
    A secondmate relaunch does not require one and never rewrites its standing charter.
 4. **Stop the old agent** through the `exit` verb, with its postcondition.
-5. **Launch the replacement** through its single owner, `bin/fm-spawn.sh --relaunch`, which adopts the recorded endpoint and worktree instead of creating either, clears the previous harness's per-task wiring, and arms a fresh busy generation.
+5. **Launch the replacement** through its single owner, `bin/fm-spawn.sh --relaunch`, which adopts the recorded endpoint and worktree instead of creating either, clears the previous harness's per-task wiring, arms a fresh busy generation, and retires any stand-down on the task - both the record and the status log's declaration - because a relaunch is the supported way an open task gets an agent back.
+   That retirement runs only after every adoption refusal has passed, so a refused relaunch leaves the recorded decision exactly as it found it.
 
 Switching harness is therefore one ordinary relaunch rather than a separate mechanism.
 
@@ -77,6 +78,7 @@ Switching harness is therefore one ordinary relaunch rather than a separate mech
 
 - A refusal **before** the agent is stopped leaves the durable record and the instructions byte-identical.
 - A launch failure **after** the agent is stopped restores the prior durable record, keeps the progress note so a later recovery still has it, marks the journal `failed:launching`, and reports plainly that no agent is running and where the work is preserved.
+  A stand-down retired in step 5 is not restored by that rollback, which fails toward the task alarming again rather than toward silence; record it again if the stop still stands.
 - If the launch owner already published the new record but no running agent can be confirmed, the new record is kept: the task is recorded on the new harness with no agent confirmed, which is exactly what recovery reconciles.
   Rewriting it back to the old harness would be a second, worse inaccuracy.
 
