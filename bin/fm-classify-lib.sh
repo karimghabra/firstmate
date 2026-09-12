@@ -1857,22 +1857,6 @@ status_span_has_actionable() {  # <status-file> <start-offset>
   status_span_first_actionable_record "$1" "${2:-0}" > /dev/null
 }
 
-# The shared parse behind every predicate below: one bin/fm-crew-state.sh read for
-# <id>, printed as "<state> <source>". Both fields are single tokens by that
-# script's own output contract, so a space separates them unambiguously. Returns 1
-# and prints nothing when the crew has no readable authoritative verdict, so every
-# caller treats an unreadable state as no evidence rather than as a verdict.
-# FM_CREW_STATE_BIN lets tests stub it.
-crew_state_fields() {  # <id>
-  local id=$1 line state src
-  [ -n "$id" ] || return 1
-  line=$("$FM_CREW_STATE_BIN" "$id" 2>/dev/null) || true
-  case "$line" in state:*) ;; *) return 1 ;; esac
-  state=${line#state: }; state=${state%% *}
-  src=${line#*source: }; src=${src%% *}
-  printf '%s %s' "$state" "$src"
-}
-
 # Classify WHY an idle/stale crew MIGHT be safely absorbed instead of surfaced,
 # from bin/fm-crew-state.sh's one authoritative current-state line
 # ("state: <s> · source: <src> · <detail>"). Prints exactly one token:
@@ -1888,12 +1872,16 @@ crew_state_fields() {  # <id>
 # that appended paused: but then STARTED a run reports working, never paused.
 # NOT a pure read: fm-crew-state.sh may make a bounded no-mistakes call, so callers
 # run it only on no-verb signal and first-sighting stale paths, never every wake.
+# FM_CREW_STATE_BIN lets tests stub the verdict.
 crew_absorb_class() {  # <id>
-  local id=$1 fields state src
-  fields=$(crew_state_fields "$id") || { printf 'none'; return; }
-  state=${fields%% *}; src=${fields#* }
+  local id=$1 line state src
+  [ -n "$id" ] || { printf 'none'; return; }
+  line=$("$FM_CREW_STATE_BIN" "$id" 2>/dev/null) || true
+  case "$line" in state:*) ;; *) printf 'none'; return ;; esac
+  state=${line#state: }; state=${state%% *}
   if [ "$state" = paused ]; then printf 'paused'; return; fi
   if [ "$state" = working ]; then
+    src=${line#*source: }; src=${src%% *}
     case "$src" in run-step|pane) printf 'working'; return ;; esac
   fi
   printf 'none'

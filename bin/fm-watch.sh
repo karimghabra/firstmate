@@ -66,9 +66,10 @@
 #                          escalation count, and demand-deep-inspection marker,
 #                          for human inspection only - never an automatic
 #                          interrupt, signal, or restart of the worker or its
-#                          tool process. Neither threshold deferral applies past
-#                          that bound: both explain an idle pane, and neither
-#                          says the agent behind a busy one is progressing.
+#                          tool process. The threshold deferral does not apply
+#                          past that bound: a worktree write explains an idle
+#                          pane, and says nothing about whether the agent behind
+#                          a busy one is progressing.
 #   stale: <window> (unread firstmate instruction: ...)
 #                          the steering-inbox ladder spent its delivery-attempt
 #                          budget on an idle pane without an acknowledgement
@@ -921,17 +922,16 @@ clear_defer_tracking() {  # <window-key>
 # Repeat-poll wedge-timer bookkeeping for an already-classified stale hash
 # absorbed as provably-working - repairs a missing/corrupt timer (self-heals a
 # watcher restart between recording the hash and recording the timer), or
-# escalates once STALE_ESCALATE_SECS have elapsed. Never re-reads the crew state
-# on an ordinary poll (the costly check already ran once, at classification time);
-# the one re-read is the threshold probe described below. Shared by
-# both places a hash can be absorbed this way: the plain non-terminal path,
-# and the stale_is_terminal-overridden path (a captain-relevant status-log
-# line that an active run/busy pane outranked).
-# The liveness probes an escalation must clear first run ONLY here, inside the
-# at-threshold branch that is about to escalate: at most one authoritative run-step
-# read and one bounded worktree walk per window per STALE_ESCALATE_SECS, never per
-# poll. Both answer from positive evidence, so a failed or unreadable probe is no
-# evidence and leaves the escalation schedule exactly as it was.
+# escalates once STALE_ESCALATE_SECS have elapsed. Never reads the crew state at
+# all: the costly authoritative check ran once already, at classification time, and
+# nothing here repeats it. Shared by both places a hash can be absorbed this way:
+# the plain non-terminal path, and the stale_is_terminal-overridden path (a
+# captain-relevant status-log line that an active run/busy pane outranked).
+# ONE liveness probe stands between this function and an escalation, and it runs
+# ONLY inside the at-threshold branch that is about to escalate: a single bounded
+# worktree walk per window per STALE_ESCALATE_SECS, never per poll. It answers from
+# positive evidence, so a failed or unreadable walk is no evidence and leaves the
+# escalation schedule exactly as it was.
 #
 # <defer-eligible> (default 1) says whether the threshold deferral applies, and the
 # one caller that passes 0 is the reason the parameter exists. The write probe is a

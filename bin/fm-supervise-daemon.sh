@@ -541,8 +541,8 @@ clear_pause_tracking() {  # <window> <state>
 }
 
 # bin/fm-stand-down-lib.sh's fm_stand_down_declared_wait_admissible is the ONE
-# admission test for a declared wait, shared with the watcher and the herdr
-# push-transition handler so the three cannot drift. Every site in this file that
+# admission test for a declared wait, shared with the always-on watcher so the two
+# cannot drift. Every site in this file that
 # creates, keeps, or rechecks a pause marker asks it - not just where the wake is
 # first classified. The marker is what actually absorbs a pane here, and
 # housekeeping re-derives it from the status log on every tick: gating only the

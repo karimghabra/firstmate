@@ -219,8 +219,10 @@ fm_stand_down_declare() {  # <state-dir> <task-id> <line>
 }
 
 # 0 when a declared wait may absorb its pane right now. THE one owner of that
-# rule: the always-on watcher, the away-mode daemon, and the herdr push-transition
-# handler all ask this and nothing else, so the three cannot drift.
+# rule: the always-on watcher and the away-mode daemon both ask this and nothing
+# else, so the two cannot drift. The herdr push-transition handler does NOT ask it
+# - it asks status_wait_explains_a_busy_pane, because the push that reaches it is
+# itself live-agent evidence and refutes a stand-down outright.
 #
 # A `paused:` wait and a verified captain-held transfer are self-contained - the
 # log line IS the whole declaration, so the line alone settles it. A stand-down is
