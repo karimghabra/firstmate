@@ -59,7 +59,7 @@ Be clear with yourself about what you have and have not just done:
 
 - You have recorded NO completion. There is no backlog transition at all; the item stays in flight because the work is still open.
 - You have landed, discarded, and unblocked nothing. The branch is untouched, unlanded work is still unlanded, and this task still has to be finished or landed like any other open item.
-- You have not spoken for the worker about its work. Firstmate appends exactly one `stood-down:` line to its status log, and `--release` appends one line retiring it; neither claims progress or completion, and everything the worker itself wrote stays beneath them. That declaration is not decoration - it is what every supervisor reconciles a paused pane against, so without it the task would re-alarm every poll.
+- You have not spoken for the worker about its work. Firstmate appends exactly one `stood-down:` line to its status log, and `--release` appends one line retiring it; neither claims progress or completion, and everything the worker itself wrote stays beneath them. That declaration is not decoration - it is what every supervisor reconciles a paused pane against, and a supervisor refuses a record its log is not declaring, so without it the stop quietens nothing and the task keeps alarming.
 - This is not a cleanup shortcut. If the work is landed, tear the task down; if it is not, all this changes is how the missing agent is reported.
 
 And never reach for it to quieten a task that is actually stuck.

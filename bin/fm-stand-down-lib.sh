@@ -12,7 +12,10 @@
 #     daemon both drop a pane's pause marker on any poll where the log does not
 #     declare a wait, so a state that absorbs a pane without declaring itself
 #     there loses its marker every poll and re-alarms as a first sighting - which
-#     is noisier than the alarm this record exists to retire.
+#     is noisier than the alarm this record exists to retire. So the watcher
+#     refuses to class a pane paused while its log declares no wait, whatever the
+#     record says: an undeclared pane keeps the ordinary stale schedule rather
+#     than an absorb that unravels on the next poll.
 #   - The RECORD carries the decision. The reason in someone's own words, the
 #     epoch it was recorded at (which anchors the re-surface cadence and the
 #     digest's wording), and the gate every reader applies before honoring any of
@@ -242,11 +245,13 @@ fm_stand_down_declared_wait_admissible() {  # <state-dir> <task-id> <status-line
 }
 
 # Retire a stand-down: drop the record AND stop the log declaring the wait.
-# Both halves, always, because either one left behind is a state nobody can act
-# on - a record with no declaration loses its pane marker every poll, and a
-# declaration with no record absorbs the pane forever after the stand-down is
-# over. Keyed on the LOG rather than the record so a hand-deleted record still
-# gets its declaration retired. 0 when neither half remains.
+# Both halves, always, because either one left behind is a state whose two halves
+# contradict each other - a record with no declaration is refused by every
+# supervisor's absorb while bin/fm-crew-state.sh and the session-start digest go
+# on reporting a stop that is over, and a declaration with no record leaves the
+# log declaring a wait no reader will admit. Keyed on the LOG rather than the
+# record so a hand-deleted record still gets its declaration retired. 0 when
+# neither half remains.
 # Requires bin/fm-classify-lib.sh and bin/fm-wake-lib.sh in the caller.
 fm_stand_down_release() {  # <state-dir> <task-id>
   local state=$1 id=$2

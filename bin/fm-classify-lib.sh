@@ -1863,8 +1863,12 @@ status_span_has_actionable() {  # <status-file> <start-offset>
 #   working - an actively-running no-mistakes step (running/fixing/ci) or a busy
 #             pane; the crew is legitimately mid-work on a static-looking pane
 #             (e.g. waiting on CI);
-#   paused  - the crew's authoritative current state is a declared external-wait
-#             pause (paused:), which is EXPECTED to idle;
+#   paused  - the crew's authoritative current state is a pause that is EXPECTED
+#             to idle: a worker-declared external wait (paused:), or a recorded
+#             stand-down (source: stood-down), whose truth lives in a record
+#             rather than in whatever the status log declares right now - so a
+#             caller that needs the LOG to be declaring the wait tests that
+#             itself (bin/fm-watch.sh's pause_state_class does);
 #   none    - neither, so the wake must surface (a stopped/finished/parked/failed/
 #             torn-down/unknown crew, or an unreadable verdict).
 # One fm-crew-state.sh read serves BOTH absorb reasons at once. Reading the state
@@ -1901,9 +1905,10 @@ crew_is_provably_working() {  # <id>
   [ "$(crew_absorb_class "$1")" = working ]
 }
 
-# 0 if crew <id>'s authoritative current state is a declared external-wait pause.
-# The stale path absorbs such a crew (on a long re-surface cadence) instead of
-# escalating a possible wedge.
+# 0 if crew <id>'s authoritative current state is a pause expected to idle - a
+# declared external wait or a recorded stand-down; see crew_absorb_class for the
+# exact vocabulary. The stale path absorbs such a crew (on a long re-surface
+# cadence) instead of escalating a possible wedge.
 crew_is_paused() {  # <id>
   [ "$(crew_absorb_class "$1")" = paused ]
 }

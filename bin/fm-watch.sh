@@ -1169,6 +1169,14 @@ pause_state_class() {  # <window> <task>
   recheck_file="$STATE/.paused-rechecked-$key"
   if ! status_is_paused_or_captain_held "$last"; then
     rm -f "$recheck_file"
+    # Nothing is declared here, so only positive working evidence may absorb. A
+    # `paused` verdict on this branch can only come from a stand-down RECORD,
+    # which outlives an agent restarted in the same pane by any route but a
+    # relaunch, and absorbing on the record alone would label the pane an
+    # external wait nobody declared - then lose that marker to the loop-top
+    # reconciliation on the very next poll, waking every cycle instead of once
+    # per cadence. The DECLARATION is what earns the absorb; without it the pane
+    # keeps the ordinary stale schedule.
     class=$(crew_absorb_class "$task")
     case "$class" in paused) class=none ;; esac
     printf '%s' "$class"
