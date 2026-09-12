@@ -1090,7 +1090,11 @@ housekeeping() {  # <state>
   # declaring the wait -> escalate a recheck digest and reset the marker so the window
   # repeats. The digest names WHICH human the wait is on, because the captain is the
   # one reading it: an external dependency for a paused: declaration, and the captain
-  # themself for a verified hold transfer.
+  # themself for a verified hold transfer, and nobody at all for a stand-down,
+  # which clears only when someone resumes or lands the work. Every declaration the
+  # combined predicate admits needs an arm here: one that reaches the final `rm -f`
+  # instead is dropped without a digest and recreated with a fresh timestamp by
+  # migrate_watcher_pause_markers on the next tick, so it is absorbed forever.
   # Pane busy state does NOT end the wait. A declared wait can legitimately hold a
   # pane busy - a worker parked on a long foreground call it keeps live for as long
   # as the wait lasts - so reading busy as "the crew resumed" retires the window of
@@ -1157,6 +1161,10 @@ housekeeping() {  # <state>
             if [ -n "$until" ] && [ "$now" -ge "$until" ]; then
               printf '%s\n' "$until" > "$due"
             fi
+          fi
+        elif [ -n "$last" ] && status_is_stood_down "$last"; then
+          if escalate_add "$state" "stood-down ${age}s (no agent by intent, it clears when the work resumes or lands; confirm the stop still stands): $win"; then
+            _now > "$marker"
           fi
         else
           rm -f "$marker"

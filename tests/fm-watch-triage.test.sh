@@ -3146,6 +3146,62 @@ test_busy_turn_bound_escalates_even_with_an_active_run_step() {
   pass "a busy pane past its completed-turn bound still escalates even while a run step is active"
 }
 
+# The sibling half of the case above, and the reason the opt-out is a flag on BOTH
+# probes rather than on the run-step one. A no-mistakes fix round edits source under
+# the crew's OWN recorded worktree, so a busy pane hung mid-turn while its pipeline
+# fixes code answers the worktree-write probe too. With only the run-step probe
+# gated, the escalation was replaced by a "writing its worktree" recheck once per
+# PAUSE_RESURFACE_SECS - no escalation count, no demand-deep-inspection - which is
+# the exact narrowing the opt-out exists to prevent, reached by a different door.
+test_busy_turn_bound_escalates_even_while_its_worktree_is_written() {
+  local dir state fakebin out drain_out capture_file window key pane_hash sig pid wt back
+  dir=$(make_case busy-bound-writing); state="$dir/state"; fakebin="$dir/fakebin"
+  out="$dir/watch.out"; drain_out="$dir/drain.out"; capture_file="$dir/pane.txt"
+  window="test:fm-busy-writing"; wt="$dir/wt"
+  mkdir -p "$wt/src"
+  printf 'Working...' > "$capture_file"
+  printf 'window=%s\nkind=ship\nharness=pi\nworktree=%s\n' "$window" "$wt" > "$state/busy-writing.meta"
+  record_pi_busy "$state" busy-writing
+  printf 'working: handed to validation\n' > "$state/busy-writing.status"
+  sig=$(seen_sig "$state/busy-writing.status"); printf '%s' "$sig" > "$state/.seen-busy-writing_status"
+  key=$(printf '%s' "$window" | tr ':/.' '___')
+  pane_hash=$(hash_text "Working...")
+  printf '%s' "$pane_hash" > "$state/.hash-$key"
+  printf '1\n' > "$state/.count-$key"
+  # No completed turn ever recorded, so the spawn record itself ages past the bound.
+  touch -t 200001010000 "$state/busy-writing.meta"
+  back=$(( $(date +%s) - 500 ))
+  echo "$back" > "$state/.stale-since-$key"
+  # Backdated so the write below is unambiguously newer than the probe's anchor:
+  # at same-second mtimes `find -newer` would miss and the case would pass without
+  # ever exercising the write probe it exists to pin.
+  set_mtime "$back" "$state/.stale-since-$key"
+  # The pipeline is in a fix round, and its fixer is writing the crew's own worktree
+  # right now. Neither fact says anything about the hung AGENT behind the busy footer.
+  export FM_FAKE_CREW_STATE='state: working · source: run-step · test,fixing,3'
+  printf 'the fixer just edited this\n' > "$wt/src/main.c"
+  crew_worktree_written_since busy-writing "$state" "$state/.stale-since-$key" \
+    || fail "the fixture's own worktree write is not visible to the probe, so this case pins nothing"
+
+  PATH="$fakebin:$PATH" FM_FAKE_TMUX_WINDOW="$window" FM_FAKE_TMUX_CAPTURE="$capture_file" \
+    FM_STATE_OVERRIDE="$state" FM_CREW_STATE_BIN="$fakebin/fm-crew-state.sh" \
+    FM_BUSY_TURN_MAX_SECS=1 FM_STALE_ESCALATE_SECS=240 FM_PAUSE_RESURFACE_SECS=999 \
+    FM_POLL=1 FM_SIGNAL_GRACE=1 FM_CHECK_INTERVAL=999999 FM_HEARTBEAT=999999 "$WATCH" > "$out" &
+  pid=$!
+  wait_for_exit "$pid" 100 || fail "a written worktree suppressed the busy-turn bound escalation"
+  grep -F "stale: $window" "$out" >/dev/null || fail "the busy-turn bound did not print its stale wake"
+  grep -F "possible wedge" "$out" >/dev/null || fail "the busy-turn bound did not flag a possible wedge"
+  grep -F "writing its worktree" "$out" >/dev/null \
+    && fail "a busy pane past its turn bound was deferred as writing its worktree"
+  [ ! -e "$state/.defer-since-$key" ] || fail "a busy pane past its turn bound opened a deferral chain"
+  [ "$(cat "$state/.wedge-escalations-$key" 2>/dev/null || true)" = 1 ] \
+    || fail "the busy-turn escalation was not counted, so the ladder cannot climb"
+  FM_STATE_OVERRIDE="$state" "$DRAIN" > "$drain_out" 2>/dev/null || fail "drain after the busy-turn escalation failed"
+  grep "$(printf '\tstale\t')" "$drain_out" | grep -F "$window" >/dev/null || fail "the busy-turn escalation was not queued"
+  unset FM_FAKE_CREW_STATE
+  pass "a busy pane past its completed-turn bound still escalates even while its pipeline writes its worktree"
+}
+
 # A quiet stretch is ONE stretch however it is being explained, so evidence
 # switching mid-stretch must neither restart its age nor lose its throttle. Under
 # per-evidence chains it did both, depending on which markers were retired, and
@@ -5141,6 +5197,7 @@ test_pipeline_deferral_survives_repeated_windows
 test_pipeline_deferral_resurfaces_on_the_bounded_cadence
 test_busy_pane_evidence_does_not_borrow_the_pipeline_deferral
 test_busy_turn_bound_escalates_even_with_an_active_run_step
+test_busy_turn_bound_escalates_even_while_its_worktree_is_written
 test_deferral_chains_do_not_leak_age_across_a_switch
 test_stood_down_task_wakes_once_not_every_poll
 test_secondmate_home_supervision_churn_is_not_write_evidence

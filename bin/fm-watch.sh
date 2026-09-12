@@ -68,7 +68,9 @@
 #                          escalation count, and demand-deep-inspection marker,
 #                          for human inspection only - never an automatic
 #                          interrupt, signal, or restart of the worker or its
-#                          tool process.
+#                          tool process. Neither threshold deferral applies past
+#                          that bound: both explain an idle pane, and neither
+#                          says the agent behind a busy one is progressing.
 #   stale: <window> (unread firstmate instruction: ...)
 #                          the steering-inbox ladder spent its delivery-attempt
 #                          budget on an idle pane without an acknowledgement
@@ -942,18 +944,27 @@ clear_defer_tracking() {  # <window-key>
 # poll. Both answer from positive evidence, so a failed or unreadable probe is no
 # evidence and leaves the escalation schedule exactly as it was.
 #
-# <pipeline-eligible> (default 1) says whether the run-step deferral applies, and
-# the one caller that passes 0 is the reason the parameter exists. The run step
-# explains an IDLE pane: the daemon is working and the agent has nothing to do. It
-# explains nothing about a BUSY pane that has gone BUSY_TURN_MAX_SECS with no
-# completed turn - that bound exists precisely because a hung foreground call can
-# hide behind a busy signature, and an active run record is not evidence the AGENT
-# is progressing. bin/fm-crew-state.sh evaluates the run step before it ever reads
-# busy state, so without this opt-out a crewmate hung mid-turn on a task whose run
-# record still reads `running` would stop escalating at that bound, which is a real
-# narrowing of the alarm rather than a quietened false one.
-wedge_timer_check() {  # <window> <since-file> <triage-label> <escalation-count-file> <task> [pipeline-eligible]
-  local win=$1 since_file=$2 label=$3 escalation_file=$4 task=$5 pipeline_eligible=${6:-1} since age n reason
+# <defer-eligible> (default 1) says whether EITHER threshold deferral applies, and
+# the one caller that passes 0 is the reason the parameter exists. Both probes are
+# claims about an IDLE pane, and neither survives a BUSY pane that has gone
+# BUSY_TURN_MAX_SECS with no completed turn - a bound that exists precisely because
+# a hung foreground call can hide behind a busy signature.
+# The run step explains an idle pane: the daemon is working and the agent has
+# nothing to do. It is not evidence the AGENT is progressing, and
+# bin/fm-crew-state.sh evaluates the run step before it ever reads busy state, so a
+# crewmate hung mid-turn on a task whose run record still reads `running` answers
+# that probe too.
+# A worktree write is evidence that SOMETHING is writing, and is evidence about the
+# agent only when no pipeline owns the work - a no-mistakes fix round edits source
+# under the crew's own recorded worktree, and FM_WORKTREE_WRITE_PRUNE excludes .git
+# and generated trees, not source. On the idle path the run-step probe runs first
+# and returns early, so reaching the write probe there already establishes that no
+# pipeline owns the work and the writes are the agent's. Past the busy-turn bound
+# nothing establishes that, so the write probe would defer exactly the hung-mid-turn
+# crewmate the bound exists to catch, and both probes are skipped together. Gating
+# only one of them lets the alarm route around its own opt-out.
+wedge_timer_check() {  # <window> <since-file> <triage-label> <escalation-count-file> <task> [defer-eligible]
+  local win=$1 since_file=$2 label=$3 escalation_file=$4 task=$5 defer_eligible=${6:-1} since age n reason
   since=$(cat "$since_file" 2>/dev/null || true)
   case "$since" in
     ''|*[!0-9]*)
@@ -966,13 +977,15 @@ wedge_timer_check() {  # <window> <since-file> <triage-label> <escalation-count-
     *)
       age=$(( $(date +%s) - since ))
       if [ "$age" -ge "$STALE_ESCALATE_SECS" ]; then
-        if [ "$pipeline_eligible" -eq 1 ] && crew_pipeline_owns_work "$task"; then
-          wedge_defer "$win" "$since_file" "$label" "$age" pipeline
-          return 0
-        fi
-        if crew_worktree_written_since "$task" "$STATE" "$since_file"; then
-          wedge_defer "$win" "$since_file" "$label" "$age" writing
-          return 0
+        if [ "$defer_eligible" -eq 1 ]; then
+          if crew_pipeline_owns_work "$task"; then
+            wedge_defer "$win" "$since_file" "$label" "$age" pipeline
+            return 0
+          fi
+          if crew_worktree_written_since "$task" "$STATE" "$since_file"; then
+            wedge_defer "$win" "$since_file" "$label" "$age" writing
+            return 0
+          fi
         fi
         n=$(( $(cat "$escalation_file" 2>/dev/null || echo 0) + 1 ))
         echo "$n" > "$escalation_file"
@@ -1138,9 +1151,10 @@ busy_turn_bound_check() {  # <window> <task> <hash> <since-file> <escalation-fil
     handle_paused_stale "$win" "$task" "$h"
     return 0
   fi
-  # 0: a busy pane past its completed-turn bound gets no run-step deferral (see
-  # wedge_timer_check's header). The worktree-write probe still applies, because
-  # files appearing in the crew's own worktree are evidence the AGENT is working.
+  # 0: a busy pane past its completed-turn bound gets neither threshold deferral
+  # (see wedge_timer_check's header). Both are claims about an idle pane, and a
+  # worktree write is evidence about the AGENT only where no pipeline owns the
+  # work - which nothing establishes here.
   wedge_timer_check "$win" "$since_file" "busy (no completed turn)" "$escalation_file" "$task" 0
   return 1
 }

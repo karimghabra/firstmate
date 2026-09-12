@@ -758,6 +758,57 @@ test_enriched_wedge_under_declared_wait_uses_pause_cadence() {
   pass "an enriched wedge under a declared wait uses the pause cadence and restores wedge detection on resume"
 }
 
+# Every declaration the combined predicate admits needs its own arm in the pause
+# re-surface recheck, and the stand-down verb arrived without one. The failure is
+# silent and self-renewing: the recheck matched neither `captain-held` nor
+# `paused`, fell through to the marker drop, and migrate_watcher_pause_markers
+# recreated the marker with a fresh timestamp on the next tick - so a stood-down
+# task was absorbed forever in away mode with no digest at all, which is the one
+# thing this loop exists to prevent. A captain-held transfer IS deliberately silent
+# while the away-posture record exists; a stand-down is not that.
+test_stood_down_wait_resurfaces_on_the_pause_cadence() {
+  local dir state fakebin task win pane key escalations
+  dir=$(make_supercase stood-down-resurface)
+  state="$dir/state"; fakebin="$dir/fakebin"
+  task=stood-w1; win="sess:fm-$task"; pane="$dir/pane.txt"
+  key=$(printf '%s' "$task" | tr ':/.' '___')
+  fm_write_meta "$state/$task.meta" "window=$win" "backend=tmux"
+  # The shape a recorded stand-down leaves: work delivered and not landed, then
+  # firstmate's own declaration of the deliberate stop.
+  printf 'done: PR 42 pushed, awaiting the captain\nstood-down: captain stopped this crewmate on purpose\n' \
+    > "$state/$task.status"
+  printf 'idle prompt $\n' > "$pane"
+  # The marker has been aging for well past the cadence, so the recheck is due.
+  echo $(( $(date +%s) - 5000 )) > "$state/.subsuper-paused-$key"
+
+  PATH="$fakebin:$PATH" FM_FAKE_TMUX_WINDOW="$win" FM_FAKE_TMUX_CAPTURE="$pane" \
+    FM_STATE_OVERRIDE="$state" FM_ESCALATE_BATCH_SECS=999999 FM_PAUSE_RESURFACE_SECS=3600 \
+    housekeeping "$state"
+
+  # Scoped to the stand-down digest: the catch-all status scan independently
+  # surfaces the `done:` line beneath the declaration, which is its own contract.
+  escalations=$(grep -c "no agent by intent" "$state/.subsuper-escalations" 2>/dev/null || true)
+  [ "$escalations" = 1 ] \
+    || fail "a due stand-down produced $escalations rechecks, expected exactly one: $(cat "$state/.subsuper-escalations")"
+  grep -F "possible wedge" "$state/.subsuper-escalations" >/dev/null \
+    && fail "the stand-down recheck was mislabeled a possible wedge"
+  grep -F "awaiting external" "$state/.subsuper-escalations" >/dev/null \
+    && fail "the stand-down recheck borrowed the external-wait wording; nothing external clears it"
+  # The marker must be RESET rather than dropped: a dropped marker is silently
+  # recreated by the next housekeeping tick, which is how the absorb went unbounded.
+  [ -e "$state/.subsuper-paused-$key" ] \
+    || fail "the stand-down recheck dropped its pause marker instead of restarting the window"
+
+  # And the cadence holds: the freshly reset window produces no second digest.
+  : > "$state/.subsuper-escalations"
+  PATH="$fakebin:$PATH" FM_FAKE_TMUX_WINDOW="$win" FM_FAKE_TMUX_CAPTURE="$pane" \
+    FM_STATE_OVERRIDE="$state" FM_ESCALATE_BATCH_SECS=999999 FM_PAUSE_RESURFACE_SECS=3600 \
+    housekeeping "$state"
+  grep -F "no agent by intent" "$state/.subsuper-escalations" >/dev/null \
+    && fail "a stand-down re-surfaced twice inside one window: $(cat "$state/.subsuper-escalations")"
+  pass "a stood-down task re-surfaces once per pause cadence in away mode instead of being absorbed forever"
+}
+
 test_stale_terminal_escalates() {
   local dir state out
   dir=$(make_supercase stale-terminal)
@@ -2674,6 +2725,7 @@ test_classify_check_and_unknown_escalate
 test_stale_transient_self_records_marker
 test_stale_diagnostic_wedge_survives_busy_housekeeping
 test_enriched_wedge_under_declared_wait_uses_pause_cadence
+test_stood_down_wait_resurfaces_on_the_pause_cadence
 test_stale_terminal_escalates
 test_stale_actionable_wait_escalates_and_keeps_pause_cadence
 test_stale_paused_classifies_pause
