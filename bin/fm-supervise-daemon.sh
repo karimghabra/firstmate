@@ -425,12 +425,22 @@ classify_stale() {  # <window> <state> [<span-record> <span-status>]
     return
   fi
   if [ -n "$last" ] && status_is_paused_or_captain_held "$last"; then
-    # A DECLARED external-wait pause or a verified captain-held transfer
-    # (fm-classify-lib.sh owns which declarations qualify): an idle pane is
-    # EXPECTED, so this is not a wedge. The caller records a pause marker (long
-    # re-surface cadence in housekeeping) rather than a wedge stale marker. Cheap:
-    # reuses the status line already read, no fm-crew-state.sh call, mirroring the
-    # daemon's existing status-log classification.
+    # A DECLARED wait - an external-wait pause, a verified captain-held transfer,
+    # or a recorded stand-down (fm-classify-lib.sh owns which declarations
+    # qualify): an idle pane is EXPECTED, so this is not a wedge. The caller
+    # records a pause marker (long re-surface cadence in housekeeping) rather than
+    # a wedge stale marker. Cheap: reuses the status line already read, no
+    # fm-crew-state.sh call, mirroring the daemon's existing status-log
+    # classification.
+    # The routing is one routing, but the wording is not: nothing EXTERNAL is
+    # going to clear a stand-down, so naming it an external wait would send the
+    # reader of this log looking for a dependency that does not exist - the same
+    # reason the housekeeping digest and the watcher's recheck each give it its
+    # own wording.
+    if status_is_stood_down "$last"; then
+      printf 'pause|stood down (no agent by intent, it clears when the work resumes or lands), rechecked on a long cadence: %s' "$last"
+      return
+    fi
     printf 'pause|paused (awaiting external), rechecked on a long cadence: %s' "$last"
     return
   fi

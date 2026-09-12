@@ -96,12 +96,19 @@ fm_stand_down_path() {  # <state-dir> <task-id>
 # a well-formed record exists; 1 and clears both otherwise.
 #
 # A malformed, unreadable, or symlinked record answers 1, which reads as "not
-# stood down" and so restores the ordinary alarm rather than suppressing it. That
-# is the safe direction for a record whose whole job is to quieten an alarm: a
-# record nobody can parse must never be trusted to silence one. The symlink
-# rejection is what keeps the answer bound to this home's own state directory,
-# and the field validation below is what keeps a truncated or half-written file
-# from reading as a decision somebody made.
+# stood down". That is the safe direction for a record whose whole job is to
+# quieten an alarm: a record nobody can parse must never be trusted to silence
+# one. The symlink rejection is what keeps the answer bound to this home's own
+# state directory, and the field validation below is what keeps a truncated or
+# half-written file from reading as a decision somebody made.
+#
+# This answer restores the ordinary ALARM, not merely the reader's verdict, and
+# the difference is load-bearing because the two halves of the state can disagree:
+# the log's `stood-down:` declaration would otherwise keep absorbing the pane on
+# its own while the record backing it was unreadable. bin/fm-watch.sh's
+# pause_state_class is what closes that - it refuses to admit a stood-down
+# declaration whose record does not read here, so the pane goes back on the wedge
+# schedule rather than sitting absorbed behind a record nobody can parse.
 fm_stand_down_read() {  # <state-dir> <task-id>
   local path line
   FM_STAND_DOWN_RECORDED=
@@ -153,13 +160,16 @@ fm_stand_down_remove() {  # <state-dir> <task-id>
   rm -f -- "$(fm_stand_down_path "$1" "$2")"
 }
 
-# The one line that stops a status log declaring a stand-down. `note:` is an
-# existing informational verb that declares no wait, closes no keyed decision, and
-# claims nothing about the work - which is exactly the whole of what firstmate may
-# say here. A `working:` line would claim progress on the worker's behalf, and a
+# The one line that stops a status log declaring a stand-down. It uses the
+# informational verb bin/fm-classify-lib.sh owns as FM_CLASSIFY_NOTE_VERB, which
+# declares no wait, closes no keyed decision, and claims nothing about the work -
+# exactly the whole of what firstmate may say here. No other verb in that
+# vocabulary fits: `working:` would claim progress on the worker's behalf, a
 # terminal verb would be the false completion this record exists so that nobody
-# has to write.
-FM_STAND_DOWN_RELEASE_LINE='note: stand-down released by firstmate; this task declares no wait'
+# has to write, `resolved:` would close a keyed decision that was never opened,
+# and the remaining verbs each declare a wait, which is the one thing this line
+# must undo.
+FM_STAND_DOWN_RELEASE_LINE="${FM_CLASSIFY_NOTE_VERB:-${FM_CLASSIFY_NOTE_VERB_DEFAULT:-note}}: stand-down released by firstmate; this task declares no wait"
 
 # The declared-wait line firstmate appends when it records a stand-down for
 # <reason>. bin/fm-classify-lib.sh owns the verb; the reason is already validated

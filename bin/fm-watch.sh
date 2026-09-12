@@ -1104,14 +1104,21 @@ handle_paused_stale() {  # <window> <task> <hash>
 # the expected external wait. The caller has already confirmed liveness through
 # the busy verdict, so this exception does not suppress undeclared wedges or
 # alter the separate non-busy classification. handle_paused_stale keeps the
-# exception bounded by re-surfacing it once per PAUSE_RESURFACE_SECS. Away mode
+# exception bounded by re-surfacing it once per PAUSE_RESURFACE_SECS.
+# A stood-down declaration is deliberately NOT admitted here, which is why this
+# asks status_wait_explains_a_busy_pane rather than the combined predicate the
+# loop-top reconciliation uses. `paused:` and captain-held absorb a busy pane
+# because there the busy verdict IS the declared long call. A stand-down asserts
+# the opposite - that the agent is GONE - so a busy verdict is positive evidence
+# the record must not be believed, and the pane falls through to the wedge timer
+# exactly as an undeclared busy pane does. Away mode
 # remains daemon-owned and receives the undecorated wake identity for its own
 # classification, which is why the declaration is read before the afk branch
 # rather than after it.
 busy_turn_bound_check() {  # <window> <task> <hash> <since-file> <escalation-file>
   local win=$1 task=$2 h=$3 since_file=$4 escalation_file=$5 key statusf declared
   statusf="$STATE/$task.status"
-  if status_is_paused_or_captain_held "$(last_status_line "$statusf")"; then
+  if status_wait_explains_a_busy_pane "$(last_status_line "$statusf")"; then
     if afk_present; then
       # Away mode is daemon-owned, so this bound hands off the PLAIN wake identity
       # and lets the daemon classify the declaration itself - the undecorated
@@ -1197,6 +1204,18 @@ pause_state_class() {  # <window> <task>
   # Read once past the declared-wait gate and reused by both liveness gates below,
   # so a mate's stale poll costs one metadata scan rather than one per gate, and the
   # far more common no-declaration path above still costs none.
+  # A stand-down is the one declaration whose admissibility depends on a record
+  # outside the log, and a record nobody can parse must never be trusted to
+  # quieten an alarm. Answering `none` here is what makes that true of the ALARM
+  # and not merely of the reader: the caller routes an unadmitted stood-down pane
+  # to the wedge timer, so a malformed, truncated, or symlinked record restores
+  # the ordinary schedule instead of leaving the pane absorbed under the generic
+  # external-wait wording. A local file read, never a backend probe.
+  if status_is_stood_down "$last" && ! fm_stand_down_read "$STATE" "$task"; then
+    rm -f "$recheck_file"
+    printf 'none'
+    return
+  fi
   kind=$(window_kind "$win")
   if [ -e "$STATE/.paused-$key" ] && [ "$(age_of "$recheck_file")" -lt "$STALE_ESCALATE_SECS" ]; then
     if [ "$kind" != secondmate ]; then
@@ -2391,7 +2410,19 @@ EOF
                          printf '%s' "$h" > "$sf"
                          wedge_timer_check "$w" "$ssf" "non-terminal stale (provably working after a declared pause)" "$ewf" "$task"
                          triage_log "absorbed non-terminal stale (provably working): $w" ;;
-                *)       handle_paused_stale "$w" "$task" "$h" ;;
+                # Anything else means the wait was not admitted, and for an
+                # ordinary crew that is precisely because its agent did NOT read
+                # dead. A `paused:` worker is entitled to be alive - the wait is
+                # its own - so it keeps the bounded cadence. A stand-down asserts
+                # the agent is gone, so the same answer refutes it: absorbing here
+                # would put a live, possibly wedged crewmate on the four-hour
+                # cadence under a record the readers already refuse to honor.
+                *)       if status_is_stood_down "$(last_status_line "$STATE/$task.status")"; then
+                           clear_pause_state "$key"
+                           wedge_timer_check "$w" "$ssf" "non-terminal stale (stood down, agent not provably gone)" "$ewf" "$task"
+                         else
+                           handle_paused_stale "$w" "$task" "$h"
+                         fi ;;
               esac
             else
               wedge_timer_check "$w" "$ssf" "non-terminal stale" "$ewf" "$task"

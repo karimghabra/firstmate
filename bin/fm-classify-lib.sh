@@ -143,6 +143,20 @@ FM_CLASSIFY_CAPTAIN_HELD_VERB_DEFAULT='captain-held'
 # record. FM_CLASSIFY_STOOD_DOWN_VERB overrides it.
 FM_CLASSIFY_STOOD_DOWN_VERB_DEFAULT='stood-down'
 
+# The informational verb: a line that records something for a human to read and
+# declares NOTHING about state - no wait, no keyed decision, no claim about the
+# work. bin/fm-wake-drain.sh already surfaces `note:` lines as unread status
+# because they never enter the OPEN DECISIONS fold; this constant is what makes
+# the verb owned vocabulary rather than a literal, so the classifier excludes it
+# by verb like every other non-captain-relevant verb instead of leaving it to be
+# matched as free text against an operator-configurable FM_CAPTAIN_RE.
+# It exists as a verb firstmate can append when it must stop a declaration
+# WITHOUT asserting anything in the worker's place: every other verb this library
+# names either declares a wait, closes a keyed decision, or states how the work
+# itself stands, and none of those is true of "that declaration is over".
+# FM_CLASSIFY_NOTE_VERB overrides it.
+FM_CLASSIFY_NOTE_VERB_DEFAULT='note'
+
 # Return the last non-blank line of a status file (empty if missing/blank).
 last_status_line() {
   local f=$1
@@ -174,7 +188,7 @@ status_is_captain_relevant() {
   status_is_paused "$line" && return 1
   verb=$(status_line_verb "$line")
   case "$verb" in
-    working|resolved|captain-held|"${FM_CLASSIFY_PAUSED_VERB:-$FM_CLASSIFY_PAUSED_VERB_DEFAULT}"|"${FM_CLASSIFY_STOOD_DOWN_VERB:-$FM_CLASSIFY_STOOD_DOWN_VERB_DEFAULT}")
+    working|resolved|captain-held|"${FM_CLASSIFY_PAUSED_VERB:-$FM_CLASSIFY_PAUSED_VERB_DEFAULT}"|"${FM_CLASSIFY_STOOD_DOWN_VERB:-$FM_CLASSIFY_STOOD_DOWN_VERB_DEFAULT}"|"${FM_CLASSIFY_NOTE_VERB:-$FM_CLASSIFY_NOTE_VERB_DEFAULT}")
       return 1
       ;;
   esac
@@ -219,6 +233,20 @@ status_is_stood_down() {  # <status-line>
   [ -n "$line" ] || return 1
   verb=$(status_line_verb "$line")
   [ "$verb" = "${FM_CLASSIFY_STOOD_DOWN_VERB:-$FM_CLASSIFY_STOOD_DOWN_VERB_DEFAULT}" ]
+}
+
+# 0 if a status line declares a wait that can legitimately hold a pane BUSY.
+# The discriminator the busy-turn bound needs, and the reason it cannot ask the
+# combined predicate below. A `paused:` wait and a verified captain-held transfer
+# are compatible with a live busy pane - a worker parked on a long foreground call
+# it keeps alive for the length of the wait is exactly what they describe, so the
+# busy verdict IS the declaration. A stand-down asserts the opposite: that the
+# agent is GONE. For a stand-down a busy verdict is therefore positive evidence
+# that the record must not be believed, so it is excluded here and its pane stays
+# on the wedge ladder.
+status_wait_explains_a_busy_pane() {  # <status-line>
+  local line=$1
+  status_is_paused "$line" || status_is_captain_held "$line"
 }
 
 # 0 if a status line declares any wait: an external-wait pause, a verified
@@ -1500,7 +1528,7 @@ status_line_is_unread_surface() {  # <status-line>
   local line=$1 verb key note resolve held prefix
   [ -n "$line" ] || return 1
   verb=$(status_line_verb "$line")
-  [ "$verb" = note ] && return 0
+  [ "$verb" = "${FM_CLASSIFY_NOTE_VERB:-$FM_CLASSIFY_NOTE_VERB_DEFAULT}" ] && return 0
   resolve=${FM_CLASSIFY_RESOLVE_VERB:-$FM_CLASSIFY_RESOLVE_VERB_DEFAULT}
   held=${FM_CLASSIFY_CAPTAIN_HELD_VERB:-$FM_CLASSIFY_CAPTAIN_HELD_VERB_DEFAULT}
   case "$verb" in
