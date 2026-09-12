@@ -1074,7 +1074,14 @@ handle_paused_stale() {  # <window> <task> <hash>
       declaration="$declaration:due"
       min_age=0
     fi
-  elif fm_stand_down_read "$STATE" "$task"; then
+  elif status_is_stood_down "$last" && fm_stand_down_read "$STATE" "$task"; then
+    # Selected by the DECLARATION, never by the record alone: the log is what says
+    # which kind of wait a pane is in, and the record only supplies this one's
+    # reason and epoch once the log has established that. Asking the record first
+    # let a leftover record hijack a worker's own `paused:` wait - mislabelling the
+    # wake, reporting the record's age instead of the declaration's, and binding
+    # the re-surface throttle to the record's identity, so the worker's brand-new
+    # wait inherited the silence of a window scoped to something else.
     # A stand-down reaches this absorber as an ordinary declared wait - its own
     # `stood-down:` line is on the log - but it is NOT an EXTERNAL wait and must
     # not borrow that wording: nothing external is going to clear it, so "confirm
@@ -1216,7 +1223,7 @@ pause_state_class() {  # <window> <task>
   # to the wedge timer, so a malformed, truncated, or symlinked record restores
   # the ordinary schedule instead of leaving the pane absorbed under the generic
   # external-wait wording. A local file read, never a backend probe.
-  if status_is_stood_down "$last" && ! fm_stand_down_read "$STATE" "$task"; then
+  if ! fm_stand_down_declared_wait_admissible "$STATE" "$task" "$last"; then
     rm -f "$recheck_file"
     printf 'none'
     return

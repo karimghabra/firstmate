@@ -32,7 +32,7 @@ wake() { printf '%s\n' "$1" >> "$WAKE_LOG"; return 0; }
 sleep() { printf 'SLEEP\n' >> "$SLEEP_LOG"; }
 
 reset_state() {
-  rm -f "$STATE_DIR"/*.meta "$STATE_DIR"/*.status "$STATE_DIR"/.wake-queue \
+  rm -f "$STATE_DIR"/*.meta "$STATE_DIR"/*.status "$STATE_DIR"/*.stood-down "$STATE_DIR"/.wake-queue \
     "$STATE_DIR"/.wake-queue.seq "$STATE_DIR"/.watch-triage.log \
     "$STATE_DIR"/.herdr-escalated-* "$TMP"/panes "$TMP"/wtcalls "$TMP"/wtcalled 2>/dev/null || true
   : > "$WAKE_LOG"
@@ -94,6 +94,45 @@ fi
 [ ! -s "$WAKE_LOG" ] || fail "a captain-held crew must not wake the supervisor from the event fast-path"
 grep -q 'absorbed push' "$STATE_DIR/.watch-triage.log" 2>/dev/null || fail "the captain-held absorb should be logged to the triage log"
 pass "handle_push_transition: a captain-held crew is absorbed (no fast wake), left to the poll loop's long cadence"
+
+# --- handle_push_transition: a stand-down absorbs only when its record reads ---
+# The declaration is half the state; the record is the other half, and a record
+# nobody can parse must never be trusted to quieten an alarm. This handler is the
+# third consumer of that rule, so it asks the same shared admission test the
+# watcher and the away daemon ask rather than the declaration alone.
+
+reset_state
+fm_write_meta "$STATE_DIR/tk2s.meta" "window=default:wG:pQ" "backend=herdr" "kind=ship"
+printf 'done: PR 42 pushed, awaiting the captain
+stood-down: captain stopped this crewmate on purpose
+'   > "$STATE_DIR/tk2s.status"
+printf 'recorded=%s
+reason=captain stopped this crewmate on purpose
+' "$(date +%s)"   > "$STATE_DIR/tk2s.stood-down"
+handle_push_transition herdr default "$(mkrec wG:pQ blocked)"
+if [ -e "$STATE_DIR/.wake-queue" ] && grep -q 'stale' "$STATE_DIR/.wake-queue"; then
+  fail "a backed stand-down must NOT be fast-escalated: $(cat "$STATE_DIR/.wake-queue")"
+fi
+[ ! -s "$WAKE_LOG" ] || fail "a backed stand-down must not wake the supervisor from the event fast-path"
+grep -q 'absorbed push' "$STATE_DIR/.watch-triage.log" 2>/dev/null || fail "the stand-down absorb should be logged to the triage log"
+pass "handle_push_transition: a stood-down crew whose record reads is absorbed (no fast wake)"
+
+# The regression: same declaration, half-written record. Before the shared gate
+# reached this handler the declaration alone absorbed the transition, so a
+# leftover or corrupt record swallowed a live agent's decision point.
+reset_state
+fm_write_meta "$STATE_DIR/tk2u.meta" "window=default:wG:pQ" "backend=herdr" "kind=ship"
+printf 'done: PR 42 pushed, awaiting the captain
+stood-down: captain stopped this crewmate on purpose
+'   > "$STATE_DIR/tk2u.status"
+printf 'recorded=notanumber
+reason=captain stopped this crewmate on purpose
+'   > "$STATE_DIR/tk2u.stood-down"
+handle_push_transition herdr default "$(mkrec wG:pQ blocked)"
+[ -e "$STATE_DIR/.wake-queue" ]   || fail "a stand-down whose record does not parse must still enqueue the transition"
+grep -q 'herdr: agent blocked' "$STATE_DIR/.wake-queue"   || fail "the enqueued wake must name the herdr-blocked cause: $(cat "$STATE_DIR/.wake-queue")"
+[ -s "$WAKE_LOG" ] || fail "an unparseable stand-down record must not absorb a live agent's decision point"
+pass "handle_push_transition: a stood-down crew whose record does not parse escalates as usual"
 
 # --- event_wait_or_sleep: secondmate windows are excluded from the pane list --
 

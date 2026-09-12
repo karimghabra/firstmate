@@ -15,6 +15,8 @@ FM_PUSH_TRANSITION_LIB_DIR="$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)"
 . "$FM_PUSH_TRANSITION_LIB_DIR/fm-backend.sh"
 # shellcheck source=bin/fm-transition-lib.sh
 . "$FM_PUSH_TRANSITION_LIB_DIR/fm-transition-lib.sh"
+# shellcheck source=bin/fm-stand-down-lib.sh
+. "$FM_PUSH_TRANSITION_LIB_DIR/fm-stand-down-lib.sh"
 
 TRIAGE_LOG="$STATE/.watch-triage.log"
 TRIAGE_LOG_MAX_BYTES=${FM_WATCH_TRIAGE_LOG_MAX_BYTES:-262144}
@@ -147,10 +149,18 @@ handle_push_transition() {  # <backend> <session> <record>
   window="$session:$pane_id"
   task=$(window_to_task "$window" "$STATE")
   # A declared wait already names the human this transition would report: an
-  # external dependency, or the captain a verified hold transferred the work to.
-  # Either way the wait is durably recorded, so absorb the immediate escalation
-  # and leave the bounded re-surface to the watcher's own pause cadence.
-  if status_is_paused_or_captain_held "$(last_status_line "$STATE/$task.status")"; then
+  # external dependency, the captain a verified hold transferred the work to, or
+  # a recorded deliberate stop. Either way the wait is durably recorded, so absorb
+  # the immediate escalation and leave the bounded re-surface to the watcher's own
+  # pause cadence.
+  # Admissibility is bin/fm-stand-down-lib.sh's single owner, shared with the
+  # watcher and the away-mode daemon, so a stood-down declaration whose record
+  # does not parse absorbs nothing here either. LIVENESS is not read on this path,
+  # and that gap is stated plainly in that library's header rather than papered
+  # over: a herdr agent-status push IS live-agent evidence, so a leftover record
+  # beside a restarted agent still absorbs this transition.
+  if fm_stand_down_declared_wait_admissible "$STATE" "$task" \
+    "$(last_status_line "$STATE/$task.status")"; then
     triage_log "absorbed push $to (declared wait, awaiting external or captain): $window"
     fm_backend_commit_transition "$backend" "$STATE" "$session" "$record" || exit 1
     return

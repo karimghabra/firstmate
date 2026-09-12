@@ -3466,6 +3466,62 @@ test_stood_down_with_an_unreadable_record_is_not_absorbed() {
   pass "a stood-down declaration over an unreadable record restores the ordinary alarm rather than absorbing the pane"
 }
 
+# The record says WHAT a stand-down is; the LOG says which kind of wait a pane is
+# in. Selecting the stand-down wording on the record alone let a leftover record
+# hijack a worker's own `paused:` wait - a reachable state, because a relaunch is
+# the only path that retires a record, so an agent restarted by any other route
+# leaves one behind. The damage was not only the wrong label: the re-surface
+# throttle was bound to the record's identity, which never changes, so the
+# worker's brand-new declaration inherited the silence of the stand-down window
+# before it. This fixture puts that stale throttle on disk and asserts the new
+# wait still gets its own window.
+test_a_leftover_record_does_not_hijack_a_workers_own_paused_wait() {
+  local dir state fakebin out capture_file window key pane_hash sig pid recorded
+  dir=$(make_case stood-down-leftover); state="$dir/state"; fakebin="$dir/fakebin"
+  out="$dir/watch.out"; capture_file="$dir/pane.txt"
+  window="test:fm-leftover"
+  printf 'a quiet pane whose worker declared its own wait' > "$capture_file"
+  printf 'window=%s\nkind=ship\n' "$window" > "$state/leftover.meta"
+  # Stood down once, then resumed without a relaunch, and the worker declared a
+  # wait of its OWN before its agent exited again.
+  printf 'stood-down: captain stopped this crewmate on purpose\npaused: waiting on the captain to answer the routing question\n' \
+    > "$state/leftover.status"
+  sig=$(seen_sig "$state/leftover.status"); printf '%s' "$sig" > "$state/.seen-leftover_status"
+  recorded=$(( $(date +%s) - 90000 ))
+  printf 'recorded=%s\nreason=captain stopped this crewmate on purpose\n' "$recorded" \
+    > "$state/leftover.stood-down"
+  key=$(printf '%s' "$window" | tr ':/.' '___')
+  pane_hash=$(hash_text "a quiet pane whose worker declared its own wait")
+  printf '%s' "$pane_hash" > "$state/.hash-$key"
+  printf '1\n' > "$state/.count-$key"
+  printf '%s' "$pane_hash" > "$state/.stale-$key"
+  : > "$state/.paused-$key"
+  date +%s > "$state/.paused-rechecked-$key"
+  # The throttle the previous stand-down window left behind, freshly stamped: if
+  # the absorber scopes this wait to the record again, this marker silences it.
+  printf 'stood-down:%s' "$recorded" > "$state/.paused-resurfaced-$key"
+  # The pane shell outlives the agent, so the agent reads dead and the declared
+  # wait is admitted - isolating this case to WHICH wait the absorber names.
+  export FM_FAKE_TMUX_CURRENT_COMMAND=bash
+  export FM_FAKE_CREW_STATE='state: paused · source: status-log · declared wait'
+
+  PATH="$fakebin:$PATH" FM_FAKE_TMUX_WINDOW="$window" FM_FAKE_TMUX_CAPTURE="$capture_file" \
+    FM_STATE_OVERRIDE="$state" FM_CREW_STATE_BIN="$fakebin/fm-crew-state.sh" \
+    FM_STALE_ESCALATE_SECS=240 FM_PAUSE_RESURFACE_SECS=240 FM_POLL=1 FM_SIGNAL_GRACE=1 \
+    FM_CHECK_INTERVAL=999999 FM_HEARTBEAT=999999 "$WATCH" > "$out" &
+  pid=$!
+  wait_for_exit "$pid" 100 \
+    || fail "the worker's own declared wait inherited the stand-down window's silence: $(cat "$out")"
+  grep -F "awaiting external" "$out" >/dev/null \
+    || fail "a worker-declared pause was not reported as an external wait: $(cat "$out")"
+  grep -F "no agent by intent" "$out" >/dev/null \
+    && fail "a leftover record relabelled the worker's own pause as a stand-down"
+  grep -F "$(( $(date +%s) - recorded ))" "$out" >/dev/null \
+    && fail "the wake reported the record's age instead of the declaration's"
+  unset FM_FAKE_CREW_STATE FM_FAKE_TMUX_CURRENT_COMMAND
+  pass "a leftover stand-down record never relabels or re-scopes a worker's own declared pause"
+}
+
 # Regression fixture for the incident's actual masking condition: Pi's rendered
 # elapsed-time footer changes every poll, so the pane hash never repeats and the
 # watcher always takes the "new hash" branch, never the stable-hash one above.
@@ -5349,6 +5405,7 @@ test_stood_down_task_wakes_once_not_every_poll
 test_busy_stood_down_pane_still_escalates_past_its_turn_bound
 test_idle_stood_down_pane_with_a_live_agent_escalates
 test_stood_down_with_an_unreadable_record_is_not_absorbed
+test_a_leftover_record_does_not_hijack_a_workers_own_paused_wait
 test_secondmate_home_supervision_churn_is_not_write_evidence
 test_timer_repair_drops_a_finished_write_deferral_chain
 test_terminal_first_sight_drops_a_finished_write_deferral_chain
