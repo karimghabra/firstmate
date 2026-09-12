@@ -1169,7 +1169,9 @@ pause_state_class() {  # <window> <task>
   recheck_file="$STATE/.paused-rechecked-$key"
   if ! status_is_paused_or_captain_held "$last"; then
     rm -f "$recheck_file"
-    crew_absorb_class "$task"
+    class=$(crew_absorb_class "$task")
+    case "$class" in paused) class=none ;; esac
+    printf '%s' "$class"
     return
   fi
   # Read once past the declared-wait gate and reused by both liveness gates below,

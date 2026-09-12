@@ -3427,6 +3427,57 @@ test_a_leftover_record_does_not_hijack_a_workers_own_paused_wait() {
   pass "a leftover stand-down record never relabels or re-scopes a worker's own declared pause"
 }
 
+# The record alone must never classify a pane as a declared wait. A stand-down
+# record outlives an agent restarted by any route but a relaunch, and the crew
+# state it produces for the restarted-then-exited agent is `paused · stood-down`
+# while the log's last line declares no wait at all. Absorbing that as a pause
+# labels it an external wait nobody declared, and the loop-top reconciliation
+# then strips the marker and its re-surface throttle on the next poll, so the
+# wake repeats every cycle. This fixture holds the record and the crew-state
+# verdict while the log says `working:`, and asserts the ordinary stale path.
+test_a_record_without_a_declaration_is_not_absorbed_as_a_pause() {
+  local dir state fakebin out capture_file window key pane_hash sig pid back
+  dir=$(make_case stood-down-undeclared); state="$dir/state"; fakebin="$dir/fakebin"
+  out="$dir/watch.out"; capture_file="$dir/pane.txt"
+  window="test:fm-undeclared"
+  printf 'a quiet pane whose log declares no wait at all' > "$capture_file"
+  printf 'window=%s\nkind=ship\n' "$window" > "$state/undeclared.meta"
+  # Resumed without a relaunch, so the record survives; the restarted agent wrote
+  # its own working: line and then exited, leaving the pane shell behind.
+  printf 'working: reindexing the backlog\n' > "$state/undeclared.status"
+  back=$(( $(date +%s) - 5000 ))
+  set_mtime "$back" "$state/undeclared.status"
+  sig=$(seen_sig "$state/undeclared.status"); printf '%s' "$sig" > "$state/.seen-undeclared_status"
+  printf 'recorded=%s\nreason=captain stopped this crewmate on purpose\n' "$back" \
+    > "$state/undeclared.stood-down"
+  key=$(printf '%s' "$window" | tr ':/.' '___')
+  pane_hash=$(hash_text "a quiet pane whose log declares no wait at all")
+  printf '%s' "$pane_hash" > "$state/.hash-$key"
+  printf '1\n' > "$state/.count-$key"
+  # The pane shell outlives the agent, so fm-crew-state.sh honors the record and
+  # reports the stand-down verdict - the only thing that could class this paused.
+  export FM_FAKE_TMUX_CURRENT_COMMAND=bash
+  export FM_FAKE_CREW_STATE='state: paused · source: stood-down · stopped by intent: captain stopped this crewmate on purpose'
+
+  PATH="$fakebin:$PATH" FM_FAKE_TMUX_WINDOW="$window" FM_FAKE_TMUX_CAPTURE="$capture_file" \
+    FM_STATE_OVERRIDE="$state" FM_CREW_STATE_BIN="$fakebin/fm-crew-state.sh" \
+    FM_STALE_ESCALATE_SECS=240 FM_PAUSE_RESURFACE_SECS=1 FM_POLL=1 FM_SIGNAL_GRACE=1 \
+    FM_CHECK_INTERVAL=999999 FM_HEARTBEAT=999999 "$WATCH" > "$out" &
+  pid=$!
+  wait_for_exit "$pid" 100 || fail "an undeclared pane behind a stand-down record was absorbed instead of surfaced"
+  grep -F "awaiting external" "$out" >/dev/null \
+    && fail "a record with no declaration was absorbed under the generic external-wait wording: $(cat "$out")"
+  grep -F "no agent by intent" "$out" >/dev/null \
+    && fail "a record with no declaration was absorbed on the stand-down cadence: $(cat "$out")"
+  grep -F "stale: $window" "$out" >/dev/null \
+    || fail "the undeclared pane did not take the ordinary stale path: $(cat "$out")"
+  [ ! -e "$state/.paused-$key" ] \
+    || fail "an undeclared pane kept a pause marker the next poll would strip, re-waking every cycle"
+  unset FM_FAKE_CREW_STATE FM_FAKE_TMUX_CURRENT_COMMAND
+  pass "a stand-down record with no declaration on the log is not absorbed as a declared pause"
+}
+
+
 # Regression fixture for the incident's actual masking condition: Pi's rendered
 # elapsed-time footer changes every poll, so the pane hash never repeats and the
 # watcher always takes the "new hash" branch, never the stable-hash one above.
@@ -5106,6 +5157,7 @@ test_busy_stood_down_pane_still_escalates_past_its_turn_bound
 test_idle_stood_down_pane_with_a_live_agent_escalates
 test_stood_down_with_an_unreadable_record_is_not_absorbed
 test_a_leftover_record_does_not_hijack_a_workers_own_paused_wait
+test_a_record_without_a_declaration_is_not_absorbed_as_a_pause
 test_secondmate_home_supervision_churn_is_not_write_evidence
 test_timer_repair_drops_a_finished_write_deferral_chain
 test_terminal_first_sight_drops_a_finished_write_deferral_chain
