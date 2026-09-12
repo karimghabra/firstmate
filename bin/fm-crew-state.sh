@@ -964,12 +964,11 @@ fi
 # looping or hung behind a frozen busy footer - is not stood down whatever the
 # record says, so it falls through to the ordinary classification below and stays
 # fully visible to the wedge ladder. Anything else is a probe that failed to
-# answer, which is not proof of anything and keeps its existing verdict.
+# answer, which is not proof of anything and keeps its existing verdict - and
+# that covers a backend with no recovery-grade classifier without restating the
+# table, because bin/fm-backend.sh already answers `unverified` for those.
 if fm_stand_down_read "$STATE" "$ID"; then
-  case "$TASK_BACKEND" in
-    tmux|herdr) STAND_DOWN_AGENT=$(fm_backend_agent_state "$TASK_BACKEND" "$BACKEND_TARGET" 2>/dev/null) || STAND_DOWN_AGENT=unreadable ;;
-    *) STAND_DOWN_AGENT=unverified ;;
-  esac
+  STAND_DOWN_AGENT=$(fm_backend_agent_state "$TASK_BACKEND" "$BACKEND_TARGET" 2>/dev/null) || STAND_DOWN_AGENT=unreadable
   case "$STAND_DOWN_AGENT" in
     dead|missing)
       emit paused stood-down \

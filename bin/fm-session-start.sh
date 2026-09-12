@@ -859,13 +859,12 @@ for meta in "$STATE"/*.meta; do
     # Reading the local record first keeps the extra agent-state probe off the
     # ordinary path: a task with no record costs exactly what it did before.
     # An `alive` agent is never stood down whatever the record says, so a wedged
-    # worker still reports as it always did and stays a recovery trigger.
+    # worker still reports as it always did and stays a recovery trigger; so does
+    # any answer that is not proven death, including the `unverified` that
+    # bin/fm-backend.sh returns for a backend with no recovery-grade classifier.
     stood_down_state=
     if fm_stand_down_read "$STATE" "$id"; then
-      case "$backend" in
-        tmux|herdr) stood_down_state=$(fm_backend_agent_state "$backend" "${target:-$window}" 2>/dev/null) || stood_down_state=unreadable ;;
-        *) stood_down_state=unverified ;;
-      esac
+      stood_down_state=$(fm_backend_agent_state "$backend" "${target:-$window}" 2>/dev/null) || stood_down_state=unreadable
     fi
     case "$stood_down_state" in
       dead|missing)

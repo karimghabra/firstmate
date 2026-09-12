@@ -59,7 +59,7 @@ Be clear with yourself about what you have and have not just done:
 
 - You have recorded NO completion. There is no backlog transition at all; the item stays in flight because the work is still open.
 - You have landed, discarded, and unblocked nothing. The branch is untouched, unlanded work is still unlanded, and this task still has to be finished or landed like any other open item.
-- You have not spoken for the worker. Its status log keeps exactly what it last wrote.
+- You have not spoken for the worker about its work. Firstmate appends exactly one `stood-down:` line to its status log, and `--release` appends one line retiring it; neither claims progress or completion, and everything the worker itself wrote stays beneath them. That declaration is not decoration - it is what every supervisor reconciles a paused pane against, so without it the task would re-alarm every poll.
 - This is not a cleanup shortcut. If the work is landed, tear the task down; if it is not, all this changes is how the missing agent is reported.
 
 And never reach for it to quieten a task that is actually stuck.
@@ -68,7 +68,8 @@ That refusal needs a backend that can prove whether an agent is alive, which tod
 No tool can read intent: a crash and a deliberate stop leave the same dead agent, so the reason you write IS the claim that this stop was on purpose.
 A worker that actually died is a failure to recover or report, not a stand-down.
 
-Retire the record when the work resumes or lands - `bin/fm-stand-down.sh <task-id> --release`, which `bin/fm-control.sh <task-id> relaunch` does for you; retiring works on every backend.
+Recording is also refused for a task whose metadata records no endpoint at all, since there is nothing there to ask and no reader could honor the result; reconcile that task's ownership through this playbook's session-start procedure above first.
+Retire the stand-down when the work resumes or lands - `bin/fm-stand-down.sh <task-id> --release`, which retires both halves, and which `bin/fm-control.sh <task-id> relaunch` does for you; retiring works on every backend.
 To read a record back, the record is a plain file at `state/<task-id>.stood-down` carrying its epoch and reason, which is where to look when the endpoint is unreachable and `bin/fm-crew-state.sh <id>` can only report `unknown`.
 A stood-down task is still yours to finish: revisit it whenever the decision it waits on arrives, exactly as you would any other open item.
 

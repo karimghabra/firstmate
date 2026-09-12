@@ -432,6 +432,8 @@ fm_backlog_directory_present "$STATE" "state directory" || {
 . "$SCRIPT_DIR/fm-pr-lib.sh"
 # shellcheck source=bin/fm-dod-lib.sh
 . "$SCRIPT_DIR/fm-dod-lib.sh"
+# shellcheck source=bin/fm-classify-lib.sh
+. "$SCRIPT_DIR/fm-classify-lib.sh"
 # shellcheck source=bin/fm-stand-down-lib.sh
 . "$SCRIPT_DIR/fm-stand-down-lib.sh"
 # shellcheck source=bin/fm-trace-context-lib.sh
@@ -1290,12 +1292,14 @@ if [ "$RELAUNCH" -eq 1 ]; then
     exit 1
   }
   # A relaunch is the one supported way an existing task gets an agent back, so it
-  # is where a stand-down stops being true. Retiring the record here keeps the two
-  # from ever disagreeing; readers additionally ignore a record beside a live
+  # is where a stand-down stops being true. Retiring it here keeps the state from
+  # ever disagreeing with the running agent - both halves, since a status log left
+  # declaring the wait would keep the relaunched worker's pane absorbed until it
+  # wrote a line of its own. Readers additionally ignore a record beside a live
   # agent, so this is the tidy path rather than the only guard
   # (bin/fm-stand-down-lib.sh).
-  fm_stand_down_remove "$STATE" "$ID" || {
-    echo "error: task $ID's stand-down record could not be retired before relaunch" >&2
+  fm_stand_down_release "$STATE" "$ID" || {
+    echo "error: task $ID's stand-down could not be retired before relaunch" >&2
     exit 1
   }
   RELAUNCH_PRIOR_HARNESS=$(fm_meta_get "$RELAUNCH_META" harness)

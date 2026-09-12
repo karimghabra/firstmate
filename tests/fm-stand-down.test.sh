@@ -20,6 +20,8 @@ set -u
 # shellcheck source=tests/lib.sh
 . "$(dirname "${BASH_SOURCE[0]}")/lib.sh"
 # shellcheck source=/dev/null
+. "$ROOT/bin/fm-classify-lib.sh"
+# shellcheck source=/dev/null
 . "$ROOT/bin/fm-stand-down-lib.sh"
 
 STAND_DOWN="$ROOT/bin/fm-stand-down.sh"
@@ -102,9 +104,10 @@ test_record_release_round_trip() {
 
 # Recording changes the ENDPOINT's story and NOTHING else. The work stays open and
 # unlanded, which is the whole distinction teardown could not express, so a
-# stand-down must never invent a completion, move the work, or speak for the
-# worker. This pins that as a whole-directory claim rather than a per-file one:
-# the only thing that may appear is the record itself.
+# stand-down must never invent a completion or move the work. It DOES append one
+# line to the status log - the declaration every supervisor reconciles its pause
+# bookkeeping against - and this pins the bound on that: exactly one line, the
+# declaration and nothing else, with everything the worker wrote left beneath it.
 test_recording_touches_no_other_record() {
   local d before_meta before_files after_files
   d=$(new_case leaves-records-alone)
@@ -117,15 +120,64 @@ test_recording_touches_no_other_record() {
   assert_equals "$before_meta" "$(cat "$d/state/stood.meta")" \
     "the task record is untouched by a stand-down"
   assert_grep "both branches pushed, waiting to land" "$d/state/stood.status" \
-    "the worker's own status log is left exactly as the worker wrote it"
-  assert_equals "1" "$(wc -l < "$d/state/stood.status")" \
-    "no line is appended to the worker's log on its behalf"
+    "the worker's own status log keeps exactly what the worker wrote"
+  assert_equals "2" "$(wc -l < "$d/state/stood.status")" \
+    "recording appended more than its single declaration line"
+  assert_equals "stood-down: stopped on purpose" "$(tail -1 "$d/state/stood.status")" \
+    "the appended line is the declaration, attributed to nobody's progress but the stop itself"
+  status_is_stood_down "$(tail -1 "$d/state/stood.status")" \
+    || fail "the appended line does not read as a declared stand-down"
+  status_is_captain_relevant "$(tail -1 "$d/state/stood.status")" \
+    && fail "the declaration reads as a captain-relevant event and would re-alarm"
   # Nothing else is created, so no completion, transition, or lifecycle record
   # can be hiding behind the one file this is allowed to write.
   after_files=$(list_dir_entries "$d/state")
   assert_equals "$(printf '%s\nstood.stood-down' "$before_files" | sort)" "$after_files" \
     "recording a stand-down wrote something other than its own record"
-  pass "recording a stand-down writes only its own record: no completion, no transition, no word put in the worker's mouth"
+  pass "recording a stand-down writes its own record and exactly one declaration line: no completion, no transition, no claim about the work"
+}
+
+# The half of the state the watcher's reconciliation reads. A stand-down whose log
+# does not declare the wait loses its pause marker on the very next poll and
+# re-alarms as a first sighting, so --release must stop declaring it or the task
+# stays absorbed forever after the stand-down is over.
+test_release_stops_the_log_declaring_the_wait() {
+  local d last
+  d=$(new_case release-undeclares)
+  printf 'done: PR 42 pushed, awaiting the captain\n' > "$d/state/stood.status"
+  run_stand_down "$d" stood --reason "captain stopped it" >/dev/null || fail "recording was refused"
+  status_is_paused_or_captain_held "$(tail -1 "$d/state/stood.status")" \
+    || fail "a recorded stand-down left the log declaring no wait"
+
+  run_stand_down "$d" stood --release >/dev/null || fail "--release failed"
+  last=$(tail -1 "$d/state/stood.status")
+  status_is_paused_or_captain_held "$last" \
+    && fail "the log still declares a wait after --release, so the task stays absorbed forever"
+  status_is_captain_relevant "$last" \
+    && fail "--release appended a captain-relevant line, re-alarming the task it just released"
+  assert_grep "PR 42 pushed" "$d/state/stood.status" "the worker's own lines survive a release"
+  pass "--release leaves the log declaring no wait, so an ordinary supervision schedule resumes"
+}
+
+# A stand-down recorded for a task with no endpoint in its metadata would skip the
+# live-agent refusal entirely - nothing to ask - and no reader could honor the
+# result anyway, since each resolves the endpoint before it reaches the stand-down
+# gate. So it is refused, and the refusal names where a windowless open task is
+# actually reconciled.
+test_refuses_to_record_without_a_recorded_endpoint() {
+  local d out rc before_files
+  d=$(new_case no-endpoint)
+  fm_write_meta "$d/state/stood.meta" "kind=ship" "backend=tmux" "worktree=$d/wt"
+  before_files=$(list_dir_entries "$d/state")
+
+  out=$(run_stand_down "$d" stood --reason "stopped on purpose" 2>&1) && rc=0 || rc=$?
+  expect_code 1 "$rc" "recording for a task whose metadata records no endpoint"
+  assert_contains "$out" "records no endpoint" "the refusal names what is missing"
+  assert_contains "$out" "stuck-crewmate-recovery" "the refusal names the remedy, not just the refusal"
+  assert_absent "$(fm_stand_down_path "$d/state" stood)" "a refused recording writes no record"
+  assert_equals "$before_files" "$(list_dir_entries "$d/state")" \
+    "a refused recording wrote something into the state directory"
+  pass "a task with no recorded endpoint is refused, and told where a missing window is reconciled"
 }
 
 # --- the boundaries ---------------------------------------------------------
@@ -220,7 +272,7 @@ test_refuses_an_unsafe_reason() {
 }
 
 test_refuses_a_missing_or_conflicting_verb() {
-  local d rc
+  local d rc out record
   d=$(new_case bad-verb)
   run_stand_down "$d" stood >/dev/null 2>&1 && rc=0 || rc=$?
   expect_code 2 "$rc" "no verb at all"
@@ -228,7 +280,25 @@ test_refuses_a_missing_or_conflicting_verb() {
   expect_code 2 "$rc" "an unknown argument"
   run_stand_down "$d" 'bad id/../..' --release >/dev/null 2>&1 && rc=0 || rc=$?
   expect_code 2 "$rc" "an invalid task id"
-  pass "a missing verb, an unknown argument, and an invalid id are all refused"
+
+  # Record and release are opposite requests, so naming both states no intent this
+  # command can carry out. Last-wins silently performed the inverse of half the
+  # request and reported success for it - in either order.
+  out=$(run_stand_down "$d" stood --reason "captain stopped it" --release 2>&1) && rc=0 || rc=$?
+  expect_code 2 "$rc" "--reason followed by --release"
+  assert_contains "$out" "opposite requests" "the refusal says why both cannot be honored"
+  out=$(run_stand_down "$d" stood --release --reason "captain stopped it" 2>&1) && rc=0 || rc=$?
+  expect_code 2 "$rc" "--release followed by --reason"
+  assert_absent "$(fm_stand_down_path "$d/state" stood)" "a refused conflicting request recorded nothing"
+
+  # And the inverse harm: with a record present, a conflicting request must not
+  # take the release path either.
+  record=$(fm_stand_down_path "$d/state" stood)
+  printf 'recorded=%s\nreason=recorded earlier\n' "$(date +%s)" > "$record"
+  run_stand_down "$d" stood --reason "captain stopped it" --release >/dev/null 2>&1 && rc=0 || rc=$?
+  expect_code 2 "$rc" "a conflicting request over an existing record"
+  assert_present "$record" "a refused conflicting request retired an existing record"
+  pass "a missing verb, an unknown argument, an invalid id, and two conflicting verbs in either order are all refused"
 }
 
 # The safe direction for a record whose whole job is to quieten an alarm: if it
@@ -264,6 +334,8 @@ test_a_malformed_record_is_never_honored() {
 
 test_record_release_round_trip
 test_recording_touches_no_other_record
+test_release_stops_the_log_declaring_the_wait
+test_refuses_to_record_without_a_recorded_endpoint
 test_refuses_to_record_over_a_live_agent
 test_refuses_to_record_where_liveness_cannot_be_proven
 test_records_when_the_backend_cannot_answer

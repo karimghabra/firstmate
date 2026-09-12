@@ -3139,22 +3139,25 @@ test_busy_turn_bound_escalates_even_with_an_active_run_step() {
   grep -F "possible wedge" "$out" >/dev/null || fail "the busy-turn bound did not flag a possible wedge"
   grep -F "validation pipeline has owned the work" "$out" >/dev/null \
     && fail "a busy pane past its turn bound was deferred as pipeline-owned"
-  [ ! -e "$state/.pipeline-since-$key" ] || fail "a busy pane past its turn bound opened a pipeline-deferral chain"
+  [ ! -e "$state/.defer-since-$key" ] || fail "a busy pane past its turn bound opened a pipeline-deferral chain"
   FM_STATE_OVERRIDE="$state" "$DRAIN" > "$drain_out" 2>/dev/null || fail "drain after the busy-turn escalation failed"
   grep "$(printf '\tstale\t')" "$drain_out" | grep -F "$window" >/dev/null || fail "the busy-turn escalation was not queued"
   unset FM_FAKE_CREW_STATE
   pass "a busy pane past its completed-turn bound still escalates even while a run step is active"
 }
 
-# The two deferral chains age independently but used to be cleared only together,
-# so evidence switching inside ONE unchanged quiet stretch left the idle chain's
-# marker behind: switch back later and it reported an age it never deferred for,
-# firing a re-surface immediately instead of once per PAUSE_RESURFACE_SECS. Only
-# the chain currently deferring may exist, so the other is retired as it takes over.
+# A quiet stretch is ONE stretch however it is being explained, so evidence
+# switching mid-stretch must neither restart its age nor lose its throttle. Under
+# per-evidence chains it did both, depending on which markers were retired, and
+# either way the bounded re-surface stopped being a cadence: a frozen pipeline or
+# a churning worktree could stay invisible for as long as the evidence alternated.
+# Phase A backdates a stretch that has been deferring on WORKTREE-WRITE evidence
+# and switches the evidence to the run step; the stretch keeps its age, so the
+# re-surface that is now due fires on this very poll and names the new evidence.
 test_deferral_chains_do_not_leak_age_across_a_switch() {
-  local dir state fakebin out capture_file window key pane_hash sig pid wt back
+  local dir state fakebin out drain_out capture_file window key pane_hash sig pid wt back
   dir=$(make_case defer-chain-switch); state="$dir/state"; fakebin="$dir/fakebin"
-  out="$dir/watch.out"; capture_file="$dir/pane.txt"
+  out="$dir/watch.out"; drain_out="$dir/drain.out"; capture_file="$dir/pane.txt"
   window="test:fm-switch"; wt="$dir/wt"
   mkdir -p "$wt/src"
   printf 'idle output' > "$capture_file"
@@ -3169,11 +3172,9 @@ test_deferral_chains_do_not_leak_age_across_a_switch() {
   back=$(( $(date +%s) - 500 ))
   echo "$back" > "$state/.stale-since-$key"
   set_mtime "$back" "$state/.stale-since-$key"
-  # A long-running write-deferral chain is already established for this stretch.
-  : > "$state/.writing-since-$key"
-  set_mtime "$back" "$state/.writing-since-$key"
-  : > "$state/.writing-resurfaced-$key"
-  set_mtime "$back" "$state/.writing-resurfaced-$key"
+  # This stretch has been deferring for 500s already, on worktree-write evidence.
+  : > "$state/.defer-since-$key"
+  set_mtime "$back" "$state/.defer-since-$key"
   # Evidence now switches: the pipeline owns the work and nothing is being written.
   export FM_FAKE_CREW_STATE='state: working · source: run-step · test,running,1'
 
@@ -3182,20 +3183,85 @@ test_deferral_chains_do_not_leak_age_across_a_switch() {
     FM_STALE_ESCALATE_SECS=240 FM_PAUSE_RESURFACE_SECS=240 FM_POLL=1 FM_SIGNAL_GRACE=1 \
     FM_CHECK_INTERVAL=999999 FM_HEARTBEAT=999999 "$WATCH" > "$out" &
   pid=$!
-  if ! wait_poll_cycle "$state" "$pid"; then
-    reap "$pid"
-    fail "the pipeline deferral inherited the write chain's age and re-surfaced at once: $(cat "$out")"
-  fi
-  [ ! -s "$out" ] || { reap "$pid"; fail "a fresh pipeline deferral re-surfaced immediately: $(cat "$out")"; }
-  [ ! -e "$state/.writing-since-$key" ] \
-    || { reap "$pid"; fail "the superseded write-deferral chain was left behind to leak its age"; }
-  [ ! -e "$state/.writing-resurfaced-$key" ] \
-    || { reap "$pid"; fail "the superseded write chain's throttle was left behind"; }
-  [ -e "$state/.pipeline-since-$key" ] \
-    || { reap "$pid"; fail "the pipeline-deferral chain was not opened for the current stretch"; }
-  reap "$pid"
+  wait_for_exit "$pid" 100 \
+    || fail "switching evidence restarted the stretch, so its due re-surface never fired: $(cat "$out")"
+  grep -F "stale: $window" "$out" >/dev/null || fail "the due re-surface printed no stale wake"
+  grep -F "validation pipeline has owned the work" "$out" >/dev/null \
+    || fail "the re-surface did not name the evidence that carried this threshold"
+  grep -F "possible wedge" "$out" >/dev/null && fail "a bounded re-surface was mislabeled a possible wedge"
+  [ ! -e "$state/.wedge-escalations-$key" ] || fail "a bounded re-surface advanced the wedge escalation counter"
+  [ -e "$state/.defer-resurfaced-$key" ] || fail "the re-surface throttle was not recorded for the stretch"
+  FM_STATE_OVERRIDE="$state" "$DRAIN" > "$drain_out" 2>/dev/null || fail "drain after the due re-surface failed"
+  grep "$(printf '\tstale\t')" "$drain_out" | grep -F "$window" >/dev/null || fail "the due re-surface was not queued"
   unset FM_FAKE_CREW_STATE
-  pass "a deferral that takes over retires the other chain, so no cadence inherits an age it never deferred for"
+  pass "a quiet stretch keeps one chain across an evidence switch, so its bounded re-surface still comes due"
+}
+
+# --- a stood-down task is absorbed ONCE per cadence, not once per poll --------
+# The defect this pins is the shape a marker-only absorb always has here, and it
+# is worse than the alarm variant two exists to retire. handle_paused_stale writes
+# a .paused-<key> flag, but the loop-top reconciliation drops that flag on any poll
+# where the status log does not declare a wait - taking .stale-<key> and the
+# re-surface throttle with it - so the hash re-classifies as a first sighting every
+# poll and, once the record is older than PAUSE_RESURFACE_SECS, wakes firstmate on
+# every single cycle. The fix is that a stand-down DECLARES itself in the log, so
+# the reconciliation keeps the marker exactly as it does for `paused:`.
+#
+# Existing stand-down cases assert the FIRST absorb, which this defect passes; the
+# only way to see it is to poll the same unchanged pane repeatedly and count wakes.
+test_stood_down_task_wakes_once_not_every_poll() {
+  local dir state fakebin out capture_file window key pane_hash sig pid round wakes recorded
+  dir=$(make_case stood-down-cadence); state="$dir/state"; fakebin="$dir/fakebin"
+  out="$dir/watch.out"; capture_file="$dir/pane.txt"
+  window="test:fm-stood"
+  printf 'the agent was stopped on purpose; this pane shell outlives it' > "$capture_file"
+  printf 'window=%s\nkind=ship\n' "$window" > "$state/stood.meta"
+  # The shape a deliberate stop leaves behind: work pushed and not landed, then
+  # firstmate's own one-line declaration of the stop.
+  printf 'done: PR 42 pushed, awaiting the captain\nstood-down: captain stopped this crewmate on purpose\n' \
+    > "$state/stood.status"
+  sig=$(seen_sig "$state/stood.status"); printf '%s' "$sig" > "$state/.seen-stood_status"
+  recorded=$(( $(date +%s) - 5000 ))
+  printf 'recorded=%s\nreason=captain stopped this crewmate on purpose\n' "$recorded" > "$state/stood.stood-down"
+  key=$(printf '%s' "$window" | tr ':/.' '___')
+  pane_hash=$(hash_text "the agent was stopped on purpose; this pane shell outlives it")
+  printf '%s' "$pane_hash" > "$state/.hash-$key"
+  printf '1\n' > "$state/.count-$key"
+  # A tmux window whose shell is alive while its agent is gone - the exact case the
+  # readers gate on proven AGENT death for.
+  export FM_FAKE_TMUX_CURRENT_COMMAND=bash
+  export FM_FAKE_CREW_STATE='state: paused · source: stood-down · stopped by intent: captain stopped this crewmate on purpose'
+
+  wakes=0
+  for round in 1 2 3 4 5; do
+    : > "$out"
+    PATH="$fakebin:$PATH" FM_FAKE_TMUX_WINDOW="$window" FM_FAKE_TMUX_CAPTURE="$capture_file" \
+      FM_STATE_OVERRIDE="$state" FM_CREW_STATE_BIN="$fakebin/fm-crew-state.sh" \
+      FM_STALE_ESCALATE_SECS=240 FM_PAUSE_RESURFACE_SECS=240 FM_POLL=1 FM_SIGNAL_GRACE=1 \
+      FM_CHECK_INTERVAL=999999 FM_HEARTBEAT=999999 "$WATCH" > "$out" &
+    pid=$!
+    if wait_poll_cycle "$state" "$pid"; then
+      reap "$pid"
+    else
+      wait "$pid" 2>/dev/null || true
+    fi
+    if [ -s "$out" ]; then
+      wakes=$(( wakes + 1 ))
+      grep -F "no agent by intent" "$out" >/dev/null \
+        || fail "round $round woke for a stood-down task without naming the intent: $(cat "$out")"
+      grep -F "possible wedge" "$out" >/dev/null \
+        && fail "round $round reported a stood-down task as a possible wedge"
+    fi
+    ack_stopped_cycle "$state" >/dev/null 2>&1 || true
+  done
+
+  [ "$wakes" -le 1 ] \
+    || fail "a stood-down task woke firstmate on $wakes of 5 consecutive polls instead of once per cadence"
+  [ -e "$state/.paused-$key" ] \
+    || fail "the stood-down absorb's pause marker did not survive the loop-top reconciliation"
+  [ ! -e "$state/.wedge-escalations-$key" ] || fail "a stood-down task advanced the wedge escalation counter"
+  unset FM_FAKE_CREW_STATE FM_FAKE_TMUX_CURRENT_COMMAND
+  pass "a stood-down task is absorbed on the bounded cadence and wakes firstmate at most once across repeated polls"
 }
 
 # Regression fixture for the incident's actual masking condition: Pi's rendered
@@ -3601,7 +3667,7 @@ SH
   # before the crew declared the wait.
   echo $(( $(date +%s) - 500 )) > "$state/.stale-since-$key"
   printf '2\n' > "$state/.wedge-escalations-$key"
-  date +%s > "$state/.writing-since-$key"
+  date +%s > "$state/.defer-since-$key"
 
   # Round 1: the declaration is handed off once, undecorated, and the undeclared
   # phase's wedge bookkeeping is cleared with it.
@@ -3621,7 +3687,7 @@ SH
     || fail "the away-mode handoff left the undeclared phase's wedge timer in place"
   [ ! -e "$state/.wedge-escalations-$key" ] \
     || fail "the away-mode handoff left the undeclared phase's escalation count in place"
-  [ ! -e "$state/.writing-since-$key" ] \
+  [ ! -e "$state/.defer-since-$key" ] \
     || fail "the away-mode handoff left the undeclared phase's write-deferral chain in place"
   [ ! -e "$state/.paused-$key" ] \
     || fail "the away-mode handoff recorded normal-mode pause tracking on a ticking pane"
@@ -3802,7 +3868,7 @@ test_wedge_escalation_deferred_while_worktree_is_written() {
   fi
   [ ! -s "$out" ] || { reap "$pid"; fail "a written-worktree deferral printed a wake reason: $(cat "$out")"; }
   [ ! -s "$state/.wake-queue" ] || { reap "$pid"; fail "a written-worktree deferral enqueued a wake"; }
-  [ -e "$state/.writing-since-$key" ] || { reap "$pid"; fail "the write-deferral chain marker was not recorded"; }
+  [ -e "$state/.defer-since-$key" ] || { reap "$pid"; fail "the write-deferral chain marker was not recorded"; }
   [ ! -e "$state/.wedge-escalations-$key" ] || { reap "$pid"; fail "a deferral advanced the wedge escalation counter"; }
   [ "$(cat "$state/.stale-since-$key" 2>/dev/null || echo 0)" -gt "$back" ] \
     || { reap "$pid"; fail "a deferral did not restart the idle timer, so the next window cannot re-probe"; }
@@ -3825,7 +3891,7 @@ test_wedge_escalation_deferred_while_worktree_is_written() {
   grep -F "possible wedge" "$out" >/dev/null || fail "the stalled-crew escalation did not flag a possible wedge"
   [ "$(cat "$state/.wedge-escalations-$key" 2>/dev/null || true)" = 1 ] || fail "the stalled-crew escalation was not counted"
   [ ! -e "$state/.stale-since-$key" ] || fail "the idle timer was not cleared after a real escalation"
-  [ ! -e "$state/.writing-since-$key" ] || fail "the write-deferral chain outlived a real escalation"
+  [ ! -e "$state/.defer-since-$key" ] || fail "the write-deferral chain outlived a real escalation"
   FM_STATE_OVERRIDE="$state" "$DRAIN" > "$drain_out" 2>/dev/null || fail "drain after the stalled-crew escalation failed"
   grep "$(printf '\tstale\t')" "$drain_out" | grep -F "$window" >/dev/null || fail "the stalled-crew escalation was not queued"
   pass "a quiet pane writing its own worktree is deferred, while one writing nothing still wedge-escalates on the unchanged schedule"
@@ -3876,7 +3942,7 @@ test_wedge_defers_while_the_pipeline_owns_the_work() {
   fi
   [ ! -s "$out" ] || { reap "$pid"; fail "a pipeline-owned deferral printed a wake reason: $(cat "$out")"; }
   [ ! -s "$state/.wake-queue" ] || { reap "$pid"; fail "a pipeline-owned deferral enqueued a wake"; }
-  [ -e "$state/.pipeline-since-$key" ] || { reap "$pid"; fail "the pipeline-deferral chain marker was not recorded"; }
+  [ -e "$state/.defer-since-$key" ] || { reap "$pid"; fail "the pipeline-deferral chain marker was not recorded"; }
   [ ! -e "$state/.wedge-escalations-$key" ] || { reap "$pid"; fail "a pipeline-owned deferral advanced the wedge escalation counter"; }
   [ "$(cat "$state/.stale-since-$key" 2>/dev/null || echo 0)" -gt "$back" ] \
     || { reap "$pid"; fail "a deferral did not restart the idle timer, so the next window cannot re-ask the run step"; }
@@ -3889,7 +3955,7 @@ test_wedge_defers_while_the_pipeline_owns_the_work() {
   export FM_FAKE_CREW_STATE='state: unknown · source: none · no current-state source available'
   echo "$back" > "$state/.stale-since-$key"
   set_mtime "$back" "$state/.stale-since-$key"
-  rm -f "$state/.pipeline-since-$key"
+  rm -f "$state/.defer-since-$key"
   : > "$out"
   PATH="$fakebin:$PATH" FM_FAKE_TMUX_WINDOW="$window" FM_FAKE_TMUX_CAPTURE="$capture_file" \
     FM_STATE_OVERRIDE="$state" FM_CREW_STATE_BIN="$fakebin/fm-crew-state.sh" FM_STALE_ESCALATE_SECS=240 \
@@ -3901,7 +3967,7 @@ test_wedge_defers_while_the_pipeline_owns_the_work() {
   grep -F "possible wedge" "$out" >/dev/null || fail "the genuine-wedge escalation did not flag a possible wedge"
   [ "$(cat "$state/.wedge-escalations-$key" 2>/dev/null || true)" = 1 ] || fail "the genuine-wedge escalation was not counted"
   [ ! -e "$state/.stale-since-$key" ] || fail "the idle timer was not cleared after a real escalation"
-  [ ! -e "$state/.pipeline-since-$key" ] || fail "the pipeline-deferral chain outlived a real escalation"
+  [ ! -e "$state/.defer-since-$key" ] || fail "the pipeline-deferral chain outlived a real escalation"
   FM_STATE_OVERRIDE="$state" "$DRAIN" > "$drain_out" 2>/dev/null || fail "drain after the genuine-wedge escalation failed"
   grep "$(printf '\tstale\t')" "$drain_out" | grep -F "$window" >/dev/null || fail "the genuine-wedge escalation was not queued"
   unset FM_FAKE_CREW_STATE
@@ -3974,8 +4040,8 @@ test_pipeline_deferral_resurfaces_on_the_bounded_cadence() {
   echo "$back" > "$state/.stale-since-$key"
   set_mtime "$back" "$state/.stale-since-$key"
   # This pane has been deferring on run-step evidence for 500s already.
-  : > "$state/.pipeline-since-$key"
-  set_mtime "$back" "$state/.pipeline-since-$key"
+  : > "$state/.defer-since-$key"
+  set_mtime "$back" "$state/.defer-since-$key"
   export FM_FAKE_CREW_STATE='state: working · source: run-step · test,running,1'
 
   PATH="$fakebin:$PATH" FM_FAKE_TMUX_WINDOW="$window" FM_FAKE_TMUX_CAPTURE="$capture_file" \
@@ -3987,7 +4053,7 @@ test_pipeline_deferral_resurfaces_on_the_bounded_cadence() {
   grep -F "stale: $window" "$out" >/dev/null || fail "the pipeline-deferral recheck did not print a stale wake"
   grep -F "validation pipeline has owned the work" "$out" >/dev/null || fail "the pipeline-deferral recheck was not labeled as such"
   grep -F "possible wedge" "$out" >/dev/null && fail "a pipeline-deferral recheck was mislabeled a possible wedge"
-  [ -e "$state/.pipeline-resurfaced-$key" ] || fail "the pipeline-deferral re-surface throttle marker was not recorded"
+  [ -e "$state/.defer-resurfaced-$key" ] || fail "the pipeline-deferral re-surface throttle marker was not recorded"
   [ ! -e "$state/.wedge-escalations-$key" ] || fail "a pipeline-deferral recheck advanced the wedge escalation counter"
   FM_STATE_OVERRIDE="$state" "$DRAIN" > "$drain_out" 2>/dev/null || fail "drain after the pipeline-deferral recheck failed"
   grep "$(printf '\tstale\t')" "$drain_out" | grep -F "$window" >/dev/null || fail "the pipeline-deferral recheck was not queued"
@@ -4025,7 +4091,7 @@ test_busy_pane_evidence_does_not_borrow_the_pipeline_deferral() {
   pid=$!
   wait_for_exit "$pid" 100 || fail "a pane-source working verdict was wrongly given the pipeline deferral"
   grep -F "possible wedge" "$out" >/dev/null || fail "a pane-source working verdict did not wedge-escalate as before"
-  [ ! -e "$state/.pipeline-since-$key" ] || fail "a pane-source verdict opened a pipeline-deferral chain"
+  [ ! -e "$state/.defer-since-$key" ] || fail "a pane-source verdict opened a pipeline-deferral chain"
   unset FM_FAKE_CREW_STATE
   pass "only run-step ownership earns the pipeline deferral; a busy-pane verdict keeps the existing schedule"
 }
@@ -4053,8 +4119,8 @@ test_write_deferral_resurfaces_on_the_bounded_cadence() {
   echo "$back" > "$state/.stale-since-$key"
   set_mtime "$back" "$state/.stale-since-$key"
   # This pane has been deferring on write evidence for 500s already.
-  : > "$state/.writing-since-$key"
-  set_mtime "$back" "$state/.writing-since-$key"
+  : > "$state/.defer-since-$key"
+  set_mtime "$back" "$state/.defer-since-$key"
   printf 'churn\n' > "$wt/src/main.c"
 
   PATH="$fakebin:$PATH" FM_FAKE_TMUX_WINDOW="$window" FM_FAKE_TMUX_CAPTURE="$capture_file" \
@@ -4066,7 +4132,7 @@ test_write_deferral_resurfaces_on_the_bounded_cadence() {
   grep -F "stale: $window" "$out" >/dev/null || fail "the write-deferral recheck did not print a stale wake"
   grep -F "writing its worktree" "$out" >/dev/null || fail "the write-deferral recheck was not labeled as such"
   grep -F "possible wedge" "$out" >/dev/null && fail "a write-deferral recheck was mislabeled a possible wedge"
-  [ -e "$state/.writing-resurfaced-$key" ] || fail "the write-deferral re-surface throttle marker was not recorded"
+  [ -e "$state/.defer-resurfaced-$key" ] || fail "the write-deferral re-surface throttle marker was not recorded"
   [ ! -e "$state/.wedge-escalations-$key" ] || fail "a write-deferral recheck advanced the wedge escalation counter"
   FM_STATE_OVERRIDE="$state" "$DRAIN" > "$drain_out" 2>/dev/null || fail "drain after the write-deferral recheck failed"
   grep "$(printf '\tstale\t')" "$drain_out" | grep -F "$window" >/dev/null || fail "the write-deferral recheck was not queued"
@@ -4115,14 +4181,14 @@ test_secondmate_home_supervision_churn_is_not_write_evidence() {
   wait_for_exit "$pid" 100 || fail "a mate home's own supervision churn deferred an escalation it must not defer"
   grep -F "stale: $window" "$out" >/dev/null || fail "the mate-home escalation did not print a stale wake"
   grep -F "possible wedge" "$out" >/dev/null || fail "the mate-home escalation did not flag a possible wedge"
-  [ ! -e "$state/.writing-since-$key" ] || fail "a mate's provisioned home was probed as if it were a code tree"
+  [ ! -e "$state/.defer-since-$key" ] || fail "a mate's provisioned home was probed as if it were a code tree"
   [ "$(cat "$state/.wedge-escalations-$key" 2>/dev/null || true)" = 1 ] || fail "the mate escalation was not counted"
   FM_STATE_OVERRIDE="$state" "$DRAIN" > "$drain_out" 2>/dev/null || fail "drain after the mate escalation failed"
   grep "$(printf '\tstale\t')" "$drain_out" | grep -F "$window" >/dev/null || fail "the mate escalation was not queued"
   pass "a secondmate's own home supervision churn is not crew write evidence, so a pane recording that home keeps the unchanged escalation schedule"
 }
 
-# A write deferral is a bounded chain, not a permanent one: its .writing-since
+# A write deferral is a bounded chain, not a permanent one: its .defer-since
 # marker ages the whole chain so a churning worktree still re-surfaces once per
 # PAUSE_RESURFACE_SECS. That only holds while the chain belongs to the CURRENT quiet
 # stretch, so every path that restarts the idle-window timer must drop it too. The
@@ -4147,8 +4213,8 @@ test_timer_repair_drops_a_finished_write_deferral_chain() {
   # A deferral chain left over from an earlier quiet stretch, already well past the
   # bounded re-surface window.
   back=$(( $(date +%s) - 5000 ))
-  : > "$state/.writing-since-$key"
-  set_mtime "$back" "$state/.writing-since-$key"
+  : > "$state/.defer-since-$key"
+  set_mtime "$back" "$state/.defer-since-$key"
   # The idle-window timer is corrupt, so this poll repairs it and opens a NEW quiet
   # window without probing the worktree at all.
   printf 'corrupt\n' > "$state/.stale-since-$key"
@@ -4163,7 +4229,7 @@ test_timer_repair_drops_a_finished_write_deferral_chain() {
   # suite's other startup-sensitive waits instead of failing after only 3s.
   wait_numeric_file "$state/.stale-since-$key" 100 \
     || { reap "$pid"; fail "the corrupt idle-window timer was not repaired"; }
-  [ ! -e "$state/.writing-since-$key" ] \
+  [ ! -e "$state/.defer-since-$key" ] \
     || { reap "$pid"; fail "an idle-window timer repair kept a finished write-deferral chain"; }
   [ ! -s "$state/.wake-queue" ] || { reap "$pid"; fail "the idle-window timer repair enqueued a wake"; }
   reap "$pid"
@@ -4188,8 +4254,8 @@ test_timer_repair_drops_a_finished_write_deferral_chain() {
   fi
   [ ! -s "$out" ] || { reap "$pid"; fail "a fresh write deferral printed a wake reason: $(cat "$out")"; }
   [ ! -s "$state/.wake-queue" ] || { reap "$pid"; fail "a fresh write deferral enqueued a wake"; }
-  [ -e "$state/.writing-since-$key" ] || { reap "$pid"; fail "the new deferral recorded no chain marker"; }
-  [ ! -e "$state/.writing-resurfaced-$key" ] \
+  [ -e "$state/.defer-since-$key" ] || { reap "$pid"; fail "the new deferral recorded no chain marker"; }
+  [ ! -e "$state/.defer-resurfaced-$key" ] \
     || { reap "$pid"; fail "a fresh write deferral spent its bounded re-surface on the first poll"; }
   reap "$pid"
   pass "an idle-window timer repair drops a finished write-deferral chain, so the next deferral gets a fresh re-surface window"
@@ -4213,8 +4279,8 @@ test_terminal_first_sight_drops_a_finished_write_deferral_chain() {
   printf '%s' "$pane_hash" > "$state/.hash-$key"
   printf '1\n' > "$state/.count-$key"
   back=$(( $(date +%s) - 5000 ))
-  : > "$state/.writing-since-$key"
-  set_mtime "$back" "$state/.writing-since-$key"
+  : > "$state/.defer-since-$key"
+  set_mtime "$back" "$state/.defer-since-$key"
   export FM_FAKE_CREW_STATE='state: working · source: run-step · validating (running)'
 
   # First sight of this hash, absorbed because the active run outranks the stale
@@ -4230,7 +4296,7 @@ test_terminal_first_sight_drops_a_finished_write_deferral_chain() {
   fi
   [ "$(cat "$state/.stale-$key" 2>/dev/null || true)" = "$pane_hash" ] \
     || { reap "$pid"; fail "the first-sight absorb did not advance the stale suppressor"; }
-  [ ! -e "$state/.writing-since-$key" ] \
+  [ ! -e "$state/.defer-since-$key" ] \
     || { reap "$pid"; fail "the provably-working first-sight absorb kept a finished write-deferral chain"; }
   reap "$pid"
   ack_stopped_cycle "$state" || fail "could not acknowledge the intentional first-sight absorb stop"
@@ -4239,8 +4305,8 @@ test_terminal_first_sight_drops_a_finished_write_deferral_chain() {
   # surfaces. That path drops the idle-window timer, so it must drop the chain too.
   rm -f "$state/.stale-$key" "$state/.stale-since-$key"
   printf '1\n' > "$state/.count-$key"
-  : > "$state/.writing-since-$key"
-  set_mtime "$back" "$state/.writing-since-$key"
+  : > "$state/.defer-since-$key"
+  set_mtime "$back" "$state/.defer-since-$key"
   FM_FAKE_CREW_STATE='state: unknown · source: none · no run, no busy pane'
   : > "$out"
   PATH="$fakebin:$PATH" FM_FAKE_TMUX_WINDOW="$window" FM_FAKE_TMUX_CAPTURE="$capture_file" \
@@ -4250,7 +4316,7 @@ test_terminal_first_sight_drops_a_finished_write_deferral_chain() {
   pid=$!
   wait_for_exit "$pid" 100 || fail "a first-sight captain-relevant status was not surfaced"
   grep -F "stale: $window" "$out" >/dev/null || fail "the first-sight surface did not print a stale wake"
-  [ ! -e "$state/.writing-since-$key" ] \
+  [ ! -e "$state/.defer-since-$key" ] \
     || fail "the first-sight surface kept a finished write-deferral chain"
   unset FM_FAKE_CREW_STATE
   pass "both first-sight paths through a captain-relevant status drop a finished write-deferral chain with the idle window"
@@ -5076,6 +5142,7 @@ test_pipeline_deferral_resurfaces_on_the_bounded_cadence
 test_busy_pane_evidence_does_not_borrow_the_pipeline_deferral
 test_busy_turn_bound_escalates_even_with_an_active_run_step
 test_deferral_chains_do_not_leak_age_across_a_switch
+test_stood_down_task_wakes_once_not_every_poll
 test_secondmate_home_supervision_churn_is_not_write_evidence
 test_timer_repair_drops_a_finished_write_deferral_chain
 test_terminal_first_sight_drops_a_finished_write_deferral_chain

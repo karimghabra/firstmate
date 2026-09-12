@@ -128,6 +128,21 @@ fm_utc_iso_to_epoch() {  # <timestamp>
 FM_CLASSIFY_RESOLVE_VERB_DEFAULT='resolved'
 FM_CLASSIFY_CAPTAIN_HELD_VERB_DEFAULT='captain-held'
 
+# The stand-down verb: the second firstmate-written declared wait, appended by
+# bin/fm-stand-down.sh only after its durable stand-down record is written and
+# read back, exactly as the transfer verb above is appended only after its backlog
+# item is verified. It declares that the task is still open, its work is not
+# landed, and its agent is stopped BY INTENT.
+# Deliberately NOT the `paused:` verb, though both are declared waits taking the
+# same bounded cadence: a `paused:` wait is the worker's own, on a known external
+# dependency that clears on its own, whereas a stand-down clears only when someone
+# resumes or lands the work - so a recheck that names an external dependency would
+# send the reader looking for one that does not exist. The declaration lives in the
+# status log because that is where every supervisor's pause bookkeeping is
+# reconciled; bin/fm-stand-down-lib.sh's header owns the split between it and the
+# record. FM_CLASSIFY_STOOD_DOWN_VERB overrides it.
+FM_CLASSIFY_STOOD_DOWN_VERB_DEFAULT='stood-down'
+
 # Return the last non-blank line of a status file (empty if missing/blank).
 last_status_line() {
   local f=$1
@@ -150,16 +165,16 @@ status_is_terminal_verb() {
 
 # 0 if the given (last) status line matches a captain-relevant verb.
 # Verb-aware by default: terminal verbs always match; nonterminal progress verbs
-# (working, resolved, captain-held) and paused never match from free-text prose;
-# only lines without those leading verbs may still match free-text tokens for
-# legacy bare lines such as "merged" or "PR ready".
+# (working, resolved, captain-held) and the declared waits never match from
+# free-text prose; only lines without those leading verbs may still match
+# free-text tokens for legacy bare lines such as "merged" or "PR ready".
 status_is_captain_relevant() {
   local line=$1 verb
   [ -n "$line" ] || return 1
   status_is_paused "$line" && return 1
   verb=$(status_line_verb "$line")
   case "$verb" in
-    working|resolved|captain-held|"${FM_CLASSIFY_PAUSED_VERB:-$FM_CLASSIFY_PAUSED_VERB_DEFAULT}")
+    working|resolved|captain-held|"${FM_CLASSIFY_PAUSED_VERB:-$FM_CLASSIFY_PAUSED_VERB_DEFAULT}"|"${FM_CLASSIFY_STOOD_DOWN_VERB:-$FM_CLASSIFY_STOOD_DOWN_VERB_DEFAULT}")
       return 1
       ;;
   esac
@@ -195,16 +210,29 @@ status_is_captain_held() {  # <status-line>
   [ "$verb" = "${FM_CLASSIFY_CAPTAIN_HELD_VERB:-$FM_CLASSIFY_CAPTAIN_HELD_VERB_DEFAULT}" ]
 }
 
-# 0 if a status line declares either an external-wait pause or a verified
-# captain-held transfer.
-# Both declarations can intentionally leave a crew's endpoint idle, so both
-# supervisors give them one cadence: the away-mode daemon defers the wedge and
-# ages a pause marker instead, and the watcher applies its bounded pause cadence
-# once pause_state_class has admitted the wait (fm-watch.sh owns which liveness
-# evidence each kind of crew must supply for that).
+# 0 if a status line's leading verb is the stand-down verb. The same pure verb
+# read as the two above, and the third discriminator a supervisor needs once a
+# declared wait has been recognized: this one blocks on nobody at all, so it is
+# rechecked rather than chased.
+status_is_stood_down() {  # <status-line>
+  local line=$1 verb
+  [ -n "$line" ] || return 1
+  verb=$(status_line_verb "$line")
+  [ "$verb" = "${FM_CLASSIFY_STOOD_DOWN_VERB:-$FM_CLASSIFY_STOOD_DOWN_VERB_DEFAULT}" ]
+}
+
+# 0 if a status line declares any wait: an external-wait pause, a verified
+# captain-held transfer, or a recorded stand-down.
+# All three can intentionally leave a crew's endpoint idle, so both supervisors
+# give them one cadence: the away-mode daemon defers the wedge and ages a pause
+# marker instead, and the watcher applies its bounded pause cadence once
+# pause_state_class has admitted the wait (fm-watch.sh owns which liveness
+# evidence each kind of crew must supply for that). This predicate is also what
+# every pause MARKER is reconciled against, so a state that absorbs a pane must
+# declare itself here or lose its marker on the next poll.
 status_is_paused_or_captain_held() {  # <status-line>
   local line=$1
-  status_is_paused "$line" || status_is_captain_held "$line"
+  status_is_paused "$line" || status_is_captain_held "$line" || status_is_stood_down "$line"
 }
 
 # A condition-aware declared wait: a `paused:` line may say WHEN it expects to
@@ -1861,10 +1889,13 @@ crew_is_paused() {  # <id>
 # caller. fm-watch.sh's wedge_timer_check owns that decision through its
 # pipeline-eligible parameter, and its busy-turn caller opts out.
 # The claim expires on its own the moment the pipeline stops owning the work: a
-# gate parks the run, a terminal step reports done or failed, and a probe-proven
-# dead daemon reads unknown, each of which answers 1 here and restores the
-# ordinary escalation schedule. That self-expiry is why this may bound a wedge
-# alarm without weakening it.
+# gate parks the run and a terminal step reports done or failed, each of which
+# answers 1 here and restores the ordinary escalation schedule. That self-expiry
+# is why this may bound a wedge alarm without weakening it.
+# It does NOT expire on a dead daemon. bin/fm-crew-state.sh consults its daemon
+# probe only for a TERMINAL failed ledger row, so an ACTIVE `running` row whose
+# daemon has died still reads working and keeps deferring here. What surfaces
+# that case is the bounded re-surface the deferral is on, not this predicate.
 crew_pipeline_owns_work() {  # <id>
   local fields
   fields=$(crew_state_fields "$1") || return 1

@@ -40,18 +40,18 @@
 #                          wake payload itself, not just repetition, forces a
 #                          closer look instead of another routine supervision
 #                          resume. Unless afk is active. Two liveness probes bound
-#                          that escalation, both checked only at the threshold. A
+#                          that escalation, both checked only at the threshold,
+#                          and both feeding ONE deferral chain (wedge_defer). A
 #                          pane whose no-mistakes pipeline owns the work right now
-#                          is deferred rather than escalated
-#                          (wedge_defer_pipeline), because while a run step
-#                          executes the daemon is doing the work and the agent is
-#                          idle by design. A pane whose own task worktree was
-#                          written during the quiet window is deferred too
-#                          (wedge_defer_writing), because files appearing there are
-#                          liveness the pane and the run step cannot show. Each
-#                          deferral still re-surfaces once per
-#                          PAUSE_RESURFACE_SECS, and a pane with neither kind of
-#                          evidence keeps the unchanged schedule.
+#                          is deferred rather than escalated, because while a run
+#                          step executes the daemon is doing the work and the
+#                          agent is idle by design. A pane whose own task worktree
+#                          was written during the quiet window is deferred too,
+#                          because files appearing there are liveness the pane and
+#                          the run step cannot show. The chain re-surfaces once per
+#                          PAUSE_RESURFACE_SECS however the stretch is being
+#                          explained, and a pane with neither kind of evidence
+#                          keeps the unchanged schedule.
 #                          A genuinely busy pane
 #                          (window_is_busy true) is exempt from the above, but
 #                          only up to BUSY_TURN_MAX_SECS with no completed turn
@@ -846,7 +846,7 @@ FM_WEDGE_DEMAND_INSPECT_COUNT=${FM_WEDGE_DEMAND_INSPECT_COUNT:-3}
 # once past PAUSE_RESURFACE_SECS the pane wakes once per window rather than every
 # poll. An optional <scope> binds that cadence to its current declaration; callers
 # without a scoped declaration keep the timestamp body. Shared by the
-# declared-pause absorb and the worktree-write deferral so the two cadences cannot
+# declared-pause absorb and the threshold deferral so the two cadences cannot
 # drift apart; each caller owns its own marker and reason.
 # Returns without waking while either the absorb or the throttle is inside the
 # window; wake() itself exits the cycle, exactly as it does inline. An optional
@@ -865,91 +865,66 @@ resurface_absorbed() {  # <window> <throttle-marker> <age> <reason> [scope] [min
   wake "$reason"
 }
 
-# Exactly one deferral chain may be live for a window at a time, because the chain
-# deferring RIGHT NOW is the one that owns the current quiet stretch. Retiring the
-# other chain here is what keeps each cadence measured from that stretch, which is
-# the invariant clear_defer_tracking states. Without it, evidence that switches
-# mid-stretch leaks an age across chains: the worktree probe wins at one threshold
-# and creates its marker, the run step wins from the next threshold onward while
-# that marker sits untouched (the stale hash never changes, so clear_defer_tracking
-# never runs), and when evidence switches back the older chain reads an age it never
-# actually deferred for - firing a re-surface immediately instead of once per
-# PAUSE_RESURFACE_SECS.
-clear_other_defer_chain() {  # <window-key> <writing|pipeline>
-  local key=$1 keep=$2
-  case "$keep" in
-    writing)  rm -f "$STATE/.pipeline-since-$key" "$STATE/.pipeline-resurfaced-$key" ;;
-    pipeline) rm -f "$STATE/.writing-since-$key" "$STATE/.writing-resurfaced-$key" ;;
-  esac
-}
-
-# Defer ONE wedge escalation for a pane that went quiet while its own task
-# worktree is demonstrably still being written (crew_worktree_written_since in
-# fm-classify-lib.sh). The pane and the run step both say nothing is happening;
-# the worktree says otherwise, and files appearing in it is the harder signal to
-# fake, so the escalation is deferred rather than fired. Deliberately a DEFERRAL,
-# not a cancellation: the idle timer restarts, so the next window probes again,
-# and a .writing-since-<key> marker ages the whole deferral chain so the pane
-# still re-surfaces once every PAUSE_RESURFACE_SECS through the shared
+# Defer ONE wedge escalation for a pane that went quiet with positive evidence
+# that something is still working. Two kinds of evidence reach here, and they are
+# ONE deferral on ONE chain, because a window has only one current quiet stretch
+# however that stretch is being explained:
+#
+#   - pipeline: the crew's no-mistakes run step currently owns the work
+#     (crew_pipeline_owns_work in fm-classify-lib.sh). While a step executes the
+#     daemon is running the tests or the fix round and the agent has nothing to
+#     do, so the idle pane is the expected shape of a healthy crew rather than a
+#     missing heartbeat. Without this, every validation longer than
+#     STALE_ESCALATE_SECS wedge-escalated on its own schedule: eight consecutive
+#     escalations on one task on 2026-09-11, each concluding the crew was healthy,
+#     which is how a supervisor learns to wave the alarm through.
+#   - writing: the crew's own task worktree is demonstrably still being written
+#     (crew_worktree_written_since). The pane and the run step both say nothing is
+#     happening; the worktree says otherwise, and files appearing in it are the
+#     harder signal to fake.
+#
+# ONE chain is what keeps the bounded cadence a cadence. Per-evidence chains aged
+# independently, so a stretch explained first by one probe and then by the other
+# either reset its age on every switch or, with both markers retired together,
+# never reached the re-surface at all - and a frozen pipeline or a worktree
+# churning without progress could stay invisible for as long as the evidence kept
+# alternating. The reason text names whichever evidence carried THIS threshold,
+# which is the only thing that actually differs between the two.
+#
+# Deliberately a DEFERRAL, not a cancellation: the idle timer restarts, so the
+# next window probes again, and the .defer-since-<key> marker ages the stretch so
+# the pane still re-surfaces once every PAUSE_RESURFACE_SECS through the shared
 # resurface_absorbed above - literally the same bounded cadence a declared pause
-# uses, throttled by its own .writing-resurfaced-<key> marker - and a crew whose
-# worktree churns without real progress cannot stay invisible. The escalation
-# counter is left alone: it is neither advanced (this is not an escalation) nor
-# reset (a later genuine escalation must still carry the demand-deep-inspection
-# history it had already earned).
-wedge_defer_writing() {  # <window> <since-file> <triage-label> <idle-age>
-  local win=$1 since_file=$2 label=$3 age=$4 key wsf wage
+# uses, throttled by .defer-resurfaced-<key>. The escalation counter is left
+# alone: it is neither advanced (this is not an escalation) nor reset (a later
+# genuine escalation must still carry the demand-deep-inspection history it had
+# already earned).
+wedge_defer() {  # <window> <since-file> <triage-label> <idle-age> <pipeline|writing>
+  local win=$1 since_file=$2 label=$3 age=$4 evidence=$5 key dsf dage detail reason
   key=$(window_key "$win")
-  clear_other_defer_chain "$key" writing
-  wsf="$STATE/.writing-since-$key"
-  [ -e "$wsf" ] || date +%s > "$wsf"
-  wage=$(age_of "$wsf")
+  dsf="$STATE/.defer-since-$key"
+  [ -e "$dsf" ] || date +%s > "$dsf"
+  dage=$(age_of "$dsf")
   date +%s > "$since_file"
-  resurface_absorbed "$win" "$STATE/.writing-resurfaced-$key" "$wage" \
-    "stale: $win (idle ${age}s, writing its worktree for ${wage}s, rechecked on a long cadence not a wedge; confirm the writes are real progress)"
-  triage_log "absorbed $label (worktree written since the idle window opened, idle ${age}s): $win"
+  case "$evidence" in
+    pipeline)
+      detail="validation pipeline owns the work"
+      reason="its validation pipeline has owned the work for ${dage}s, rechecked on a long cadence not a wedge; confirm the pipeline is still progressing" ;;
+    *)
+      detail="worktree written since the idle window opened"
+      reason="writing its worktree for ${dage}s, rechecked on a long cadence not a wedge; confirm the writes are real progress" ;;
+  esac
+  resurface_absorbed "$win" "$STATE/.defer-resurfaced-$key" "$dage" \
+    "stale: $win (idle ${age}s, $reason)"
+  triage_log "absorbed $label ($detail, idle ${age}s): $win"
 }
 
-# Defer a wedge escalation for a pane that is quiet because its no-mistakes
-# PIPELINE currently owns the work (crew_pipeline_owns_work in
-# fm-classify-lib.sh). While a run step executes, the daemon is running the tests
-# or the fix round and the agent has nothing to do, so the idle pane is the
-# expected shape of a healthy crew rather than a missing heartbeat - and the
-# fleet already holds that evidence in the crew's own authoritative run step.
-# Without this, every validation longer than STALE_ESCALATE_SECS wedge-escalated
-# on its own schedule: eight consecutive escalations on one task on 2026-09-11,
-# each concluding the crew was healthy, which is how a supervisor learns to wave
-# the alarm through.
-# Structurally identical to wedge_defer_writing above, and deliberately so: this
-# is the same DEFERRAL, on the same shared bounded cadence a declared `paused:`
-# wait uses, not a cancellation. The idle timer restarts, so the next window asks
-# the run step again; a .pipeline-since-<key> marker ages the whole chain so the
-# pane still re-surfaces once every PAUSE_RESURFACE_SECS through
-# resurface_absorbed, throttled by its own .pipeline-resurfaced-<key> marker, and
-# a pipeline that has genuinely frozen cannot stay invisible. The escalation
-# counter is left alone for the same reason it is there: this is not an
-# escalation, and a later genuine one must still carry the history it earned.
-wedge_defer_pipeline() {  # <window> <since-file> <triage-label> <idle-age>
-  local win=$1 since_file=$2 label=$3 age=$4 key psf page
-  key=$(window_key "$win")
-  clear_other_defer_chain "$key" pipeline
-  psf="$STATE/.pipeline-since-$key"
-  [ -e "$psf" ] || date +%s > "$psf"
-  page=$(age_of "$psf")
-  date +%s > "$since_file"
-  resurface_absorbed "$win" "$STATE/.pipeline-resurfaced-$key" "$page" \
-    "stale: $win (idle ${age}s, its validation pipeline has owned the work for ${page}s, rechecked on a long cadence not a wedge; confirm the pipeline is still progressing)"
-  triage_log "absorbed $label (validation pipeline owns the work, idle ${age}s): $win"
-}
-
-# Drop a window's deferral chains - both the worktree-write one and the
-# pipeline-ownership one - wherever its stale bookkeeping resets, so each bounded
-# re-surface cadence is measured from the CURRENT quiet stretch and a
+# Drop a window's deferral chain wherever its stale bookkeeping resets, so the
+# bounded re-surface cadence is measured from the CURRENT quiet stretch and a
 # long-finished one cannot make the next deferral resurface immediately.
 clear_defer_tracking() {  # <window-key>
   local key=$1
-  rm -f "$STATE/.writing-since-$key" "$STATE/.writing-resurfaced-$key" \
-    "$STATE/.pipeline-since-$key" "$STATE/.pipeline-resurfaced-$key"
+  rm -f "$STATE/.defer-since-$key" "$STATE/.defer-resurfaced-$key"
 }
 
 # Repeat-poll wedge-timer bookkeeping for an already-classified stale hash
@@ -992,11 +967,11 @@ wedge_timer_check() {  # <window> <since-file> <triage-label> <escalation-count-
       age=$(( $(date +%s) - since ))
       if [ "$age" -ge "$STALE_ESCALATE_SECS" ]; then
         if [ "$pipeline_eligible" -eq 1 ] && crew_pipeline_owns_work "$task"; then
-          wedge_defer_pipeline "$win" "$since_file" "$label" "$age"
+          wedge_defer "$win" "$since_file" "$label" "$age" pipeline
           return 0
         fi
         if crew_worktree_written_since "$task" "$STATE" "$since_file"; then
-          wedge_defer_writing "$win" "$since_file" "$label" "$age"
+          wedge_defer "$win" "$since_file" "$label" "$age" writing
           return 0
         fi
         n=$(( $(cat "$escalation_file" 2>/dev/null || echo 0) + 1 ))
@@ -1082,10 +1057,11 @@ handle_paused_stale() {  # <window> <task> <hash>
       min_age=0
     fi
   elif fm_stand_down_read "$STATE" "$task"; then
-    # A stand-down reaches this absorber because bin/fm-crew-state.sh classifies it
-    # as paused, but it is NOT a declared external wait and must not borrow that
-    # wording: nothing external is going to clear it, so "confirm the wait still
-    # holds" would send the reader looking for a dependency that does not exist.
+    # A stand-down reaches this absorber as an ordinary declared wait - its own
+    # `stood-down:` line is on the log - but it is NOT an EXTERNAL wait and must
+    # not borrow that wording: nothing external is going to clear it, so "confirm
+    # the wait still holds" would send the reader looking for a dependency that
+    # does not exist.
     # It clears when someone resumes or lands the work, so the recheck says that.
     # The age is the record's own, not the status file's, because the status log's
     # last line predates the stop; and the cadence is bound to the record's
@@ -1138,7 +1114,7 @@ busy_turn_bound_check() {  # <window> <task> <hash> <since-file> <escalation-fil
       # woken in a loop for the whole declared wait. The suppressor therefore
       # advances to the declaration rather than the hash, and the daemon is woken
       # once per distinct declaration. The wedge timer, escalation count and
-      # write-deferral chain are cleared exactly as handle_paused_stale clears
+      # deferral chain are cleared exactly as handle_paused_stale clears
       # them, so an undeclared busy phase that had already started the timer does
       # not resume its count the moment the declaration is lifted. Normal-mode
       # pause tracking stays unwritten here, exactly as the idle away-mode handoff
@@ -1175,7 +1151,7 @@ clear_pause_state() {  # <window-key>
 }
 
 # The hash-scoped half of clear_pause_tracking: the stale suppressor, its wedge
-# timer and escalation count, and the write-deferral chain. Split out so a caller
+# timer and escalation count, and the deferral chain. Split out so a caller
 # that must keep a window's DECLARATION-scoped pause state - its .paused-* flag,
 # recheck, and re-surface throttle - can still reset the per-hash half alone.
 clear_stale_hash_tracking() {  # <window-key>
@@ -2305,20 +2281,24 @@ EOF
           # authoritative source fm-crew-state.sh itself already prioritizes
           # over the log) a chance to override before trusting the log.
           if [ "$(cat "$sf" 2>/dev/null || true)" != "$h" ]; then
-            if crew_is_provably_working "$(window_to_task "$w" "$STATE")"; then
+            # ONE crew-state read for both verdicts. crew_absorb_class is the
+            # costly, deliberately first-sighting-only read (it may make a bounded
+            # no-mistakes call), so the two questions this branch asks of it -
+            # provably working, or in an admitted wait - are asked together, the
+            # way the non-terminal path below already asks them.
+            absorb_class=$(crew_absorb_class "$task")
+            if [ "$absorb_class" = working ]; then
               printf '%s' "$h" > "$sf"
               date +%s > "$ssf"
               clear_defer_tracking "$key"
               triage_log "absorbed stale (provably working, overriding a stale captain-relevant status): $w"
-            elif crew_is_paused "$(window_to_task "$w" "$STATE")"; then
-              # A stood-down task routinely arrives HERE rather than through the
-              # non-terminal path, because the last line its worker wrote is
-              # typically `done: PR ...` - work pushed, not landed, which is the
-              # exact shape a deliberate stop leaves behind. Without this branch
-              # that line would re-alarm on every new pane hash for as long as the
-              # stop lasted, which is the alarm the record exists to retire. The
-              # same absorber and the same long cadence as the idle path, so a
-              # forgotten stop still cannot rot invisibly.
+            elif [ "$absorb_class" = paused ]; then
+              # A wait the crew state admits while the LOG's last line still reads
+              # captain-relevant: the log moved on past the declaration (a worker
+              # that appended `done: PR ...` after it). Without this branch that
+              # line would re-alarm on every new pane hash for as long as the wait
+              # lasted. The same absorber and the same long cadence as the idle
+              # path, so it still cannot rot invisibly.
               handle_paused_stale "$w" "$task" "$h"
             elif captain_call_stale_bound "$key" "$task"; then
               # The line is captain-relevant and stays so, but the backlog says

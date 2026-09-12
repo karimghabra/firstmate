@@ -3,6 +3,22 @@
 # read contract. bin/fm-stand-down.sh owns writing and retiring one; this library
 # is what every reader uses so the record is parsed in exactly one place.
 #
+# WHERE THE STATE LIVES, in two halves that answer two different questions:
+#
+#   - The status LOG declares it. bin/fm-stand-down.sh appends exactly one
+#     `stood-down:` line (bin/fm-classify-lib.sh owns the verb), and --release
+#     appends the `note:` line that stops declaring it. That is where every
+#     supervisor reconciles its pause bookkeeping: the watcher and the away-mode
+#     daemon both drop a pane's pause marker on any poll where the log does not
+#     declare a wait, so a state that absorbs a pane without declaring itself
+#     there loses its marker every poll and re-alarms as a first sighting - which
+#     is noisier than the alarm this record exists to retire.
+#   - The RECORD carries the decision. The reason in someone's own words, the
+#     epoch it was recorded at (which anchors the re-surface cadence and the
+#     digest's wording), and the gate every reader applies before honoring any of
+#     it: proven death of the agent. The log says a wait is declared; the record
+#     says which wait, since when, why, and whether it may be believed.
+#
 # WHAT THE RECORD MEANS. A task is stood down when it is still open, its work is
 # not landed, and its agent is stopped BY INTENT - the captain stopped it, or
 # firstmate stopped it on the captain's word. It is the third possibility beside
@@ -25,8 +41,11 @@
 #     unlanded, the branch is untouched, and teardown's landed-work proofs are
 #     unchanged - a stood-down task still has to be finished or landed like any
 #     other open item.
-#   - It DOES NOT speak for the worker. The status log keeps exactly what the
-#     worker last wrote; nothing is appended on its behalf.
+#   - It DOES NOT speak for the worker about the WORK. Firstmate appends exactly
+#     one declaration line, attributed to firstmate, exactly as a verified
+#     captain hold does - and on release exactly one line retiring it. Neither
+#     claims progress, completion, or any other thing only the worker can say,
+#     and everything the worker itself wrote stays untouched beneath them.
 #   - It IS NOT a cleanup shortcut, and it is not teardown's little brother. If
 #     the work is landed, tear the task down. If it is not, this record changes
 #     only how the missing agent is REPORTED.
@@ -126,7 +145,51 @@ fm_stand_down_format_time() {  # <epoch>
 }
 
 # Remove the record for <state-dir> <task-id>. 0 when no record remains
-# afterwards, whether or not one was there to begin with.
+# afterwards, whether or not one was there to begin with. The status log's
+# declaration is the other half of the state, so callers retiring a stand-down
+# use fm_stand_down_release below rather than this directly; this stays the raw
+# removal for teardown, whose whole task record is going away anyway.
 fm_stand_down_remove() {  # <state-dir> <task-id>
   rm -f -- "$(fm_stand_down_path "$1" "$2")"
+}
+
+# The one line that stops a status log declaring a stand-down. `note:` is an
+# existing informational verb that declares no wait, closes no keyed decision, and
+# claims nothing about the work - which is exactly the whole of what firstmate may
+# say here. A `working:` line would claim progress on the worker's behalf, and a
+# terminal verb would be the false completion this record exists so that nobody
+# has to write.
+FM_STAND_DOWN_RELEASE_LINE='note: stand-down released by firstmate; this task declares no wait'
+
+# The declared-wait line firstmate appends when it records a stand-down for
+# <reason>. bin/fm-classify-lib.sh owns the verb; the reason is already validated
+# as one bounded line of printable text where it entered the record.
+fm_stand_down_declaration_line() {  # <reason>
+  printf '%s: %s' "${FM_CLASSIFY_STOOD_DOWN_VERB:-$FM_CLASSIFY_STOOD_DOWN_VERB_DEFAULT}" "$1"
+}
+
+# Append <line> to <task-id>'s status log as firstmate's own bookkeeping, through
+# the provenance-guarded self-announced append (bin/fm-wake-lib.sh) so the turn
+# that writes it does not wake itself, exactly as a verified captain hold's
+# transfer line is written. 0 when the line is on the log (announced or left for
+# the watcher, both fine), 1 when the append itself failed.
+# Requires bin/fm-classify-lib.sh and bin/fm-wake-lib.sh in the caller.
+fm_stand_down_declare() {  # <state-dir> <task-id> <line>
+  local rc=0
+  fm_wake_status_append_self_announced "$1" "$1/$2.status" "$3" || rc=$?
+  [ "$rc" -ne 2 ]
+}
+
+# Retire a stand-down: drop the record AND stop the log declaring the wait.
+# Both halves, always, because either one left behind is a state nobody can act
+# on - a record with no declaration loses its pane marker every poll, and a
+# declaration with no record absorbs the pane forever after the stand-down is
+# over. Keyed on the LOG rather than the record so a hand-deleted record still
+# gets its declaration retired. 0 when neither half remains.
+# Requires bin/fm-classify-lib.sh and bin/fm-wake-lib.sh in the caller.
+fm_stand_down_release() {  # <state-dir> <task-id>
+  local state=$1 id=$2
+  fm_stand_down_remove "$state" "$id" || return 1
+  status_is_stood_down "$(last_status_line "$state/$id.status")" || return 0
+  fm_stand_down_declare "$state" "$id" "$FM_STAND_DOWN_RELEASE_LINE"
 }
