@@ -4232,6 +4232,54 @@ test_wedge_defers_while_the_pipeline_owns_the_work() {
   pass "a quiet pane whose validation pipeline owns the work is deferred, while one with no active step still wedge-escalates on the unchanged schedule"
 }
 
+# The deferral hands a crew a four-hour recheck instead of a 240s escalation, so
+# it may only be bought by a run that is MOVING. When the no-mistakes daemon dies
+# mid-step the ledger row still says `running` forever, and before this bound that
+# orphaned row went on buying the deferral - the same shape as every other defect
+# this alarm work exists to close, where liveness is inferred from a signal that
+# only proves something EXISTS. bin/fm-crew-state.sh marks such a run, and the
+# marker is what this asserts the watcher refuses to defer on.
+test_a_stalled_pipeline_run_does_not_buy_the_deferral() {
+  local dir state fakebin out drain_out capture_file window key pane_hash sig pid back
+  dir=$(make_case wedge-pipeline-stalled); state="$dir/state"; fakebin="$dir/fakebin"
+  out="$dir/watch.out"; drain_out="$dir/drain.out"; capture_file="$dir/pane.txt"
+  window="test:fm-orphaned"
+  printf 'idle while nothing runs the tests' > "$capture_file"
+  printf 'window=%s\nkind=ship\n' "$window" > "$state/orphaned.meta"
+  printf 'working: handed to validation\n' > "$state/orphaned.status"
+  sig=$(seen_sig "$state/orphaned.status"); printf '%s' "$sig" > "$state/.seen-orphaned_status"
+  key=$(printf '%s' "$window" | tr ':/.' '___')
+  pane_hash=$(hash_text "idle while nothing runs the tests")
+  printf '%s' "$pane_hash" > "$state/.hash-$key"
+  printf '1\n' > "$state/.count-$key"
+  printf '%s' "$pane_hash" > "$state/.stale-$key"
+  back=$(( $(date +%s) - 500 ))
+  echo "$back" > "$state/.stale-since-$key"
+  set_mtime "$back" "$state/.stale-since-$key"
+  # The row still reads running, but its daemon is gone and the step has stopped
+  # reporting activity - exactly what an orphaned run looks like.
+  export FM_FAKE_CREW_STATE='state: working · source: run-step · validating (fixing) · run activity not recent (no-mistakes daemon unreachable)'
+
+  PATH="$fakebin:$PATH" FM_FAKE_TMUX_WINDOW="$window" FM_FAKE_TMUX_CAPTURE="$capture_file" \
+    FM_STATE_OVERRIDE="$state" FM_CREW_STATE_BIN="$fakebin/fm-crew-state.sh" FM_STALE_ESCALATE_SECS=240 \
+    FM_PAUSE_RESURFACE_SECS=999 FM_POLL=1 FM_SIGNAL_GRACE=1 \
+    FM_CHECK_INTERVAL=999999 FM_HEARTBEAT=999999 "$WATCH" > "$out" &
+  pid=$!
+  wait_for_exit "$pid" 100 \
+    || fail "an orphaned run still bought the pipeline deferral: $(cat "$out")"
+  grep -F "possible wedge" "$out" >/dev/null \
+    || fail "a crew whose run stopped moving did not wedge-escalate: $(cat "$out")"
+  grep -F "currently explained by its validation pipeline owning the work" "$out" >/dev/null \
+    && fail "an orphaned run was deferred as though its pipeline owned the work"
+  [ ! -e "$state/.defer-since-$key" ] || fail "an orphaned run opened a deferral chain"
+  [ "$(cat "$state/.wedge-escalations-$key" 2>/dev/null || true)" = 1 ] \
+    || fail "the escalation was not counted, so the ladder cannot climb"
+  FM_STATE_OVERRIDE="$state" "$DRAIN" > "$drain_out" 2>/dev/null || fail "drain after the escalation failed"
+  grep "$(printf '\tstale\t')" "$drain_out" | grep -F "$window" >/dev/null || fail "the escalation was not queued"
+  unset FM_FAKE_CREW_STATE
+  pass "a run the pipeline reports no recent activity on does not buy the wedge deferral"
+}
+
 # The same deferral, repeated: the observed incident was not one escalation but
 # eight in a row, climbing to a demand for deep inspection. A pipeline that keeps
 # owning the work must stay quiet across every one of those windows, or the fix
@@ -5395,6 +5443,7 @@ test_nonterminal_stale_repairs_missing_or_corrupt_timer
 test_wedge_escalation_deferred_while_worktree_is_written
 test_write_deferral_resurfaces_on_the_bounded_cadence
 test_wedge_defers_while_the_pipeline_owns_the_work
+test_a_stalled_pipeline_run_does_not_buy_the_deferral
 test_pipeline_deferral_survives_repeated_windows
 test_pipeline_deferral_resurfaces_on_the_bounded_cadence
 test_busy_pane_evidence_does_not_borrow_the_pipeline_deferral

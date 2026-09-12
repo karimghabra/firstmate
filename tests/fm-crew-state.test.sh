@@ -713,6 +713,49 @@ test_daemon_claim_over_live_run_reads_run_alive() {
   pass "daemon/timeout blocked claim over a live fixing run reads as run alive"
 }
 
+# The wedge alarm's pipeline deferral buys a crew out of the 240s escalation and
+# onto a four-hour recheck, so it may only be earned by a run that is MOVING. An
+# active ledger row proves a run EXISTS; it proves nothing about whether anything
+# is executing it, and a run whose daemon died mid-step keeps that row forever.
+# The state stays `working` - the attribution is still authoritative and every
+# other reader is unchanged - and the detail carries the marker that lets the one
+# deferral reader require movement.
+test_a_working_run_with_no_recent_activity_is_marked_stalled() {
+  reset_fakes
+  local d out; d=$(new_case run-activity-marker)
+  make_repo_on_branch "$d/wt" fm/feat-mv
+  make_fakebin "$d" >/dev/null
+  fm_write_meta "$d/state/feat-mv.meta" "window=fm:fm-feat-mv" "worktree=$d/wt" "kind=ship"
+
+  # Moving: the client's own recency verdict is fresh, so no marker and the
+  # deferral stays available - the healthy validating crew this alarm work exists
+  # to stop nagging.
+  FM_FAKE_AXI_STATUS="$(run_fixing_active_recent fm/feat-mv)"
+  out=$(run_crew_state "$d" feat-mv)
+  assert_contains "$out" "state: working" "a moving run is working"
+  assert_contains "$out" "source: run-step" "a moving run is attributed to the run step"
+  assert_not_contains "$out" "run activity not recent" "a moving run must not be marked stalled"
+
+  # The daemon dies under the step: the client prefixes last_activity with `quiet`
+  # and the explicit probe confirms the daemon is gone.
+  FM_FAKE_AXI_STATUS="$(run_fixing_active_quiet fm/feat-mv)"
+  FM_FAKE_DAEMON_DOWN=1
+  out=$(FM_FAKE_DAEMON_DOWN=1 run_crew_state "$d" feat-mv)
+  assert_contains "$out" "state: working" "an orphaned run keeps its authoritative attribution"
+  assert_contains "$out" "source: run-step" "an orphaned run keeps its run-step source"
+  assert_contains "$out" "run activity not recent" "an orphaned run must be marked stalled"
+  assert_contains "$out" "daemon unreachable" "the marker names the dead daemon it found"
+  unset FM_FAKE_DAEMON_DOWN
+
+  # Quiet with the daemon still up is also not movement: the pipeline's own client
+  # is the authority on what counts as recent, not a second threshold invented here.
+  out=$(run_crew_state "$d" feat-mv)
+  assert_contains "$out" "state: working" "a quiet run keeps its authoritative attribution"
+  assert_contains "$out" "run activity not recent" "a quiet run must be marked stalled"
+  assert_not_contains "$out" "daemon unreachable" "a live daemon must not be reported unreachable"
+  pass "a working run is marked stalled unless the pipeline reports recent activity on it"
+}
+
 # A genuine refused socket outranks the persisted fixing record, which can
 # survive after the daemon exits.
 test_socket_refusal_over_stale_fixing_run_reports_blocked() {
@@ -3060,6 +3103,7 @@ test_active_run_is_authoritative
 test_stale_needs_decision_superseded
 test_stale_blocked_superseded
 test_daemon_claim_over_live_run_reads_run_alive
+test_a_working_run_with_no_recent_activity_is_marked_stalled
 test_socket_refusal_over_stale_fixing_run_reports_blocked
 test_socket_refusal_over_terminal_run_reports_blocked
 test_ordinary_blocked_over_live_run_keeps_plain_superseded

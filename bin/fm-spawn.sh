@@ -1334,11 +1334,16 @@ if [ "$RELAUNCH" -eq 1 ]; then
   # absorbed until it wrote a line of its own. Readers additionally ignore a record
   # beside a live agent, so this is the tidy path rather than the only guard
   # (bin/fm-stand-down-lib.sh).
-  # LAST, after every pre-flight refusal above, because retiring it is not
-  # reversible and no rollback path restores it: a refused relaunch reports that
-  # the task is untouched, so it must leave the captain's recorded decision
-  # exactly as it found it rather than silently dropping the task back onto the
-  # two alarms the record exists to retire.
+  # Placed after every refusal in this adoption block, because retiring it is not
+  # reversible and no rollback path restores it: a refusal that reports the task
+  # untouched must leave the captain's recorded decision exactly as it found it
+  # rather than silently dropping the task back onto the two alarms the record
+  # exists to retire.
+  # It is NOT after every way this spawn can still fail - lease acquisition,
+  # worktree and brief preparation, and the launch itself all come later, and any
+  # of them can abort with the record already retired. That residual fails toward
+  # alarming rather than toward silence, and the operator can record again, which
+  # is why it is left rather than wrapped in a rollback.
   fm_stand_down_release "$STATE" "$ID" || {
     echo "error: task $ID's stand-down could not be retired before relaunch" >&2
     exit 1

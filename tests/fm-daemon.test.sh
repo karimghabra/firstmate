@@ -815,6 +815,46 @@ test_stood_down_wait_resurfaces_on_the_pause_cadence() {
   pass "a stood-down task re-surfaces once per pause cadence in away mode instead of being absorbed forever"
 }
 
+# The endpoint-gone shape is the one variant two was written for - the captain
+# stops a crewmate whose window is killed outright - and it is exactly the shape
+# the recheck could not serve. A failed capture means "nothing left to re-surface"
+# for an ordinary declared wait, but for a stand-down a gone endpoint is the state
+# it DECLARES, so dropping the marker there meant migrate_watcher_pause_markers
+# recreated it with a fresh timestamp on the next tick, the age restarted from
+# zero, and the digest could never fire on any tick, ever.
+test_stood_down_wait_resurfaces_when_its_endpoint_is_gone() {
+  local dir state fakebin task win key escalations
+  dir=$(make_supercase stood-down-endpoint-gone)
+  state="$dir/state"; fakebin="$dir/fakebin"
+  task=stood-gone; win="sess:fm-$task"
+  key=$(printf '%s' "$task" | tr ':/.' '___')
+  fm_write_meta "$state/$task.meta" "window=$win" "backend=tmux"
+  printf 'working: implementation committed, handed to validation\nstood-down: captain stopped this crewmate on purpose\n' \
+    > "$state/$task.status"
+  printf 'recorded=%s\nreason=captain stopped this crewmate on purpose\n' "$(( $(date +%s) - 5000 ))" \
+    > "$state/$task.stood-down"
+  echo $(( $(date +%s) - 5000 )) > "$state/.subsuper-paused-$key"
+
+  # No FM_FAKE_TMUX_WINDOW and no capture: the window is gone, so the capture
+  # fails and the probe answers "endpoint unreadable".
+  PATH="$fakebin:$PATH" FM_STATE_OVERRIDE="$state" FM_ESCALATE_BATCH_SECS=999999 \
+    FM_PAUSE_RESURFACE_SECS=3600 housekeeping "$state"
+
+  escalations=$(grep -c "no agent by intent" "$state/.subsuper-escalations" 2>/dev/null || true)
+  [ "$escalations" = 1 ] \
+    || fail "a stood-down task whose endpoint is gone produced $escalations rechecks, expected exactly one: $(cat "$state/.subsuper-escalations" 2>/dev/null)"
+  [ -e "$state/.subsuper-paused-$key" ] \
+    || fail "the recheck dropped its marker, so the next tick recreates it and the window restarts forever"
+
+  # And the cadence still holds for this shape: the reset window stays quiet.
+  : > "$state/.subsuper-escalations"
+  PATH="$fakebin:$PATH" FM_STATE_OVERRIDE="$state" FM_ESCALATE_BATCH_SECS=999999 \
+    FM_PAUSE_RESURFACE_SECS=3600 housekeeping "$state"
+  grep -F "no agent by intent" "$state/.subsuper-escalations" >/dev/null \
+    && fail "a gone-endpoint stand-down re-surfaced twice inside one window"
+  pass "a stood-down task whose endpoint is gone still gets its bounded recheck in away mode"
+}
+
 # The record half of the away-mode gate. bin/fm-stand-down-lib.sh promises that a
 # record nobody can parse "restores the ordinary ALARM, not merely the reader's
 # verdict" - and that promise has to hold in whichever supervisor is running, or
@@ -2827,6 +2867,7 @@ test_stale_transient_self_records_marker
 test_stale_diagnostic_wedge_survives_busy_housekeeping
 test_enriched_wedge_under_declared_wait_uses_pause_cadence
 test_stood_down_wait_resurfaces_on_the_pause_cadence
+test_stood_down_wait_resurfaces_when_its_endpoint_is_gone
 test_stood_down_with_an_unreadable_record_still_alarms_in_away_mode
 test_stale_terminal_escalates
 test_stale_actionable_wait_escalates_and_keeps_pause_cadence

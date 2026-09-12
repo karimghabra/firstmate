@@ -158,7 +158,10 @@ FM_CLASSIFY_STOOD_DOWN_VERB_DEFAULT='stood-down'
 # the captain by free text exactly as it always has; only its own fixed wording
 # keeps the release line out of that set, which is a property of the line rather
 # than a rule about the verb.
-# FM_CLASSIFY_NOTE_VERB overrides it.
+# Deliberately NOT overridable, unlike the two declared-wait verbs above. Those
+# are settable because an operator may need to fit an existing worker vocabulary;
+# nothing here needs that, and a fleet-wide verb knob nobody asked for is a trap
+# for whoever changes it later rather than a feature.
 FM_CLASSIFY_NOTE_VERB_DEFAULT='note'
 
 # Return the last non-blank line of a status file (empty if missing/blank).
@@ -1536,7 +1539,7 @@ status_line_is_unread_surface() {  # <status-line>
   local line=$1 verb key note resolve held prefix
   [ -n "$line" ] || return 1
   verb=$(status_line_verb "$line")
-  [ "$verb" = "${FM_CLASSIFY_NOTE_VERB:-$FM_CLASSIFY_NOTE_VERB_DEFAULT}" ] && return 0
+  [ "$verb" = "$FM_CLASSIFY_NOTE_VERB_DEFAULT" ] && return 0
   resolve=${FM_CLASSIFY_RESOLVE_VERB:-$FM_CLASSIFY_RESOLVE_VERB_DEFAULT}
   held=${FM_CLASSIFY_CAPTAIN_HELD_VERB:-$FM_CLASSIFY_CAPTAIN_HELD_VERB_DEFAULT}
   case "$verb" in
@@ -1847,20 +1850,31 @@ status_span_has_actionable() {  # <status-file> <start-offset>
   status_span_first_actionable_record "$1" "${2:-0}" > /dev/null
 }
 
+# The marker bin/fm-crew-state.sh appends to an attributed run's detail when the
+# pipeline shows no RECENT activity on it - a step its own client has flagged
+# quiet, or a coarse ledger row with no step table to flag at all. Part of that
+# script's one-line output contract, defined here because this library is the
+# reader; it writes it from this constant so the token has a single owner.
+# An active ledger row is evidence a run EXISTS, not evidence it is progressing,
+# and only the latter may buy a crew out of the wedge ladder.
+FM_CLASSIFY_RUN_STALLED_MARKER='run activity not recent'
+
 # The shared parse behind every predicate below: one bin/fm-crew-state.sh read for
-# <id>, printed as "<state> <source>". Both fields are single tokens by that
-# script's own output contract, so a space separates them unambiguously. Returns 1
-# and prints nothing when the crew has no readable authoritative verdict, so every
-# caller treats an unreadable state as no evidence rather than as a verdict.
+# <id>, printed as "<state> <source> <moving|stalled>". The first two are single
+# tokens by that script's own output contract, so a space separates them
+# unambiguously; the third is this library's reading of the marker above. Returns
+# 1 and prints nothing when the crew has no readable authoritative verdict, so
+# every caller treats an unreadable state as no evidence rather than as a verdict.
 # FM_CREW_STATE_BIN lets tests stub it.
 crew_state_fields() {  # <id>
-  local id=$1 line state src
+  local id=$1 line state src moving=moving
   [ -n "$id" ] || return 1
   line=$("$FM_CREW_STATE_BIN" "$id" 2>/dev/null) || true
   case "$line" in state:*) ;; *) return 1 ;; esac
   state=${line#state: }; state=${state%% *}
   src=${line#*source: }; src=${src%% *}
-  printf '%s %s' "$state" "$src"
+  case "$line" in *"$FM_CLASSIFY_RUN_STALLED_MARKER"*) moving=stalled ;; esac
+  printf '%s %s %s' "$state" "$src" "$moving"
 }
 
 # Classify WHY an idle/stale crew MIGHT be safely absorbed instead of surfaced,
@@ -1879,9 +1893,9 @@ crew_state_fields() {  # <id>
 # NOT a pure read: fm-crew-state.sh may make a bounded no-mistakes call, so callers
 # run it only on no-verb signal and first-sighting stale paths, never every wake.
 crew_absorb_class() {  # <id>
-  local id=$1 fields state src
+  local id=$1 fields state src rest
   fields=$(crew_state_fields "$id") || { printf 'none'; return; }
-  state=${fields%% *}; src=${fields#* }
+  state=${fields%% *}; rest=${fields#* }; src=${rest%% *}
   if [ "$state" = paused ]; then printf 'paused'; return; fi
   if [ "$state" = working ]; then
     case "$src" in run-step|pane) printf 'working'; return ;; esac
@@ -1924,18 +1938,22 @@ crew_is_paused() {  # <id>
 # separate bound, so whether this answer may defer an escalation belongs to the
 # caller. fm-watch.sh's wedge_timer_check owns that decision through its
 # pipeline-eligible parameter, and its busy-turn caller opts out.
-# The claim expires on its own the moment the pipeline stops owning the work: a
-# gate parks the run and a terminal step reports done or failed, each of which
-# answers 1 here and restores the ordinary escalation schedule. That self-expiry
-# is why this may bound a wedge alarm without weakening it.
-# It does NOT expire on a dead daemon. bin/fm-crew-state.sh consults its daemon
-# probe only for a TERMINAL failed ledger row, so an ACTIVE `running` row whose
-# daemon has died still reads working and keeps deferring here. What surfaces
-# that case is the bounded re-surface the deferral is on, not this predicate.
+# It also requires the run to be MOVING, not merely present. An active ledger row
+# is evidence a run EXISTS; a step the pipeline's own client has not seen activity
+# on, or a coarse row with no step table to judge, is not evidence anything is
+# executing it. Without that bound an orphaned or daemon-dead run converted a
+# 240s wedge escalation into a four-hour recheck - the same shape as every other
+# defect this alarm work exists to close, where liveness is inferred from a signal
+# that only proves something exists.
+# The claim then expires on its own the moment the pipeline stops owning the work
+# or stops moving: a gate parks the run, a terminal step reports done or failed,
+# the daemon dies so activity goes quiet, each of which answers 1 here and
+# restores the ordinary escalation schedule. That self-expiry is why this may
+# bound a wedge alarm without weakening it.
 crew_pipeline_owns_work() {  # <id>
   local fields
   fields=$(crew_state_fields "$1") || return 1
-  [ "$fields" = "working run-step" ]
+  [ "$fields" = "working run-step moving" ]
 }
 
 # Directories excluded from the worktree write probe below, and the depth it walks.

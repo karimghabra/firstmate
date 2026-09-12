@@ -72,6 +72,12 @@
 #      FAILED record whose daemon an explicit probe proves down reads unknown,
 #      never failed: an instrument failure must not read as work failure
 #      (nm_daemon_probe_down).
+#      A `working` run-step verdict additionally carries
+#      FM_CLASSIFY_RUN_STALLED_MARKER in its detail when the pipeline reports no
+#      recent activity on it (a quiet step, or a coarse row with no step table to
+#      judge). The state stays working - the attribution is still authoritative -
+#      but the marker is what lets the wedge alarm's deferral require a run that
+#      is MOVING rather than one that merely exists.
 #   3. Reconcile the status log: if its last line says needs-decision/blocked but
 #      the run-step shows the run moved on, the log is deterministically stale and
 #      is flagged superseded. A genuinely parked run plus a needs-decision log
@@ -936,6 +942,25 @@ if [ "$HAVE_RUN" = 1 ]; then
       ;;
   esac
 
+  # An active ledger row is evidence a run EXISTS, not evidence it is progressing.
+  # A `working` verdict from that row is still the authoritative attribution and
+  # stays one - every existing reader is unchanged - but it carries a marker when
+  # the pipeline shows no RECENT activity on it, so the one reader that may buy a
+  # crew out of the wedge ladder (crew_pipeline_owns_work) can require movement
+  # rather than mere presence. Otherwise a run whose daemon died mid-step kept
+  # converting a 240s escalation into a four-hour recheck.
+  # nm_run_activity_is_recent is a pure parse of the run output already fetched
+  # above, so the common healthy case costs nothing. The daemon probe runs ONLY
+  # once that free check has already found no activity - never on an ordinary
+  # read of a moving run - and it is what tells an orphaned run apart from a
+  # merely quiet one.
+  if [ "$RUN_STATE" = working ] && ! nm_run_activity_is_recent; then
+    if nm_daemon_probe_down; then
+      RUN_DETAIL="$RUN_DETAIL${SEP}$FM_CLASSIFY_RUN_STALLED_MARKER (no-mistakes daemon unreachable)"
+    else
+      RUN_DETAIL="$RUN_DETAIL${SEP}$FM_CLASSIFY_RUN_STALLED_MARKER"
+    fi
+  fi
   emit "$RUN_STATE" run-step "$RUN_DETAIL"
 fi
 

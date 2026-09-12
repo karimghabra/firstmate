@@ -441,8 +441,8 @@ classify_stale() {  # <window> <state> [<span-record> <span-status>]
     # going to clear a stand-down, so naming it an external wait would send the
     # reader of this log looking for a dependency that does not exist - the same
     # reason the housekeeping digest and the watcher's recheck each give it its
-    # own wording. Whether the declaration is admissible at all is
-    # admissibility is asked once above and nowhere restated.
+    # own wording. Whether the declaration is admissible at all was settled once
+    # by the condition above; neither wording arm restates it.
     if status_is_stood_down "$last"; then
       printf 'pause|stood down (no agent by intent, it clears when the work resumes or lands), rechecked on a long cadence: %s' "$last"
     else
@@ -1161,15 +1161,31 @@ housekeeping() {  # <state>
     else
       [ "$age" -ge "$pause_secs" ] || continue
     fi
-    # Endpoint-readability probe only: exit code 2 means the capture failed, so the
-    # endpoint is gone and there is nothing left to re-surface. The busy/idle verdict
-    # is deliberately discarded here. Do NOT reinstate a `0)` arm dropping the marker
-    # on busy: migrate_watcher_pause_markers recreates it with a fresh timestamp on
-    # the very next tick while the declaration still stands, so the window would
-    # restart forever and the wait would never mature into its one recheck.
+    # Endpoint-readability probe only: exit code 2 means the capture failed, so for
+    # an ordinary declared wait the endpoint is gone and there is nothing left to
+    # re-surface. The busy/idle verdict is deliberately discarded here. Do NOT
+    # reinstate a `0)` arm dropping the marker on busy: migrate_watcher_pause_markers
+    # recreates it with a fresh timestamp on the very next tick while the declaration
+    # still stands, so the window would restart forever and the wait would never
+    # mature into its one recheck.
+    # A stand-down is the exception, and for the same reason: a gone endpoint is the
+    # state it DECLARES, not a reason it has nothing to say. The captain stopping a
+    # crewmate whose window is killed outright is the shape the record was written
+    # for, so treating a failed capture as "nothing to re-surface" dropped the marker
+    # every tick and its digest could never fire - the very trap the note above
+    # describes, reached through the other arm.
     stale_window_is_busy "$win" "$state"
     case "$?" in
-      2) rm -f "$marker" ;;
+      2)
+        last=$(last_status_line "$state/$task.status")
+        if [ -n "$last" ] && status_is_stood_down "$last" && fm_stand_down_read "$state" "$task"; then
+          if escalate_add "$state" "stood-down ${age}s (no agent by intent, it clears when the work resumes or lands; confirm the stop still stands): $win"; then
+            _now > "$marker"
+          fi
+        else
+          rm -f "$marker"
+        fi
+        ;;
       *)
         last=$(last_status_line "$state/$task.status")
         if [ -n "$last" ] && status_is_captain_held "$last"; then

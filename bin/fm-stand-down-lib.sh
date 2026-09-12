@@ -182,7 +182,7 @@ fm_stand_down_remove() {  # <state-dir> <task-id>
 }
 
 # The one line that stops a status log declaring a stand-down. It uses the
-# informational verb bin/fm-classify-lib.sh owns as FM_CLASSIFY_NOTE_VERB, which
+# informational verb bin/fm-classify-lib.sh owns as FM_CLASSIFY_NOTE_VERB_DEFAULT, which
 # declares no wait, closes no keyed decision, and claims nothing about the work -
 # exactly the whole of what firstmate may say here. No other verb in that
 # vocabulary fits: `working:` would claim progress on the worker's behalf, a
@@ -190,7 +190,7 @@ fm_stand_down_remove() {  # <state-dir> <task-id>
 # has to write, `resolved:` would close a keyed decision that was never opened,
 # and the remaining verbs each declare a wait, which is the one thing this line
 # must undo.
-FM_STAND_DOWN_RELEASE_LINE="${FM_CLASSIFY_NOTE_VERB:-${FM_CLASSIFY_NOTE_VERB_DEFAULT:-note}}: stand-down released by firstmate; this task declares no wait"
+FM_STAND_DOWN_RELEASE_LINE="${FM_CLASSIFY_NOTE_VERB_DEFAULT:-note}: stand-down released by firstmate; this task declares no wait"
 
 # The declared-wait line firstmate appends when it records a stand-down for
 # <reason>. bin/fm-classify-lib.sh owns the verb; the reason is already validated
