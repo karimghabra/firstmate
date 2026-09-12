@@ -75,24 +75,29 @@
 #     next genuine death, an unreachable or unverifiable answer is not proof of
 #     death and keeps its existing verdict, an active run step still outranks it,
 #     and bin/fm-spawn.sh's relaunch path retires it outright.
-#   - NOT PROTECTED IN TWO COMPONENTS, named here because a sentence naming only
-#     one of them stops being true the moment a reader checks the other. The
-#     away-mode daemon's stale classifier (bin/fm-supervise-daemon.sh) and the
-#     herdr push-transition handler (bin/fm-push-transition-lib.sh) both trust a
-#     `stood-down:` declaration from the status LOG alone for LIVENESS: neither
-#     asks the backend whether an agent is running. So a live worker - including
-#     a wedged one, and including one restarted in the same pane by any route
-#     other than a relaunch, which is the only path that retires the record - IS
-#     NOT ESCALATED by either. In away mode it takes the recheck cadence instead
-#     of the wedge ladder for as long as away mode lasts; on the herdr path its
-#     decision-point transition is absorbed instead of woken.
-#     The RECORD half IS gated in both (a record that does not parse falls
+#   - NOT PROTECTED IN THREE PLACES. This list exists to be the honest inventory
+#     of where the LIVENESS half is not gated, so it names every one of them: an
+#     inventory with an unnamed exception is worse than none, because it earns
+#     trust it does not deserve. They are the away-mode daemon's stale classifier
+#     (bin/fm-supervise-daemon.sh), the herdr push-transition handler
+#     (bin/fm-push-transition-lib.sh), and - inside the always-on watcher itself -
+#     a SECONDMATE window, whose endpoint liveness pause_state_class deliberately
+#     never reads. All three trust a `stood-down:` declaration from the status LOG
+#     alone for liveness: none asks the backend whether an agent is running. So a
+#     live worker - including a wedged one, and including one restarted in the
+#     same pane by any route other than a relaunch, which is the only path that
+#     retires the record - IS NOT ESCALATED by any of them. In away mode it takes
+#     the recheck cadence instead of the wedge ladder for as long as away mode
+#     lasts; on the herdr path its decision-point transition is absorbed instead
+#     of woken; a running mate is absorbed on that same recheck cadence.
+#     The RECORD half IS gated in all three (a record that does not parse falls
 #     through and keeps alarming, so the paragraph above holds everywhere); the
-#     LIVENESS half is not. The always-on watcher gates both halves. This is a
-#     known gap, written down rather than closed: closing it means putting a
-#     backend probe inside a classifier whose cost contract forbids one, which is
-#     a design decision filed as separate work - and that work has to cover both
-#     components above, not just the daemon.
+#     LIVENESS half is not. The watcher gates both halves for an ORDINARY crew,
+#     which is the only claim that survives checking. This is a known gap,
+#     written down rather than closed: closing it means putting a backend probe
+#     where a cost contract or a deliberate design choice forbids one, which is
+#     filed as separate work - and that work has to cover all three, not just the
+#     daemon.
 #   - Not enforceable here: no tool can read INTENT. An agent that crashed and
 #     one the captain stopped both leave the same dead agent, so the record asserts
 #     something only the person writing it knows. That is why the reason is
