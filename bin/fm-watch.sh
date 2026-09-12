@@ -44,15 +44,12 @@
 #                          A pane whose own task worktree was written during the
 #                          quiet window is deferred rather than escalated, because
 #                          files appearing there are liveness the pane itself
-#                          cannot show - but only where no no-mistakes run step
-#                          owns the work, since a fix round writes that same tree
-#                          and those writes are the pipeline's, not the agent's.
-#                          That deferral re-surfaces once per PAUSE_RESURFACE_SECS,
-#                          and a pane with no write evidence of its own keeps the
-#                          unchanged schedule. An active run step does not defer on
-#                          its own account either: see wedge_defer for why that
-#                          probe was removed rather than repaired, and what its
-#                          removal costs.
+#                          cannot show. That deferral re-surfaces once per
+#                          PAUSE_RESURFACE_SECS, and a pane with no write evidence
+#                          keeps the unchanged schedule. An active no-mistakes run
+#                          step does NOT defer: see wedge_defer for why that probe
+#                          was removed rather than repaired, and what its removal
+#                          costs.
 #                          A genuinely busy pane
 #                          (window_is_busy true) is exempt from the above, but
 #                          only up to BUSY_TURN_MAX_SECS with no completed turn
@@ -69,9 +66,8 @@
 #                          escalation count, and demand-deep-inspection marker,
 #                          for human inspection only - never an automatic
 #                          interrupt, signal, or restart of the worker or its
-#                          tool process. Past that bound the same rule decides the
-#                          deferral as everywhere else: the crew's own writes still
-#                          defer, a pipeline's do not.
+#                          tool process. The write deferral applies past that bound
+#                          exactly as it does anywhere else.
 #   stale: <window> (unread firstmate instruction: ...)
 #                          the steering-inbox ladder spent its delivery-attempt
 #                          budget on an idle pane without an acknowledgement
@@ -928,24 +924,19 @@ clear_defer_tracking() {  # <window-key>
 # be absorbed this way: the plain non-terminal path, and the
 # stale_is_terminal-overridden path (a captain-relevant status-log line that an
 # active run/busy pane outranked).
-# The deferral decision runs ONLY inside the at-threshold branch that is about to
-# escalate - at most one crew-state read and one bounded worktree walk per window
-# per STALE_ESCALATE_SECS, never per poll.
+# The worktree-write probe runs ONLY inside the at-threshold branch that is about to
+# escalate - one bounded walk per window per STALE_ESCALATE_SECS, never per poll -
+# and it defers on every path that reaches here, exactly as it always has.
 #
-# A worktree write is evidence that SOMETHING is writing, and is evidence about the
-# AGENT only when no pipeline owns the work. That is the whole rule, and it is what
-# the code below asks: a no-mistakes fix round edits source under the crew's own
-# recorded worktree (FM_WORKTREE_WRITE_PRUNE excludes .git and generated trees, not
-# source), so while a run step owns the work those writes are the pipeline's and
-# prove nothing about the agent - deferring on them would rescue exactly the
-# hung-mid-turn crewmate the busy-turn bound exists to catch. With no pipeline
-# owning the work the writes are the agent's own, and they defer the escalation
-# exactly as they always have, on every path.
-# Gating this on the CALLER instead - a busy-turn eligibility flag - conflated those
-# two cases and silently dropped a deferral that predates this work entirely: a busy
-# pane whose own agent was visibly writing its worktree went back to escalating
-# every STALE_ESCALATE_SECS. The question is about the work, not about which caller
-# asked, so it is asked here.
+# It is worth knowing what a worktree write does and does not prove, because this
+# branch spent three rounds getting that wrong. A write is evidence that SOMETHING
+# is writing; it is evidence about the AGENT only where nothing else is writing that
+# tree. Three attempts were made to act on that distinction here - a busy-turn
+# eligibility flag, then a pipeline-ownership gate - and each one removed a deferral
+# that predates this work and produced fresh wedge noise on a healthy crew, the last
+# of them worse than no change at all. They were reverted rather than corrected a
+# fourth time, so the probe is back to its unconditional form. The distinction is
+# real and still worth recording; acting on it here is what kept failing.
 wedge_timer_check() {  # <window> <since-file> <triage-label> <escalation-count-file> <task>
   local win=$1 since_file=$2 label=$3 escalation_file=$4 task=$5 since age n reason
   since=$(cat "$since_file" 2>/dev/null || true)
@@ -960,8 +951,7 @@ wedge_timer_check() {  # <window> <since-file> <triage-label> <escalation-count-
     *)
       age=$(( $(date +%s) - since ))
       if [ "$age" -ge "$STALE_ESCALATE_SECS" ]; then
-        if ! crew_pipeline_owns_work "$task" \
-          && crew_worktree_written_since "$task" "$STATE" "$since_file"; then
+        if crew_worktree_written_since "$task" "$STATE" "$since_file"; then
           wedge_defer "$win" "$since_file" "$label" "$age"
           return 0
         fi
