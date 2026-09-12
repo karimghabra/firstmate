@@ -774,9 +774,15 @@ test_stood_down_wait_resurfaces_on_the_pause_cadence() {
   key=$(printf '%s' "$task" | tr ':/.' '___')
   fm_write_meta "$state/$task.meta" "window=$win" "backend=tmux"
   # The shape a recorded stand-down leaves: work delivered and not landed, then
-  # firstmate's own declaration of the deliberate stop.
+  # firstmate's own declaration of the deliberate stop - and BOTH halves of the
+  # state, because bin/fm-stand-down.sh writes the record first and appends the
+  # declaration only once it reads back. A declaration with no record is not a
+  # state the fleet produces, and is refused rather than absorbed
+  # (test_stood_down_with_an_unreadable_record_still_alarms_in_away_mode).
   printf 'done: PR 42 pushed, awaiting the captain\nstood-down: captain stopped this crewmate on purpose\n' \
     > "$state/$task.status"
+  printf 'recorded=%s\nreason=captain stopped this crewmate on purpose\n' "$(( $(date +%s) - 5000 ))" \
+    > "$state/$task.stood-down"
   printf 'idle prompt $\n' > "$pane"
   # The marker has been aging for well past the cadence, so the recheck is due.
   echo $(( $(date +%s) - 5000 )) > "$state/.subsuper-paused-$key"
@@ -857,15 +863,51 @@ test_stood_down_with_an_unreadable_record_still_alarms_in_away_mode() {
     *"awaiting external"*) fail "an unreadable record fell through to the external-wait wording: $verdict" ;;
   esac
 
-  # And the consequence the verdict exists for: the wake records wedge aging
-  # rather than a pause marker, so housekeeping escalates it on the ordinary bound.
+  # An enriched `possible wedge, escalation N` reason from the watcher is no longer
+  # downgraded by the declaration: with nothing backing it, the escalation stands.
   LOG="$dir/daemon.log" FM_STATE_OVERRIDE="$state" \
     handle_wake "stale: $win (idle 250s, possible wedge, escalation 2)" "$state"
+  grep -F "possible wedge" "$state/.subsuper-escalations" >/dev/null \
+    || fail "an enriched wedge was downgraded by a declaration nothing backs: $(cat "$state/.subsuper-escalations" 2>/dev/null)"
   [ ! -e "$state/.subsuper-paused-$key" ] \
     || fail "an unreadable stand-down record recorded a pause marker, putting a live pane on the long cadence"
+
+  # And the first-sighting shape, which is where the wedge marker is written:
+  # the wake records wedge aging rather than a pause marker.
+  : > "$state/.subsuper-escalations"
+  LOG="$dir/daemon.log" FM_STATE_OVERRIDE="$state" handle_wake "stale: $win" "$state"
+  [ ! -e "$state/.subsuper-paused-$key" ] \
+    || fail "a first-sighting stale under an unbacked declaration recorded a pause marker"
   [ -e "$state/.subsuper-stale-$key" ] \
     || fail "an unreadable stand-down record left no wedge aging behind, so nothing escalates it"
-  pass "an unreadable stand-down record keeps its pane on the ordinary wedge schedule in away mode"
+
+  # The wake is only where the marker is WRITTEN. What absorbs a pane in away mode
+  # is the marker surviving, and housekeeping re-derives markers from the status
+  # log on every tick - so a gate that stops at the classifier is inert: the
+  # declaration alone would make migrate_watcher_pause_markers swap wedge aging for
+  # a pause marker ~16 times per STALE_ESCALATE_SECS window and the wedge would
+  # never mature. Drive the real tick and assert the marker survives it.
+  PATH="$fakebin:$PATH" FM_FAKE_TMUX_WINDOW="$win" FM_FAKE_TMUX_CAPTURE="$pane" \
+    FM_STATE_OVERRIDE="$state" FM_ESCALATE_BATCH_SECS=999999 \
+    FM_STALE_ESCALATE_SECS=240 FM_PAUSE_RESURFACE_SECS=3600 housekeeping "$state"
+  [ ! -e "$state/.subsuper-paused-$key" ] \
+    || fail "a housekeeping tick re-derived a pause marker from the declaration alone"
+  [ -e "$state/.subsuper-stale-$key" ] \
+    || fail "a housekeeping tick destroyed the wedge aging, so it can never mature"
+  [ ! -s "$state/.subsuper-escalations" ] \
+    || fail "the wedge escalated before its bound: $(cat "$state/.subsuper-escalations")"
+
+  # And it matures: past the bound the ordinary possible-wedge digest fires,
+  # which is the alarm the library header promises an unparseable record restores.
+  echo $(( $(date +%s) - 5000 )) > "$state/.subsuper-stale-$key"
+  PATH="$fakebin:$PATH" FM_FAKE_TMUX_WINDOW="$win" FM_FAKE_TMUX_CAPTURE="$pane" \
+    FM_STATE_OVERRIDE="$state" FM_ESCALATE_BATCH_SECS=999999 \
+    FM_STALE_ESCALATE_SECS=240 FM_PAUSE_RESURFACE_SECS=3600 housekeeping "$state"
+  grep -F "possible wedge" "$state/.subsuper-escalations" >/dev/null \
+    || fail "an aged unreadable stand-down never escalated as a possible wedge: $(cat "$state/.subsuper-escalations" 2>/dev/null)"
+  grep -F "no agent by intent" "$state/.subsuper-escalations" >/dev/null \
+    && fail "an unreadable record still produced the reassuring stand-down digest"
+  pass "an unreadable stand-down record keeps its pane on the ordinary wedge schedule in away mode, and it matures into a wedge"
 }
 
 test_stale_terminal_escalates() {

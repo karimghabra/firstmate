@@ -154,6 +154,10 @@ FM_CLASSIFY_STOOD_DOWN_VERB_DEFAULT='stood-down'
 # WITHOUT asserting anything in the worker's place: every other verb this library
 # names either declares a wait, closes a keyed decision, or states how the work
 # itself stands, and none of those is true of "that declaration is over".
+# It is NOT excluded from status_is_captain_relevant. A `note:` line still reaches
+# the captain by free text exactly as it always has; only its own fixed wording
+# keeps the release line out of that set, which is a property of the line rather
+# than a rule about the verb.
 # FM_CLASSIFY_NOTE_VERB overrides it.
 FM_CLASSIFY_NOTE_VERB_DEFAULT='note'
 
@@ -182,13 +186,17 @@ status_is_terminal_verb() {
 # (working, resolved, captain-held) and the declared waits never match from
 # free-text prose; only lines without those leading verbs may still match
 # free-text tokens for legacy bare lines such as "merged" or "PR ready".
+# The informational verb is deliberately NOT in that list: `note: merged upstream
+# into my branch` has always been captain-relevant by free text, and declassifying
+# every such line fleet-wide is not something choosing a verb for one firstmate
+# status line gets to decide.
 status_is_captain_relevant() {
   local line=$1 verb
   [ -n "$line" ] || return 1
   status_is_paused "$line" && return 1
   verb=$(status_line_verb "$line")
   case "$verb" in
-    working|resolved|captain-held|"${FM_CLASSIFY_PAUSED_VERB:-$FM_CLASSIFY_PAUSED_VERB_DEFAULT}"|"${FM_CLASSIFY_STOOD_DOWN_VERB:-$FM_CLASSIFY_STOOD_DOWN_VERB_DEFAULT}"|"${FM_CLASSIFY_NOTE_VERB:-$FM_CLASSIFY_NOTE_VERB_DEFAULT}")
+    working|resolved|captain-held|"${FM_CLASSIFY_PAUSED_VERB:-$FM_CLASSIFY_PAUSED_VERB_DEFAULT}"|"${FM_CLASSIFY_STOOD_DOWN_VERB:-$FM_CLASSIFY_STOOD_DOWN_VERB_DEFAULT}")
       return 1
       ;;
   esac

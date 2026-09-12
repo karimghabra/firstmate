@@ -429,7 +429,7 @@ classify_stale() {  # <window> <state> [<span-record> <span-status>]
     printf 'escalate|stale + actionable status: %s' "$event"
     return
   fi
-  if [ -n "$last" ] && status_is_paused_or_captain_held "$last"; then
+  if [ -n "$last" ] && declared_wait_admissible "$state" "$task" "$last"; then
     # A DECLARED wait - an external-wait pause, a verified captain-held transfer,
     # or a recorded stand-down (fm-classify-lib.sh owns which declarations
     # qualify): an idle pane is EXPECTED, so this is not a wedge. The caller
@@ -441,24 +441,14 @@ classify_stale() {  # <window> <state> [<span-record> <span-status>]
     # going to clear a stand-down, so naming it an external wait would send the
     # reader of this log looking for a dependency that does not exist - the same
     # reason the housekeeping digest and the watcher's recheck each give it its
-    # own wording.
-    #
-    # A stand-down is also the one declaration whose truth depends on a record
-    # OUTSIDE the log, so the declaration alone does not earn the pause routing
-    # here: a record that does not parse falls through to the ordinary stale
-    # classification below and keeps alarming. That is a plain local file read,
-    # so it does not touch the no-fm-crew-state.sh cost rule this classifier
-    # keeps. What this cannot check is LIVENESS - see the gap this function's
-    # caller documents, and bin/fm-stand-down-lib.sh's header.
+    # own wording. Whether the declaration is admissible at all is
+    # declared_wait_admissible's question, asked once above and nowhere restated.
     if status_is_stood_down "$last"; then
-      if fm_stand_down_read "$state" "$task"; then
-        printf 'pause|stood down (no agent by intent, it clears when the work resumes or lands), rechecked on a long cadence: %s' "$last"
-        return
-      fi
+      printf 'pause|stood down (no agent by intent, it clears when the work resumes or lands), rechecked on a long cadence: %s' "$last"
     else
       printf 'pause|paused (awaiting external), rechecked on a long cadence: %s' "$last"
-      return
     fi
+    return
   fi
   if [ -n "$last" ] && status_is_captain_relevant "$last"; then
     # Independent of free-text captain-relevant matching: a nonterminal progress
@@ -550,13 +540,37 @@ clear_pause_tracking() {  # <window> <state>
     "$state/.defer-since-$watcher_key" "$state/.defer-resurfaced-$watcher_key"
 }
 
+# The daemon's ONE admission test for a declared wait, and the only thing any
+# pause-marker site may ask. A `paused:` wait and a verified captain-held transfer
+# are self-contained: the log line IS the whole declaration. A stand-down is not -
+# its truth lives in state/<id>.stood-down, and a record nobody can parse must
+# never be trusted to quieten an alarm (bin/fm-stand-down-lib.sh's header owns
+# that rule).
+#
+# It has to be asked at EVERY site that creates, keeps, or rechecks the pause
+# marker, not just where the wake is first classified. The marker is what actually
+# absorbs a pane here, and housekeeping re-derives it from the status log on every
+# tick: gating only the classifier left migrate_watcher_pause_markers recreating
+# the marker ~16 times per STALE_ESCALATE_SECS window, so the wedge marker never
+# matured and an unparseable record kept the pane on the four-hour cadence anyway.
+#
+# A local file read, never a backend probe: this classifier's probe-free cost
+# contract is intact. LIVENESS is deliberately not checked here - see the gap
+# bin/fm-stand-down-lib.sh and docs/architecture.md state plainly.
+declared_wait_admissible() {  # <state> <task> <last-status-line>
+  local state=$1 task=$2 last=$3
+  status_is_paused_or_captain_held "$last" || return 1
+  status_is_stood_down "$last" || return 0
+  fm_stand_down_read "$state" "$task"
+}
+
 reconcile_pause_tracking() {  # <window> <state> <last-status-line>
   local win=$1 state=$2 last=$3 task key marker watcher_key
   task=$(window_to_task "$win" "$state")
   key=$(_stale_key "$task")
   marker="$state/.subsuper-paused-$key"
   watcher_key=$(_stale_key "$win")
-  if status_is_paused_or_captain_held "$last"; then
+  if declared_wait_admissible "$state" "$task" "$last"; then
     stale_marker_remove "$win" "$state"
     pause_marker_record "$win" "$state"
   elif [ -e "$marker" ] || [ -e "$state/.paused-$watcher_key" ]; then
@@ -574,7 +588,7 @@ migrate_watcher_pause_markers() {  # <state>
     key=$(_stale_key "$task")
     watcher_key=$(_stale_key "$win")
     last=$(last_status_line "$state/$task.status")
-    if status_is_paused_or_captain_held "$last" || [ -e "$state/.subsuper-paused-$key" ] || [ -e "$state/.paused-$watcher_key" ]; then
+    if declared_wait_admissible "$state" "$task" "$last" || [ -e "$state/.subsuper-paused-$key" ] || [ -e "$state/.paused-$watcher_key" ]; then
       reconcile_pause_tracking "$win" "$state" "$last"
     fi
   done
@@ -1092,7 +1106,7 @@ housekeeping() {  # <state>
     fi
     task=$(window_to_task "$win" "$state")
     last=$(last_status_line "$state/$task.status")
-    if [ -n "$last" ] && status_is_paused_or_captain_held "$last"; then
+    if [ -n "$last" ] && declared_wait_admissible "$state" "$task" "$last"; then
       reconcile_pause_tracking "$win" "$state" "$last"
       continue
     fi
@@ -1109,7 +1123,7 @@ housekeeping() {  # <state>
   done
 
   # (2b) pause re-surface recheck. A declared wait is waiting, not wedged (fm-classify-lib.sh's
-  # status_is_paused_or_captain_held owns which declarations qualify), so it is
+  # declared_wait_admissible owns which declarations qualify here), so it is
   # rechecked on a much longer cadence than a wedge (PAUSE_RESURFACE_SECS) and never
   # escalated as one - but it MUST re-surface, so neither a forgotten pause nor a
   # forgotten captain hold can rot invisibly. Past the window: gone -> drop; still
@@ -1137,7 +1151,7 @@ housekeeping() {  # <state>
     fi
     task=$(window_to_task "$win" "$state")
     last=$(last_status_line "$state/$task.status")
-    if [ -z "$last" ] || ! status_is_paused_or_captain_held "$last"; then
+    if [ -z "$last" ] || ! declared_wait_admissible "$state" "$task" "$last"; then
       reconcile_pause_tracking "$win" "$state" "$last"
       continue
     fi
@@ -1188,7 +1202,7 @@ housekeeping() {  # <state>
               printf '%s\n' "$until" > "$due"
             fi
           fi
-        elif [ -n "$last" ] && status_is_stood_down "$last"; then
+        elif [ -n "$last" ] && status_is_stood_down "$last" && fm_stand_down_read "$state" "$task"; then
           if escalate_add "$state" "stood-down ${age}s (no agent by intent, it clears when the work resumes or lands; confirm the stop still stands): $win"; then
             _now > "$marker"
           fi
@@ -1421,7 +1435,7 @@ handle_wake() {  # <reason> <state>
                 *) case "$stale_detail" in
                      idle\ *s,\ possible\ wedge,\ escalation\ *)
                        last=$(last_status_line "$state/$task.status")
-                       status_is_paused_or_captain_held "$last" \
+                       declared_wait_admissible "$state" "$task" "$last" \
                          || decision="escalate|${reason#stale: }"
                        ;;
                    esac ;;
