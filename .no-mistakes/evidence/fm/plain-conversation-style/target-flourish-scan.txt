@@ -1,0 +1,13 @@
+target-badnews-1: none
+target-badnews-2: none
+target-badnews-3: none
+target-nautical-1: none
+target-nautical-2: none
+target-nautical-3: none
+target-ordinary-1: none
+target-ordinary-2: none
+target-ordinary-3: none
+target-routine-1: none
+target-routine-2: none
+target-routine-3: none
+bearings-target: none
