@@ -15,7 +15,8 @@
 # script against that home, and its items, decisions, workers (with memory) and
 # parked work are merged in, labelled with the mate. A remote second mate, or a
 # local one that cannot be read, gets one row in a SECOND MATES section with its
-# published state and counts; its detail lives in that home.
+# published state and counts, and the captain holds its summary lists appear
+# under decisions with ages in whole days; its other detail lives in that home.
 #
 # Sections, in order:
 #   1. one-line verdict for the whole fleet;
@@ -365,15 +366,30 @@ MODEL=$(printf '%s' "$SNAPSHOT" | jq \
        | item($r; $t; ($t == null and ($orphans | index($r.id)) != null)) ]) as $items_main
   | ([ $mates[] | .id as $mid | .model.items[]
        | . + {id: ($mid + "/" + .id), mate: $mid, phrase: (.phrase + " (via second mate " + $mid + ")")} ]) as $items_mates
-  | (($items_main
-      | map((.held and (.hold_bucket == "dated" or .hold_bucket == "blocked")) as $deferred
-            | (if .held and .hold_epoch != null then ($now - .hold_epoch) else null end) as $age
-            | . + {mate: null,
-                   waiting_seconds: $age,
-                   waiting_days: (if $age == null then null else (($age / 86400) | floor) end),
-                   deferred: $deferred,
-                   overdue: (.held and ($deferred | not) and $age != null and $age > ($overdue_days * 86400))}))
-     + $items_mates) as $items
+  | ([ (.secondmate_current.records // [])[] as $m
+       | select(any($mates[]; .id == $m.id) | not)
+       | ([$m.queued[]? | select(.hold_kind == "captain" and .hold_bucket != null)]
+          + [$m.decisions_open[]? | select(.verb == "captain-hold")
+             | {id, title: .summary, hold_kind: "captain", hold_bucket: (.hold_bucket // "live"),
+                hold_reason: .reason, hold_until, hold_age_days}]
+          | unique_by(.id))[]
+       | . as $q
+       | item($q + {repo: ($q.repo // $m.id), state: "queued"}; null; false)
+       | . + {id: ($m.id + "/" + .id), mate: $m.id, phrase: (.phrase + " (via second mate " + $m.id + ")"),
+              age_in_days: true,
+              hold_epoch: (if $q.hold_age_days != null
+                           then ($now - (($m.freshness.age_seconds // 0) + $q.hold_age_days * 86400)) else null end)} ]) as $items_summaries
+  | (($items_main | map(. + {mate: null, age_in_days: false})) + $items_summaries
+     | map((.held and (.hold_bucket == "dated" or .hold_bucket == "blocked")) as $deferred
+           | (if .held and .hold_epoch != null then ($now - .hold_epoch) else null end) as $age
+           | (if $age == null then null else (($age / 86400) | floor) end) as $days
+           | . + {waiting_seconds: $age,
+                  waiting_days: $days,
+                  deferred: $deferred,
+                  overdue: (.held and ($deferred | not) and $age != null
+                            and (if .age_in_days then $days >= $overdue_days
+                                 else $age > ($overdue_days * 86400) end))})
+     | . + $items_mates) as $items
   | ($registered + [$mates[].model.projects[] | select(.registered) | .name]) as $registered
   | (($registered + [$items[].project])
      | reduce .[] as $p ([]; if any(.[]; lc == ($p | lc)) then . else . + [$p] end)) as $project_names
@@ -447,7 +463,9 @@ MODEL=$(printf '%s' "$SNAPSHOT" | jq \
                    else "nothing open" end),
           counts: {working: ($r.counts.active_children // 0), decisions: ($r.counts.decisions_open // 0),
                    queued: ($r.counts.queued // 0)},
-          omitted: ([$r.omitted[]?.count] | add // 0)} ]
+          omitted: ([$r.omitted[]?.count] | add // 0),
+          omitted_holds: (if $merged then 0
+                          else ([$r.omitted[]? | select(.surface == "queued" or .surface == "decisions_open") | .count] | max // 0) end)} ]
      + [ $mates[] | .id as $mid | .model.mates[] | . + {id: ($mid + "/" + .id)} ]) as $mate_rows
   | ([$mate_rows[] | select(.tone == "red")] | length) as $n_mate_red
   | ([$mate_rows[] | select(.tone == "yellow")] | length) as $n_mate_yellow
@@ -600,6 +618,7 @@ printf '%s' "$MODEL" | jq -r --argjson c "$CODES" --argjson width "$WIDTH" --arg
                   (($k + 1) | tostring) + ". [" + tag($d) + "] " + ($d.title | cut($width - 34)))
              + paint(if $d.overdue then "red" else "dim" end; " ("
                  + (if $d.waiting_seconds == null then "age unknown"
+                    elif $d.age_in_days and $d.waiting_days == 0 then "waiting under a day"
                     else "waiting " + age($d.waiting_seconds) end)
                  + (if $d.overdue then ", OVERDUE" else "" end)
                  + (if $d.hold_bucket == "dated" then ", deferred until " + ($d.hold_until // "later")
@@ -611,6 +630,9 @@ printf '%s' "$MODEL" | jq -r --argjson c "$CODES" --argjson width "$WIDTH" --arg
                ([($d.pr_url // empty), ($why | scan("https?://[^ )]+/pull/[0-9]+"))]
                 | unique[] | . as $u | select(($shown | contains($u)) | not) | "     PR: " + $u)))
        end),
+      ($m.mates[] | select(.omitted_holds > 0)
+       | paint("yellow"; "  Up to " + (.omitted_holds | tostring) + " more held or queued items wait in the home of second mate "
+                         + .id + " and are not listed here.")),
       (if $full == 0 and any($m.decisions[]; (.hold_reason // "") as $w | first_sentence($w) != ($w | sub("\\s+$"; "")))
        then paint("dim"; "  Shortened to the first sentence; run with --full for the whole reasons.") else empty end),
 

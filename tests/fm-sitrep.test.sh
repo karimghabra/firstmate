@@ -429,8 +429,9 @@ EOF
 }
 
 # A remote second mate is known only through its published summary, served
-# here by a fake ssh. Its summary says: waiting on the captain, 1 worker,
-# 2 open decisions, 5 queued of which 3 are beyond the summary's cap.
+# here by a fake ssh. Its summary was published two days before the report and
+# says: waiting on the captain, 1 worker, 5 queued of which 3 are beyond the
+# summary's cap, and two captain holds that were then 2 days and 0 days old.
 test_remote_second_mate_gets_one_row() {
   local home fb out remote_home
   home=$(make_home mate-remote)
@@ -447,16 +448,16 @@ test_remote_second_mate_gets_one_row() {
   jq -n --arg home "$remote_home" --arg now "$NOW_ISO" --argjson epoch "$NOW_EPOCH" '{
     schema:"fm-secondmate-home-summary.v1",
     hold_classifier_schema:"fm-captain-hold-buckets.v1",
-    generated:$now,generated_epoch:$epoch,home:$home,
+    generated:"2026-07-23T00:00:00Z",generated_epoch:($epoch - 172800),home:$home,
     valid:true,reason:null,invalidity:{kind:null,ids:[]},state:"captain_decision",
     active_children:[{id:"far-work",kind:"ship",state:"working",repo:"sample",source:"busy",doing:""}],
     decisions_open:[
-      {id:"far-a",key:"far-a",verb:"captain-hold",summary:"Far call A",reason:"choose",hold_until:null,hold_bucket:"live",hold_age_days:1,source:"backlog"},
-      {id:"far-b",key:"far-b",verb:"captain-hold",summary:"Far call B",reason:"choose",hold_until:null,hold_bucket:"live",hold_age_days:1,source:"backlog"}
+      {id:"far-a",key:"far-a",verb:"captain-hold",summary:"Far call A",reason:"choose",hold_until:null,hold_bucket:"live",hold_age_days:2,source:"backlog"},
+      {id:"far-b",key:"far-b",verb:"captain-hold",summary:"Far call B",reason:"choose",hold_until:null,hold_bucket:"live",hold_age_days:0,source:"backlog"}
     ],holds:[],
     queued:[
-      {id:"far-a",title:"Far call A",blocked_by:null,blocked_by_ids:[],unresolved_blocker_ids:[],blocked_reason:null,hold_reason:"choose",hold_kind:"captain",hold_until:null,hold_bucket:"live",hold_age_days:1,captain_actionable:true,repo:"sample",kind:"captain"},
-      {id:"far-b",title:"Far call B",blocked_by:null,blocked_by_ids:[],unresolved_blocker_ids:[],blocked_reason:null,hold_reason:"choose",hold_kind:"captain",hold_until:null,hold_bucket:"live",hold_age_days:1,captain_actionable:true,repo:"sample",kind:"captain"}
+      {id:"far-a",title:"Far call A",blocked_by:null,blocked_by_ids:[],unresolved_blocker_ids:[],blocked_reason:null,hold_reason:"choose",hold_kind:"captain",hold_until:null,hold_bucket:"live",hold_age_days:2,captain_actionable:true,repo:"sample",kind:"captain"},
+      {id:"far-b",title:"Far call B",blocked_by:null,blocked_by_ids:[],unresolved_blocker_ids:[],blocked_reason:null,hold_reason:"choose",hold_kind:"captain",hold_until:null,hold_bucket:"live",hold_age_days:0,captain_actionable:true,repo:"sample",kind:"captain"}
     ],landed:[],endpoints:[],
     counts:{active_children:1,decisions_open:2,holds:0,queued:5,landed:0,endpoints:1},
     omitted:[{surface:"queued",count:3}]
@@ -471,16 +472,24 @@ test_remote_second_mate_gets_one_row() {
       and .mates[0].counts == {working: 1, decisions: 2, queued: 5} and .mates[0].omitted == 3
   ' >/dev/null || fail "a remote second mate must get one summary row: $(printf '%s' "$out" | jq -c '.mates')"
   printf '%s' "$out" | jq -e '
-    (.decisions | length) == 0 and (.workers | length) == 0
-      and .verdict.word == "WAITING ON YOU" and .verdict.mates_attention == 1
-  ' >/dev/null || fail "a remote second mate must not be merged, but must raise the verdict: $(printf '%s' "$out" | jq -c '{verdict, decisions}')"
+    [.decisions[] | {id, mate, project, waiting_days, overdue}]
+    == [{id: "far/far-a", mate: "far", project: "sample", waiting_days: 4, overdue: true},
+        {id: "far/far-b", mate: "far", project: "sample", waiting_days: 2, overdue: false}]
+  ' >/dev/null || fail "a remote second mate's holds must be listed with ages that include the summary's own age: $(printf '%s' "$out" | jq -c '.decisions')"
+  printf '%s' "$out" | jq -e '
+    (.workers | length) == 0 and .verdict.word == "WAITING ON YOU" and .verdict.mates_attention == 1
+      and .verdict.decisions == 2 and .verdict.overdue_decisions == 1
+  ' >/dev/null || fail "a remote second mate's holds must count in the verdict: $(printf '%s' "$out" | jq -c '.verdict')"
   out=$(FM_SSH_BIN="$fb/fake-ssh" FM_SNAPSHOT_CACHE_DIR="$home/state/summary-cache" FM_SNAPSHOT_BUDGET=15 \
     run_sitrep "$home" "$fb")
   assert_contains "$out" "far (remote, host-1): waiting on your decision - 1 worker, 2 open decisions, 5 queued (3 not shown)" \
     "the remote row must carry state, counts and the omitted count"
   assert_contains "$out" "detail lives in that home" "the remote row must say where the detail is"
   assert_contains "$out" "1 second mate needs a look" "the verdict line must mention the remote second mate"
-  pass "a remote second mate gets one summary row with state, counts and omitted count"
+  assert_contains "$out" "2 decisions wait on you (1 overdue)" "the verdict line must count the remote holds"
+  assert_contains "$out" "[sample via far] Far call A (waiting 4 days, OVERDUE)" "a remote hold must show its mate, age and overdue mark"
+  assert_contains "$out" "Up to 3 more held or queued items wait in the home of second mate far" "omitted remote holds must be announced"
+  pass "a remote second mate gets a summary row and its holds are listed with age and overdue marking"
 }
 
 test_memory_over_process_tree() {
