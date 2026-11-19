@@ -17,6 +17,9 @@
 # local one that cannot be read, gets one row in a SECOND MATES section with its
 # published state and counts, and the captain holds its summary lists appear
 # under decisions with ages in whole days; its other detail lives in that home.
+# A local second mate whose own session is gone or holds only a bare shell is
+# not listed as a running worker: its row turns red and raises the verdict,
+# whether or not its home was merged.
 #
 # Sections, in order:
 #   1. one-line verdict for the whole fleet;
@@ -25,7 +28,7 @@
 #      work, with a status word, running / parked / held counts, and the single
 #      most important next thing;
 #   3. decisions needed - every open item held for the captain, oldest first,
-#      with its question and any PR URL in full;
+#      with how long it has waited, its question, and any PR URL in full;
 #   4. workers running - every live worker with what it is doing, how long it
 #      has run, its recorded model, and the summed resident memory (RSS) and CPU
 #      of its whole process tree, then a total and the machine's memory and load;
@@ -38,6 +41,14 @@
 #   PAUSED   grey    open work that is parked on purpose, deferred, or queued
 #   IDLE     grey    nothing open
 # A project takes the most urgent status among its items.
+#
+# Overdue decisions: a captain hold's age runs from its recorded hold date, or
+# from the item's `since` date when none is recorded. A hold waiting more than 3
+# days is marked OVERDUE in red, is flagged on its project's row when it is that
+# project's most urgent item, and is counted in the verdict line. Holds
+# deferred to a date or until other work finishes are never overdue. A hold
+# known only from a second mate's summary has a whole-day age and is overdue
+# from 3 days.
 #
 # Worker memory: the root pid of each live worker's recorded endpoint comes
 # from fm_backend_endpoint_pid in bin/fm-backend.sh (tmux pane_pid, Herdr pane
