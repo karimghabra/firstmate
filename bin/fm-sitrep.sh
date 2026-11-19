@@ -7,8 +7,8 @@
 # recorded PR, and the backlog's captain holds), and adds only what that
 # snapshot does not carry: the resident memory and CPU of every live worker's
 # process tree and the machine's free memory and load. It takes no lock, drains
-# nothing, writes nothing under the home (only --html writes, to the file it
-# names), and makes no network call of its own;
+# nothing, writes nothing under the home (only --html writes, to a temp
+# directory), and makes no network call of its own;
 # the snapshot it renders is bounded and its only side effect is the snapshot's
 # own observational remote-summary cache refresh.
 #
@@ -70,13 +70,13 @@
 # from the --json model with the same wording helpers as the terminal report,
 # carries the same status words, follows the reader's light or dark preference,
 # loads nothing external, and fits a phone-width screen without sideways
-# scrolling. Without PATH it goes to sitrep.html in a new private (0700)
-# directory under TMPDIR (default /tmp). The written path is the only output.
+# scrolling. It goes to sitrep.html in a new private (0700) directory under
+# TMPDIR (default /tmp). The written path is the only output.
 #
 # Flags:
 #   (default)    the human report
 #   --json       the same model as JSON (schema fm-sitrep.v1), no colour
-#   --html [PATH] write the report as a self-contained HTML page; print its path
+#   --html       write the report as a self-contained HTML page; print its path
 #   --full       show each decision's whole reason instead of its first sentence
 #   --no-color   never colour
 #   --color      always colour
@@ -102,16 +102,16 @@ DATA="${FM_DATA_OVERRIDE:-$FM_HOME/data}"
 
 usage() {
   cat <<'EOF'
-usage: fm-sitrep.sh [--json | --html [PATH]] [--full] [--no-color | --color]
+usage: fm-sitrep.sh [--json | --html] [--full] [--no-color | --color]
 
 Colour-coded situation report for the active firstmate home: an overall
 verdict, every project at a glance, decisions waiting on you, running workers
 with their memory and CPU use, and parked and recently finished work.
 
   --json       print the report model as JSON (schema fm-sitrep.v1)
-  --html [PATH]  write the report as a self-contained HTML page (light and
-               dark, phone width) to PATH or a new private temp file, and
-               print the file's path
+  --html       write the report as a self-contained HTML page (light and
+               dark, phone width) to a new private temp file, and print
+               the file's path
   --full       show each decision's whole reason, not just its first sentence
   --no-color   never use colour (NO_COLOR is honoured too)
   --color      always use colour
@@ -127,19 +127,12 @@ EOF
 
 JSON=0
 HTML=0
-HTML_PATH=""
 FULL=0
 COLOR=auto
 while [ "$#" -gt 0 ]; do
   case "$1" in
     --json) JSON=1 ;;
-    --html)
-      HTML=1
-      case "${2:-}" in
-        ''|-*) ;;
-        *) HTML_PATH=$2; shift ;;
-      esac
-      ;;
+    --html) HTML=1 ;;
     --full) FULL=1 ;;
     --no-color) COLOR=never ;;
     --color) COLOR=always ;;
@@ -638,13 +631,11 @@ JQ_COMMON='
 '
 
 if [ "$HTML" -eq 1 ]; then
-  if [ -z "$HTML_PATH" ]; then
-    HTML_DIR=$(umask 077 && mktemp -d "${TMPDIR:-/tmp}/fm-sitrep.XXXXXX") || {
-      echo "fm-sitrep: could not create a private directory for the page" >&2
-      exit 1
-    }
-    HTML_PATH=$HTML_DIR/sitrep.html
-  fi
+  HTML_DIR=$(umask 077 && mktemp -d "${TMPDIR:-/tmp}/fm-sitrep.XXXXXX") || {
+    echo "fm-sitrep: could not create a private directory for the page" >&2
+    exit 1
+  }
+  HTML_PATH=$HTML_DIR/sitrep.html
   printf '%s' "$MODEL" | jq -r --argjson full "$FULL" "$JQ_COMMON"'
   def tone_text($tone; $s): @html "<span class=\"\($tone)\">\($s)</span>";
   def word($tone; $s): @html "<span class=\"w \($tone)\">\($s)</span>";

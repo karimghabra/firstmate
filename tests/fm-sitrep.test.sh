@@ -653,9 +653,9 @@ PY
 test_html_report() {
   local out page rc=0 urls bad
   fixture
-  page=$TMP_ROOT/report.html
-  out=$(run_sitrep "$FIX_HOME" "$FIX_BIN" --html "$page") || fail "sitrep --html PATH must succeed"
-  [ "$out" = "$page" ] || fail "--html must print the page path, got: $out"
+  mkdir -p "$TMP_ROOT/html-tmp"
+  page=$(TMPDIR="$TMP_ROOT/html-tmp" run_sitrep "$FIX_HOME" "$FIX_BIN" --html) || fail "sitrep --html must succeed"
+  case "$page" in "$TMP_ROOT/html-tmp/"*/sitrep.html) ;; *) fail "--html must print the page path under TMPDIR, got: $page" ;; esac
   [ -s "$page" ] || fail "--html must write the page"
   head -n 1 "$page" | grep -qi '^<!doctype html>' || fail "the page must start with a doctype"
   html_balanced "$page" || fail "the page's elements must be balanced"
@@ -687,19 +687,23 @@ test_html_report() {
     || fail "the only URLs on the page must be the report's own PR links, got: $urls"
   "$SITREP" --json --html >/dev/null 2>&1 || rc=$?
   expect_code 2 "$rc" "--json combined with --html"
+  rc=0
+  TMPDIR="$TMP_ROOT/html-tmp" run_sitrep "$FIX_HOME" "$FIX_BIN" --html "$TMP_ROOT/chosen.html" >/dev/null 2>&1 || rc=$?
+  expect_code 2 "$rc" "--html followed by a path"
+  [ ! -e "$TMP_ROOT/chosen.html" ] || fail "--html must not write to a caller-chosen path"
   pass "--html writes a self-contained page with the verdict, every project, decisions and workers"
 }
 
-test_html_default_path_and_escaping() {
+test_html_private_path_and_escaping() {
   local home fb out dir
   home=$(make_home html-empty)
   fb=$(make_fakebin "$home")
   machine_files "$home" 16000000 12000000 0.20
   mkdir -p "$home/tmp"
   out=$(TMPDIR="$home/tmp" run_sitrep "$home" "$fb" --html) || fail "sitrep --html must succeed on an empty home"
-  case "$out" in "$home/tmp/"*/sitrep.html) ;; *) fail "the default page must go to a new directory under TMPDIR, got: $out" ;; esac
+  case "$out" in "$home/tmp/"*/sitrep.html) ;; *) fail "the page must go to a new directory under TMPDIR, got: $out" ;; esac
   dir=$(dirname "$out")
-  [ "$(find "$dir" -maxdepth 0 -perm 700 | wc -l)" -eq 1 ] || fail "the default page's directory must be private"
+  [ "$(find "$dir" -maxdepth 0 -perm 700 | wc -l)" -eq 1 ] || fail "the page's directory must be private"
   html_balanced "$out" || fail "the empty page's elements must be balanced"
   out=$(cat "$out")
   assert_contains "$out" "SITREP QUIET" "an empty home must read quiet"
@@ -716,11 +720,11 @@ test_html_default_path_and_escaping() {
 
 ## Done
 MD
-  out=$(run_sitrep "$home" "$fb" --html "$home/esc.html") || fail "sitrep --html must succeed"
+  out=$(TMPDIR="$home/tmp" run_sitrep "$home" "$fb" --html) || fail "sitrep --html must succeed"
   out=$(cat "$out")
   assert_contains "$out" "keep &lt;b&gt;bold&lt;/b&gt; &amp; &quot;quotes&quot;" "titles must be escaped"
   assert_not_contains "$out" "<script" "reasons must be escaped"
-  pass "--html defaults to a private temp file, renders empty states, and escapes text"
+  pass "--html writes to a private temp file, renders empty states, and escapes text"
 }
 
 test_project_classification
@@ -735,5 +739,5 @@ test_machine_pressure
 test_colour_controls
 test_empty_home
 test_html_report
-test_html_default_path_and_escaping
+test_html_private_path_and_escaping
 test_usage
