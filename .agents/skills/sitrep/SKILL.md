@@ -15,6 +15,7 @@ The script's header owns every section, status word, colour, threshold, and flag
 
 1. Run `bin/fm-sitrep.sh --no-color` once.
    Chat does not render terminal colour codes, and the status words carry the same meaning without them.
+   Add `--full` when the captain asks for each decision's complete reason rather than its first sentence.
 2. Relay the output faithfully inside one plain code block, unedited and untrimmed.
    The report is written in captain-facing language for exactly this purpose, so the verbatim output is the deliverable rather than evidence to translate.
 3. After the block, add at most three short lines naming what needs the captain now: overdue decisions first, then anything blocked, then other decisions or reviews.

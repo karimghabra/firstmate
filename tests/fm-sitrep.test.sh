@@ -146,7 +146,7 @@ EOF
 - [ ] herdr-task - render the epsilon charts (repo: epsilon) (kind: ship) (since 2026-07-24)
 
 ## Queued
-- [ ] old-call - pick the delta storage format (repo: delta) (kind: captain) (since 2026-07-19) (hold: Choose JSON or SQLite for delta storage; PR https://github.com/example/delta/pull/4 shows both.) (hold-kind: captain)
+- [ ] old-call - pick the delta storage format (repo: delta) (kind: captain) (since 2026-07-19) (hold: Choose JSON or SQLite for delta storage. PR https://github.com/example/delta/pull/4 compares both formats.) (hold-kind: captain)
   Captain hold set: 2026-07-19T00:00:00Z
 - [ ] new-call - name the alpha release (repo: alpha) (kind: captain) (since 2026-07-24) (hold: Pick a release name for alpha.) (hold-kind: captain)
   Captain hold set: 2026-07-24T12:00:00Z
@@ -303,6 +303,20 @@ test_human_report() {
   pass "human report carries verdict, overdue ages, legend, parked reasons and finished links"
 }
 
+test_decision_text_length() {
+  local out
+  fixture
+  out=$(run_sitrep "$FIX_HOME" "$FIX_BIN")
+  assert_contains "$out" "Choose JSON or SQLite for delta storage." "the first sentence of a decision must show"
+  assert_not_contains "$out" "compares both formats" "later sentences must be left out by default"
+  assert_contains "$out" "PR: https://github.com/example/delta/pull/4" "a PR URL from a shortened reason must still show in full"
+  assert_contains "$out" "--full" "a shortened list must say how to see the whole reasons"
+  out=$(run_sitrep "$FIX_HOME" "$FIX_BIN" --full)
+  assert_contains "$out" "compares both formats" "--full must show the whole reason"
+  assert_not_contains "$out" "Shortened to the first sentence" "--full must not claim the reasons were shortened"
+  pass "decision reasons show their first sentence, and --full shows them whole"
+}
+
 test_memory_over_process_tree() {
   local out
   fixture
@@ -418,6 +432,7 @@ test_usage() {
 test_project_classification
 test_decisions_listing
 test_human_report
+test_decision_text_length
 test_memory_over_process_tree
 test_machine_pressure
 test_colour_controls

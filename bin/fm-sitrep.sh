@@ -49,6 +49,7 @@
 # Flags:
 #   (default)    the human report
 #   --json       the same model as JSON (schema fm-sitrep.v1), no colour
+#   --full       show each decision's whole reason instead of its first sentence
 #   --no-color   never colour
 #   --color      always colour
 #   -h, --help   usage
@@ -74,13 +75,14 @@ DATA="${FM_DATA_OVERRIDE:-$FM_HOME/data}"
 
 usage() {
   cat <<'EOF'
-usage: fm-sitrep.sh [--json] [--no-color | --color]
+usage: fm-sitrep.sh [--json] [--full] [--no-color | --color]
 
 Colour-coded situation report for the active firstmate home: an overall
 verdict, every project at a glance, decisions waiting on you, running workers
 with their memory and CPU use, and parked and recently finished work.
 
   --json       print the report model as JSON (schema fm-sitrep.v1)
+  --full       show each decision's whole reason, not just its first sentence
   --no-color   never use colour (NO_COLOR is honoured too)
   --color      always use colour
   -h, --help   this help
@@ -93,10 +95,12 @@ EOF
 }
 
 JSON=0
+FULL=0
 COLOR=auto
 while [ "$#" -gt 0 ]; do
   case "$1" in
     --json) JSON=1 ;;
+    --full) FULL=1 ;;
     --no-color|--no-colour) COLOR=never ;;
     --color|--colour) COLOR=always ;;
     -h|--help) usage; exit 0 ;;
@@ -454,7 +458,7 @@ else
   CODES='{"red":"","yellow":"","green":"","dim":"","bold":"","reset":""}'
 fi
 
-printf '%s' "$MODEL" | jq -r --argjson c "$CODES" --argjson width "$WIDTH" '
+printf '%s' "$MODEL" | jq -r --argjson c "$CODES" --argjson width "$WIDTH" --argjson full "$FULL" '
   def paint($tone; $s): ($c[$tone] // "") + $s + (if ($c[$tone] // "") == "" then "" else $c.reset end);
   def bold($s): paint("bold"; $s);
   def cut($n): if length > $n then .[:($n - 3)] + "..." else . end;
@@ -478,6 +482,11 @@ printf '%s' "$MODEL" | jq -r --argjson c "$CODES" --argjson width "$WIDTH" '
     | (.lines + (if .cur == "" then [] else [.cur] end))
     | map($indent + .) | join("\n");
   def section($t): "\n" + bold($t);
+  # The text up to and including the first sentence end (., ? or ! followed by
+  # a space or the end); the whole text when no sentence end is found.
+  def first_sentence($s):
+    ($s | sub("\\s+$"; "")) as $t
+    | ($t | capture("^(?<f>.*?[.?!])(\\s|$)") // {f: $t}).f;
   def age($s): if $s < 3600 then "under an hour"
                elif $s < 86400 then plural((($s / 3600) | floor); "hour"; "hours")
                else plural((($s / 86400) | floor); "day"; "days") end;
@@ -531,9 +540,14 @@ printf '%s' "$MODEL" | jq -r --argjson c "$CODES" --argjson width "$WIDTH" '
                  + (if $d.hold_bucket == "dated" then ", deferred until " + ($d.hold_until // "later")
                     elif $d.hold_bucket == "blocked" then ", until other work finishes"
                     else "" end) + ")")),
-            (if ($d.hold_reason // "") != "" then ($d.hold_reason | wrap($width - 7; "     ")) else empty end),
-            (if $d.pr_url != null and (($d.hold_reason // "") | contains($d.pr_url) | not) then "     PR: " + $d.pr_url else empty end))
+            (($d.hold_reason // "") as $why
+             | (if $full == 1 then $why else first_sentence($why) end) as $shown
+             | (if $shown != "" then ($shown | wrap($width - 7; "     ")) else empty end),
+               ([($d.pr_url // empty), ($why | scan("https?://[^ )]+/pull/[0-9]+"))]
+                | unique[] | . as $u | select(($shown | contains($u)) | not) | "     PR: " + $u)))
        end),
+      (if $full == 0 and any($m.decisions[]; (.hold_reason // "") as $w | first_sentence($w) != ($w | sub("\\s+$"; "")))
+       then paint("dim"; "  Shortened to the first sentence; run with --full for the whole reasons.") else empty end),
 
       # 4. workers
       section("WORKERS RUNNING"),
