@@ -1,0 +1,34 @@
+SITREP  WAITING ON YOU  -  3 decisions wait on you (2 overdue), 1 worker running
+Legend: BLOCKED failed, stuck or not responding | WAITING needs a decision, review or merge | MOVING under way, nothing needed | PAUSED / IDLE parked, queued or nothing open | OVERDUE a decision waiting over 3 days
+
+PROJECTS
+  PROJECT          STATUS   RUN PARK HELD  NEXT
+  collsim          WAITING    1    0    1  your decision: pick the collsim solver tolerance
+  e-shoulder       WAITING    0    0    1  OVERDUE 3d: your decision: approve the e-shoulder marker set
+  limbus           WAITING    0    0    1  OVERDUE 6d: your decision: choose the limbus segmentation model
+  litrag           PAUSED     0    1    0  parked on purpose: tune the retriever
+  scaffold-freeze  IDLE       0    0    0  nothing open
+
+DECISIONS NEEDED (oldest first)
+  1. [limbus] choose the limbus segmentation model (waiting 6 days, OVERDUE)
+     Choose U-Net or SAM for limbus segmentation.
+     PR: https://github.com/example/limbus/pull/4
+  2. [e-shoulder] approve the e-shoulder marker set (waiting 3 days, OVERDUE)
+     Approve the 12-marker set for e-shoulder.
+  3. [collsim] pick the collsim solver tolerance (waiting 2 days)
+     Pick 1e-6 or 1e-8 for the solver tolerance.
+  Shortened to the first sentence; run with --full for the whole reasons.
+
+WORKERS RUNNING
+  PROJECT           DOING                                       TIME     MEMORY    CPU  MODEL
+  collsim           working on it                              1h30m     93 MiB     2%  sample-model-1 (high)
+    build the collision mesh  (build-task)
+  Total: 1 worker, 93 MiB memory, 2% CPU
+  Machine: 12.6 GiB of 15.6 GiB memory available, load 0.81 on 12 cores
+
+PARKED (stopped on purpose)
+  [litrag] tune the retriever (since 2026-11-18)
+    waiting for the upstream release
+
+RECENTLY FINISHED
+  [litrag] first index - merged 2026-11-18 - https://github.com/example/litrag/pull/7

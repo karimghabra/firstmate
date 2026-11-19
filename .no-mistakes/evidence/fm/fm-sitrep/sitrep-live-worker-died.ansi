@@ -1,0 +1,32 @@
+[31m[1mSITREP  NEEDS ATTENTION[0m[0m  -  1 project blocked, 3 decisions wait on you (2 overdue), 0 workers running
+[2mLegend: [0m[31mBLOCKED[0m failed, stuck or not responding | [33mWAITING[0m needs a decision, review or merge | [32mMOVING[0m under way, nothing needed | [2mPAUSED / IDLE[0m parked, queued or nothing open | [31mOVERDUE[0m a decision waiting over 3 days
+
+[1mPROJECTS[0m
+  PROJECT          STATUS   RUN PARK HELD  NEXT
+  [31mcollsim          BLOCKED[0m    0    0    1  worker stopped responding: build the collision mesh
+  [33me-shoulder       WAITING[0m    0    0    1  [31mOVERDUE 3d: your decision: approve the e-shoulder marker set[0m
+  [33mlimbus           WAITING[0m    0    0    1  [31mOVERDUE 6d: your decision: choose the limbus segmentation model[0m
+  [2mlitrag           PAUSED [0m    0    1    0  parked on purpose: tune the retriever
+  [2mscaffold-freeze  IDLE   [0m    0    0    0  nothing open
+
+[1mDECISIONS NEEDED[0m (oldest first)
+  [31m1. [limbus] choose the limbus segmentation model[0m[31m (waiting 6 days, OVERDUE)[0m
+     Choose U-Net or SAM for limbus segmentation.
+     PR: https://github.com/example/limbus/pull/4
+  [31m2. [e-shoulder] approve the e-shoulder marker set[0m[31m (waiting 3 days, OVERDUE)[0m
+     Approve the 12-marker set for e-shoulder.
+  [33m3. [collsim] pick the collsim solver tolerance[0m[2m (waiting 2 days)[0m
+     Pick 1e-6 or 1e-8 for the solver tolerance.
+[2m  Shortened to the first sentence; run with --full for the whole reasons.[0m
+
+[1mWORKERS RUNNING[0m
+  No workers are running.
+  [1mTotal[0m: 0 workers
+  Machine: [32m12.7 GiB of 15.6 GiB memory available[0m, [32mload 0.75 on 12 cores[0m
+
+[1mPARKED (stopped on purpose)[0m
+  [2m[litrag] tune the retriever[0m[2m (since 2026-11-18)[0m
+    waiting for the upstream release
+
+[1mRECENTLY FINISHED[0m
+  [32m[litrag] first index[0m - merged 2026-11-18 - https://github.com/example/litrag/pull/7

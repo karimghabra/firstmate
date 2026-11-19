@@ -1,0 +1,33 @@
+<!doctype html><meta charset="utf-8"><title>sitrep - needs attention</title><body style="background:#1c1c1c;color:#e4e4e4;margin:16px"><pre style="font:13px/1.35 monospace"><span style="color:#ff5c57"></span><span style="color:#ff5c57;font-weight:bold">SITREP  NEEDS ATTENTION</span>  -  1 project blocked, 3 decisions wait on you (2 overdue), 0 workers running
+<span style="opacity:.6">Legend: </span><span style="color:#ff5c57">BLOCKED</span> failed, stuck or not responding | <span style="color:#f3f99d">WAITING</span> needs a decision, review or merge | <span style="color:#5af78e">MOVING</span> under way, nothing needed | <span style="opacity:.6">PAUSED / IDLE</span> parked, queued or nothing open | <span style="color:#ff5c57">OVERDUE</span> a decision waiting over 3 days
+
+<span style="font-weight:bold">PROJECTS</span>
+  PROJECT          STATUS   RUN PARK HELD  NEXT
+  <span style="color:#ff5c57">collsim          BLOCKED</span>    0    0    1  worker stopped responding: build the collision mesh
+  <span style="color:#f3f99d">e-shoulder       WAITING</span>    0    0    1  <span style="color:#ff5c57">OVERDUE 3d: your decision: approve the e-shoulder marker set</span>
+  <span style="color:#f3f99d">limbus           WAITING</span>    0    0    1  <span style="color:#ff5c57">OVERDUE 6d: your decision: choose the limbus segmentation model</span>
+  <span style="opacity:.6">litrag           PAUSED </span>    0    1    0  parked on purpose: tune the retriever
+  <span style="opacity:.6">scaffold-freeze  IDLE   </span>    0    0    0  nothing open
+
+<span style="font-weight:bold">DECISIONS NEEDED</span> (oldest first)
+  <span style="color:#ff5c57">1. [limbus] choose the limbus segmentation model</span><span style="color:#ff5c57"> (waiting 6 days, OVERDUE)</span>
+     Choose U-Net or SAM for limbus segmentation.
+     PR: https://github.com/example/limbus/pull/4
+  <span style="color:#ff5c57">2. [e-shoulder] approve the e-shoulder marker set</span><span style="color:#ff5c57"> (waiting 3 days, OVERDUE)</span>
+     Approve the 12-marker set for e-shoulder.
+  <span style="color:#f3f99d">3. [collsim] pick the collsim solver tolerance</span><span style="opacity:.6"> (waiting 2 days)</span>
+     Pick 1e-6 or 1e-8 for the solver tolerance.
+<span style="opacity:.6">  Shortened to the first sentence; run with --full for the whole reasons.</span>
+
+<span style="font-weight:bold">WORKERS RUNNING</span>
+  No workers are running.
+  <span style="font-weight:bold">Total</span>: 0 workers
+  Machine: <span style="color:#5af78e">12.7 GiB of 15.6 GiB memory available</span>, <span style="color:#5af78e">load 0.75 on 12 cores</span>
+
+<span style="font-weight:bold">PARKED (stopped on purpose)</span>
+  <span style="opacity:.6">[litrag] tune the retriever</span><span style="opacity:.6"> (since 2026-11-18)</span>
+    waiting for the upstream release
+
+<span style="font-weight:bold">RECENTLY FINISHED</span>
+  <span style="color:#5af78e">[litrag] first index</span> - merged 2026-11-18 - https://github.com/example/litrag/pull/7
+</pre></body>
