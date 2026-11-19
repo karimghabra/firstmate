@@ -196,8 +196,8 @@ PS_TABLE=$(LC_ALL=C "$PS_BIN" -axo pid=,ppid=,rss=,pcpu= 2>/dev/null) || PS_TABL
 # A root pid absent from the table yields a zero process count.
 TREES_JSON=$(
   {
-    printf '%s' "$ROOTS_TSV" | sed 's/^/R\t/'
-    printf '%s\n' "$PS_TABLE" | sed 's/^/P\t/'
+    printf '%s' "$ROOTS_TSV" | awk '{ print "R\t" $0 }'
+    printf '%s\n' "$PS_TABLE" | awk '{ print "P\t" $0 }'
   } | awk -F'\t' '
     $1 == "R" { ids[++n] = $2; root[$2] = $3; next }
     $1 == "P" {
