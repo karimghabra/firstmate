@@ -1,0 +1,93 @@
+
+$ fm-sitrep.sh --html
+exit=0 stdout=<TMP>/t/fm-sitrep.hpZ1Q5/sitrep.html
+dir mode=700
+file mode=644 size=4893
+
+$ fm-sitrep.sh --html (second run: new directory?)
+exit=0 stdout=<TMP>/t/fm-sitrep.pXmXY2/sitrep.html
+distinct paths: yes
+
+$ fm-sitrep.sh --html --full
+exit=0
+
+$ fm-sitrep.sh --no-color
+SITREP  NEEDS ATTENTION  -  1 project blocked, 2 decisions wait on you (1 overdue), 3 workers running
+Legend: BLOCKED failed, stuck or not responding | WAITING needs a decision, review or merge | MOVING under way, nothing needed | PAUSED / IDLE parked, queued or nothing open | OVERDUE a decision waiting over 3 days
+
+PROJECTS
+  PROJECT  STATUS   RUN PARK HELD  NEXT
+  gamma    BLOCKED    1    0    0  stuck and asking for help: fix the flaky parser (+1 more)
+  alpha    WAITING    1    1    2  your decision: name the alpha release
+  delta    WAITING    0    0    1  OVERDUE 6d: your decision: pick the delta storage format
+  epsilon  MOVING     1    0    0  working on it: render the epsilon charts
+  beta     IDLE       0    0    0  nothing open
+
+DECISIONS NEEDED (oldest first)
+  1. [alpha] revisit alpha pricing (waiting 24 days, deferred until 2026-12-01)
+     Revisit pricing after launch.
+  2. [delta] pick the delta storage format (waiting 6 days, OVERDUE)
+     Choose JSON or SQLite for delta storage.
+     PR: https://github.com/example/delta/pull/4
+  3. [alpha] name the alpha release (waiting 12 hours)
+     Pick a release name for alpha.
+  Shortened to the first sentence; run with --full for the whole reasons.
+
+WORKERS RUNNING
+  PROJECT           DOING                                       TIME     MEMORY    CPU  MODEL
+  alpha             working on it                              1h30m      6 MiB     4%  sample-model-1 (high)
+    build the widget  (run-task)
+  epsilon           working on it                                  -      8 MiB    12%  claude
+    render the epsilon charts  (herdr-task)
+  gamma             stuck and asking for help                      -    unknown      -  claude
+    fix the flaky parser  (stuck-task)
+  Total: 3 workers, 14 MiB memory, 16% CPU (1 not measured)
+  Machine: 11.4 GiB of 15.3 GiB memory available, load 1.50 on 12 cores
+
+PARKED (stopped on purpose)
+  [alpha] tune the cache (since 2026-07-24)
+    waiting for the upstream release
+
+RECENTLY FINISHED
+  [alpha] first release - merged 2026-07-22 - https://github.com/example/alpha/pull/7
+exit=0
+
+$ fm-sitrep.sh --json (summary)
+exit=0
+
+$ fm-sitrep.sh --json --html
+fm-sitrep: --json and --html cannot be combined
+exit=2
+
+$ fm-sitrep.sh --html /chosen/path.html
+fm-sitrep: unknown argument: /tmp/fm-sitrep.yBdemW/chosen.html
+usage: fm-sitrep.sh [--json | --html] [--full] [--no-color | --color]
+
+exit=2
+chosen path not written
+
+$ fm-sitrep.sh --html (TMPDIR unwritable/missing)
+mktemp: failed to create directory via template '/tmp/fm-sitrep.yBdemW/nope/fm-fleet-tasks.XXXXXX': No such file or directory
+fm-fleet-snapshot: task observation failed
+fm-sitrep: the fleet snapshot could not be read
+exit=1
+
+$ fm-sitrep.sh --help
+usage: fm-sitrep.sh [--json | --html] [--full] [--no-color | --color]
+
+Colour-coded situation report for the active firstmate home: an overall
+verdict, every project at a glance, decisions waiting on you, running workers
+with their memory and CPU use, and parked and recently finished work.
+
+  --json       print the report model as JSON (schema fm-sitrep.v1)
+  --html       write the report as a self-contained HTML page (light and
+               dark, phone width) to a new private temp file, and print
+               the file's path
+  --full       show each decision's whole reason, not just its first sentence
+  --no-color   never use colour (NO_COLOR is honoured too)
+
+$ fm-sitrep.sh --html (empty home)
+exit=0
+
+$ fm-sitrep.sh --html (hostile backlog text)
+exit=0
