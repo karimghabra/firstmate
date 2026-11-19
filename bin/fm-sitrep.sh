@@ -7,7 +7,8 @@
 # recorded PR, and the backlog's captain holds), and adds only what that
 # snapshot does not carry: the resident memory and CPU of every live worker's
 # process tree and the machine's free memory and load. It takes no lock, drains
-# nothing, writes nothing under the home, and makes no network call of its own;
+# nothing, writes nothing under the home (only --html writes, to the file it
+# names), and makes no network call of its own;
 # the snapshot it renders is bounded and its only side effect is the snapshot's
 # own observational remote-summary cache refresh.
 #
@@ -64,9 +65,18 @@
 # Colour: ANSI colour only when stdout is a terminal, NO_COLOR is unset or
 # empty, and --no-color was not given. --color forces colour on.
 #
+# HTML: --html writes the same report as one small self-contained page, for
+# chat surfaces that render an HTML file but not terminal colour. It is built
+# from the --json model with the same wording helpers as the terminal report,
+# carries the same status words, follows the reader's light or dark preference,
+# loads nothing external, and fits a phone-width screen without sideways
+# scrolling. Without PATH it goes to sitrep.html in a new private (0700)
+# directory under TMPDIR (default /tmp). The written path is the only output.
+#
 # Flags:
 #   (default)    the human report
 #   --json       the same model as JSON (schema fm-sitrep.v1), no colour
+#   --html [PATH] write the report as a self-contained HTML page; print its path
 #   --full       show each decision's whole reason instead of its first sentence
 #   --no-color   never colour
 #   --color      always colour
@@ -92,13 +102,16 @@ DATA="${FM_DATA_OVERRIDE:-$FM_HOME/data}"
 
 usage() {
   cat <<'EOF'
-usage: fm-sitrep.sh [--json] [--full] [--no-color | --color]
+usage: fm-sitrep.sh [--json | --html [PATH]] [--full] [--no-color | --color]
 
 Colour-coded situation report for the active firstmate home: an overall
 verdict, every project at a glance, decisions waiting on you, running workers
 with their memory and CPU use, and parked and recently finished work.
 
   --json       print the report model as JSON (schema fm-sitrep.v1)
+  --html [PATH]  write the report as a self-contained HTML page (light and
+               dark, phone width) to PATH or a new private temp file, and
+               print the file's path
   --full       show each decision's whole reason, not just its first sentence
   --no-color   never use colour (NO_COLOR is honoured too)
   --color      always use colour
@@ -107,16 +120,26 @@ with their memory and CPU use, and parked and recently finished work.
 Status words: BLOCKED (red) failed, stuck or not responding; WAITING (yellow)
 needs a decision, review or merge; MOVING (green) under way, nothing needed;
 PAUSED (grey) parked on purpose, deferred or queued; IDLE (grey) nothing open.
-Read-only: no locks, no writes, no network calls of its own.
+Read-only: no locks, no network calls of its own, and no writes except the
+--html page.
 EOF
 }
 
 JSON=0
+HTML=0
+HTML_PATH=""
 FULL=0
 COLOR=auto
 while [ "$#" -gt 0 ]; do
   case "$1" in
     --json) JSON=1 ;;
+    --html)
+      HTML=1
+      case "${2:-}" in
+        ''|-*) ;;
+        *) HTML_PATH=$2; shift ;;
+      esac
+      ;;
     --full) FULL=1 ;;
     --no-color) COLOR=never ;;
     --color) COLOR=always ;;
@@ -125,6 +148,11 @@ while [ "$#" -gt 0 ]; do
   esac
   shift
 done
+
+if [ "$JSON" -eq 1 ] && [ "$HTML" -eq 1 ]; then
+  echo "fm-sitrep: --json and --html cannot be combined" >&2
+  exit 2
+fi
 
 command -v jq >/dev/null 2>&1 || { echo "fm-sitrep: jq not found" >&2; exit 1; }
 
@@ -528,20 +556,9 @@ if [ "$JSON" -eq 1 ]; then
 fi
 
 # --- render ------------------------------------------------------------------
-if [ "$COLOR" = always ]; then
-  ESC=$'\033'
-  CODES=$(jq -n --arg e "$ESC" '{red: ($e + "[31m"), yellow: ($e + "[33m"), green: ($e + "[32m"),
-    dim: ($e + "[2m"), bold: ($e + "[1m"), reset: ($e + "[0m")}')
-else
-  CODES='{"red":"","yellow":"","green":"","dim":"","bold":"","reset":""}'
-fi
-
-printf '%s' "$MODEL" | jq -r --argjson c "$CODES" --argjson width "$WIDTH" --argjson full "$FULL" '
-  def paint($tone; $s): ($c[$tone] // "") + $s + (if ($c[$tone] // "") == "" then "" else $c.reset end);
-  def bold($s): paint("bold"; $s);
-  def cut($n): if length > $n then .[:($n - 3)] + "..." else . end;
-  def pad($n): if length >= $n then . else . + (" " * ($n - length)) end;
-  def lpad($n): if length >= $n then . else (" " * ($n - length)) + . end;
+# Wording shared by the terminal and HTML renderers, so both say the same thing.
+# shellcheck disable=SC2016 # a jq program, not shell expansion
+JQ_COMMON='
   def plural($n; $one; $many): ($n | tostring) + " " + (if $n == 1 then $one else $many end);
   def gib($kb): if $kb == null then "-" else (($kb / 1048576 * 10 | round) / 10 | tostring) + " GiB" end;
   def mem($kb): if $kb == null then "-"
@@ -551,6 +568,212 @@ printf '%s' "$MODEL" | jq -r --argjson c "$CODES" --argjson width "$WIDTH" --arg
                elif $s < 3600 then ((($s / 60) | floor) | tostring) + "m"
                elif $s < 86400 then ((($s / 3600) | floor) | tostring) + "h" + (((($s % 3600) / 60) | floor) | tostring | if length < 2 then "0" + . else . end) + "m"
                else ((($s / 86400) | floor) | tostring) + "d" + (((($s % 86400) / 3600) | floor) | tostring) + "h" end;
+  def tag($i): $i.project + (if $i.mate != null then " via " + $i.mate else "" end);
+  # The text up to and including the first sentence end (., ? or ! followed by
+  # a space or the end); the whole text when no sentence end is found.
+  def first_sentence($s):
+    ($s | sub("\\s+$"; "")) as $t
+    | ($t | capture("^(?<f>.*?(?<!\\.[A-Za-z])[.?!])(\\s|$)") // {f: $t}).f;
+  def age($s): if $s < 3600 then "under an hour"
+               elif $s < 86400 then plural((($s / 3600) | floor); "hour"; "hours")
+               else plural((($s / 86400) | floor); "day"; "days") end;
+  def verdict_parts($v):
+    [ (if $v.blocked_projects > 0 then plural($v.blocked_projects; "project blocked"; "projects blocked") else empty end),
+      (if $v.decisions > 0 then plural($v.decisions; "decision waits on you"; "decisions wait on you")
+         + (if $v.overdue_decisions > 0 then " (" + ($v.overdue_decisions | tostring) + " overdue)" else "" end)
+       else empty end),
+      (if $v.reviews > 0 then plural($v.reviews; "item ready for review"; "items ready for review") else empty end),
+      (if $v.mates_attention > 0 then plural($v.mates_attention; "second mate needs a look"; "second mates need a look") else empty end),
+      plural($v.workers; "worker running"; "workers running"),
+      (if $v.machine_pressure != "normal" then "machine load " + $v.machine_pressure else empty end) ];
+  def mate_head($r): $r.id + " (" + (if $r.remote then "remote, " + ($r.host // "host unknown") else "local" end) + "): " + $r.phrase;
+  def mate_tail($r):
+    if $r.merged then ""
+    else " - " + plural($r.counts.working; "worker"; "workers") + ", "
+         + plural($r.counts.decisions; "open decision"; "open decisions") + ", "
+         + ($r.counts.queued | tostring) + " queued"
+         + (if $r.omitted > 0 then " (" + ($r.omitted | tostring) + " not shown)" else "" end)
+         + "; detail lives in that home" + (if $r.home != null then ": " + $r.home else "" end) end;
+  def decision_tone($d): if $d.overdue then "red" elif $d.deferred then "dim" else "yellow" end;
+  def waited($d):
+    (if $d.waiting_seconds == null then "age unknown"
+     elif $d.age_in_days and $d.waiting_days == 0 then "waiting under a day"
+     else "waiting " + age($d.waiting_seconds) end)
+    + (if $d.overdue then ", OVERDUE" else "" end)
+    + (if $d.hold_bucket == "dated" then ", deferred until " + ($d.hold_until // "later")
+       elif $d.hold_bucket == "blocked" then ", until other work finishes"
+       else "" end);
+  def shown_reason($d; $full): ($d.hold_reason // "") as $why | if $full == 1 then $why else first_sentence($why) end;
+  def extra_prs($d; $shown):
+    [($d.pr_url // empty), (($d.hold_reason // "") | scan("https?://[^ )]+/pull/[0-9]+"))]
+    | unique | map(. as $u | select(($shown | contains($u)) | not));
+  def omitted_holds_text($r):
+    "Up to " + ($r.omitted_holds | tostring) + " more held or queued items wait in the home of second mate " + $r.id + " and are not listed here.";
+  def any_shortened($m): any($m.decisions[]; (.hold_reason // "") as $w | first_sentence($w) != ($w | sub("\\s+$"; "")));
+  def worker_mem($w): if $w.measured then mem($w.rss_kb) else "unknown" end;
+  def worker_cpu($w): if $w.measured then (($w.cpu_percent | round | tostring) + "%") else "-" end;
+  def worker_model($w): ($w.model // $w.harness // "-") + (if $w.effort != null then " (" + $w.effort + ")" else "" end);
+  def totals_text($t):
+    plural($t.workers; "worker"; "workers")
+    + (if $t.workers > 0 then
+         ", " + mem($t.rss_kb) + " memory, " + (($t.cpu_percent | round | tostring) + "% CPU")
+         + (if $t.measured < $t.workers then " (" + (($t.workers - $t.measured) | tostring) + " not measured)" else "" end)
+       else "" end);
+  def machine_mem($x):
+    if $x.mem_available_kb == null then "memory unknown"
+    else gib($x.mem_available_kb) + " of " + gib($x.mem_total_kb) + " memory available"
+         + (if $x.mem_tone == "red" then " (LOW)" elif $x.mem_tone == "yellow" then " (getting low)" else "" end) end;
+  def machine_load($x):
+    if $x.load1 == null then "load unknown"
+    else "load " + ($x.load1 | tostring) + " on " + (($x.cores // "?") | tostring) + " cores"
+         + (if $x.load_tone == "red" then " (OVERLOADED)" elif $x.load_tone == "yellow" then " (busy)" else "" end) end;
+  def finished_tail($f):
+    " - " + $f.verb + (if $f.date != null then " " + $f.date else "" end);
+  def legend_parts($v):
+    [["red", "BLOCKED", " failed, stuck or not responding"],
+     ["yellow", "WAITING", " needs a decision, review or merge"],
+     ["green", "MOVING", " under way, nothing needed"],
+     ["dim", "PAUSED / IDLE", " parked, queued or nothing open"],
+     ["red", "OVERDUE", " a decision waiting over " + plural($v.overdue_after_days; "day"; "days")]];
+'
+
+if [ "$HTML" -eq 1 ]; then
+  if [ -z "$HTML_PATH" ]; then
+    HTML_DIR=$(umask 077 && mktemp -d "${TMPDIR:-/tmp}/fm-sitrep.XXXXXX") || {
+      echo "fm-sitrep: could not create a private directory for the page" >&2
+      exit 1
+    }
+    HTML_PATH=$HTML_DIR/sitrep.html
+  fi
+  printf '%s' "$MODEL" | jq -r --argjson full "$FULL" "$JQ_COMMON"'
+  def tone_text($tone; $s): @html "<span class=\"\($tone)\">\($s)</span>";
+  def word($tone; $s): @html "<span class=\"w \($tone)\">\($s)</span>";
+  def link($u): @html "<a href=\"\($u)\">\($u)</a>";
+  def section($t): @html "<h2>\($t)</h2>";
+  def empty_line($s): @html "<p class=\"sub\">\($s)</p>";
+  def sub($s): @html "<div class=\"sub\">\($s)</div>";
+
+  . as $m
+  | ($m.verdict) as $v
+  | [
+      "<!doctype html>",
+      "<html lang=\"en\"><head><meta charset=\"utf-8\">",
+      "<meta name=\"viewport\" content=\"width=device-width, initial-scale=1\">",
+      "<title>Sitrep</title><style>",
+      ":root{color-scheme:light dark;--bg:#fff;--fg:#1c1c1c;--muted:#5f5f5f;--line:#e2e2e2;--red:#b3261e;--yellow:#8a5300;--green:#1d7a35;--dim:#6b6b6b}",
+      "@media (prefers-color-scheme:dark){:root{--bg:#161616;--fg:#e9e9e9;--muted:#a3a3a3;--line:#323232;--red:#ff6f66;--yellow:#e6b23c;--green:#62d07d;--dim:#9c9c9c}}",
+      "*{box-sizing:border-box}html{-webkit-text-size-adjust:100%}",
+      "body{margin:0;padding:16px;background:var(--bg);color:var(--fg);font:15px/1.45 system-ui,-apple-system,\"Segoe UI\",Roboto,sans-serif;overflow-wrap:anywhere}",
+      "main{max-width:52rem;margin:0 auto}h1{font-size:1.3rem;margin:0 0 .2rem}p{margin:.2rem 0}",
+      "h2{font-size:.8rem;letter-spacing:.06em;color:var(--muted);margin:1.3rem 0 .3rem;padding-bottom:.2rem;border-bottom:1px solid var(--line)}",
+      "ul,ol{margin:0;padding:0;list-style:none}li{padding:.45rem 0;border-bottom:1px solid var(--line)}",
+      ".red{color:var(--red)}.yellow{color:var(--yellow)}.green{color:var(--green)}.dim{color:var(--dim)}",
+      ".w{display:inline-block;font:700 .75rem/1.5 ui-monospace,Menlo,Consolas,monospace;border:1px solid currentColor;border-radius:4px;padding:0 .3rem;margin:0 .35rem .1rem 0;white-space:nowrap}",
+      ".sub{color:var(--muted);font-size:.87rem}.legend{font-size:.8rem;color:var(--muted);margin-top:.4rem}.legend span.w{font-size:.68rem}a{color:inherit}",
+      "</style></head><body><main>",
+
+      # 1. verdict
+      (@html "<h1 class=\"\($v.tone)\">SITREP \($v.word)</h1>"),
+      (@html "<p>\(verdict_parts($v) | join(", "))</p>"),
+      ("<p class=\"legend\">" + (legend_parts($v) | map(word(.[0]; .[1]) + (.[2] | @html)) | join(" | ")) + "</p>"),
+
+      # 2. projects
+      section("PROJECTS"),
+      (if ($m.projects | length) == 0 then empty_line("No projects are registered and nothing is open.")
+       else
+         "<ul>",
+         ($m.projects[]
+          | "<li>" + word(.tone; .status) + (@html "<b class=\"\(.tone)\">\(.name)</b>")
+            + sub("running " + (.running | tostring) + ", parked " + (.parked | tostring) + ", held " + (.held | tostring))
+            + (if (.next | startswith("OVERDUE")) then (@html "<div class=\"red\">\(.next)</div>") else (@html "<div>\(.next)</div>") end)
+            + "</li>"),
+         "</ul>"
+       end),
+
+      (if ($m.mates | length) == 0 then empty
+       else
+         section("SECOND MATES"), "<ul>",
+         ($m.mates[] | "<li>" + tone_text(.tone; mate_head(.)) + (mate_tail(.) | @html) + "</li>"),
+         "</ul>"
+       end),
+
+      # 3. decisions
+      section("DECISIONS NEEDED" + (if ($m.decisions | length) > 0 then " (oldest first)" else "" end)),
+      (if ($m.decisions | length) == 0 then (@html "<p class=\"green\">Nothing is waiting on your decision.</p>")
+       else
+         "<ol>",
+         ($m.decisions | to_entries[]
+          | .key as $k | .value as $d
+          | shown_reason($d; $full) as $shown
+          | "<li>" + tone_text(decision_tone($d); (($k + 1) | tostring) + ". [" + tag($d) + "] " + $d.title)
+            + " " + tone_text(if $d.overdue then "red" else "dim" end; "(" + waited($d) + ")")
+            + (if $shown != "" then (@html "<div>\($shown)</div>") else "" end)
+            + (extra_prs($d; $shown) | map("<div class=\"sub\">PR: " + link(.) + "</div>") | join(""))
+            + "</li>"),
+         "</ol>"
+       end),
+      ($m.mates[] | select(.omitted_holds > 0) | (@html "<p class=\"yellow\">\(omitted_holds_text(.))</p>")),
+      (if $full == 0 and any_shortened($m)
+       then empty_line("Shortened to the first sentence; run with --full for the whole reasons.") else empty end),
+
+      # 4. workers
+      section("WORKERS RUNNING"),
+      (if ($m.workers | length) == 0 then empty_line("No workers are running.")
+       else
+         "<ul>",
+         ($m.workers[]
+          | "<li>" + (@html "<b class=\"\(.tone)\">\(.project)</b> ") + tone_text(.tone; .doing)
+            + sub(.title + "  (" + .id + ")")
+            + sub("time " + dur(.running_seconds) + ", memory " + worker_mem(.) + ", CPU " + worker_cpu(.) + ", " + worker_model(.))
+            + "</li>"),
+         "</ul>"
+       end),
+      (@html "<p><b>Total</b>: \(totals_text($m.totals))</p>"),
+      ("<p>Machine: " + tone_text($m.machine.mem_tone; machine_mem($m.machine)) + ", "
+       + tone_text($m.machine.load_tone; machine_load($m.machine)) + "</p>"),
+
+      # 5. parked and finished
+      section("PARKED (stopped on purpose)"),
+      (if ($m.parked | length) == 0 then empty_line("Nothing is parked.")
+       else
+         "<ul>",
+         ($m.parked[]
+          | "<li>" + tone_text("dim"; "[" + tag(.) + "] " + .title
+                               + (if .since != null then " (since " + (.since | split(" ")[0]) + ")" else "" end))
+            + (if (.reason // "") != "" then (@html "<div>\(.reason)</div>") else "" end) + "</li>"),
+         "</ul>"
+       end),
+      section("RECENTLY FINISHED"),
+      (if ($m.finished | length) == 0 then empty_line("Nothing has finished recently.")
+       else
+         "<ul>",
+         ($m.finished[]
+          | "<li>" + tone_text("green"; "[" + .project + "] " + .title) + (finished_tail(.) | @html)
+            + (if .pr_url != null then " - " + link(.pr_url) elif .report then " - report written" else "" end) + "</li>"),
+         "</ul>"
+       end),
+      "</main></body></html>"
+    ]
+  | .[]
+' > "$HTML_PATH" || { echo "fm-sitrep: could not write the page to $HTML_PATH" >&2; exit 1; }
+  printf '%s\n' "$HTML_PATH"
+  exit 0
+fi
+
+if [ "$COLOR" = always ]; then
+  ESC=$'\033'
+  CODES=$(jq -n --arg e "$ESC" '{red: ($e + "[31m"), yellow: ($e + "[33m"), green: ($e + "[32m"),
+    dim: ($e + "[2m"), bold: ($e + "[1m"), reset: ($e + "[0m")}')
+else
+  CODES='{"red":"","yellow":"","green":"","dim":"","bold":"","reset":""}'
+fi
+
+printf '%s' "$MODEL" | jq -r --argjson c "$CODES" --argjson width "$WIDTH" --argjson full "$FULL" "$JQ_COMMON"'
+  def paint($tone; $s): ($c[$tone] // "") + $s + (if ($c[$tone] // "") == "" then "" else $c.reset end);
+  def bold($s): paint("bold"; $s);
+  def cut($n): if length > $n then .[:($n - 3)] + "..." else . end;
+  def pad($n): if length >= $n then . else . + (" " * ($n - length)) end;
+  def lpad($n): if length >= $n then . else (" " * ($n - length)) + . end;
   def wrap($n; $indent):
     (split(" ") | map(select(length > 0))) as $w
     | reduce $w[] as $x ({lines: [], cur: ""};
@@ -560,37 +783,14 @@ printf '%s' "$MODEL" | jq -r --argjson c "$CODES" --argjson width "$WIDTH" --arg
     | (.lines + (if .cur == "" then [] else [.cur] end))
     | map($indent + .) | join("\n");
   def section($t): "\n" + bold($t);
-  # The text up to and including the first sentence end (., ? or ! followed by
-  # a space or the end); the whole text when no sentence end is found.
-  def tag($i): $i.project + (if $i.mate != null then " via " + $i.mate else "" end);
-  def first_sentence($s):
-    ($s | sub("\\s+$"; "")) as $t
-    | ($t | capture("^(?<f>.*?(?<!\\.[A-Za-z])[.?!])(\\s|$)") // {f: $t}).f;
-  def age($s): if $s < 3600 then "under an hour"
-               elif $s < 86400 then plural((($s / 3600) | floor); "hour"; "hours")
-               else plural((($s / 86400) | floor); "day"; "days") end;
 
   . as $m
   | ($m.verdict) as $v
   | [
       # 1. verdict
-      (paint($v.tone; bold("SITREP  " + $v.word))
-       + "  -  "
-       + ([ (if $v.blocked_projects > 0 then plural($v.blocked_projects; "project blocked"; "projects blocked") else empty end),
-            (if $v.decisions > 0 then plural($v.decisions; "decision waits on you"; "decisions wait on you")
-               + (if $v.overdue_decisions > 0 then " (" + ($v.overdue_decisions | tostring) + " overdue)" else "" end)
-             else empty end),
-            (if $v.reviews > 0 then plural($v.reviews; "item ready for review"; "items ready for review") else empty end),
-            (if $v.mates_attention > 0 then plural($v.mates_attention; "second mate needs a look"; "second mates need a look") else empty end),
-            plural($v.workers; "worker running"; "workers running"),
-            (if $v.machine_pressure != "normal" then "machine load " + $v.machine_pressure else empty end)
-          ] | join(", "))),
+      (paint($v.tone; bold("SITREP  " + $v.word)) + "  -  " + (verdict_parts($v) | join(", "))),
       ($c.dim + "Legend: " + $c.reset
-       + paint("red"; "BLOCKED") + " failed, stuck or not responding | "
-       + paint("yellow"; "WAITING") + " needs a decision, review or merge | "
-       + paint("green"; "MOVING") + " under way, nothing needed | "
-       + paint("dim"; "PAUSED / IDLE") + " parked, queued or nothing open | "
-       + paint("red"; "OVERDUE") + " a decision waiting over " + plural($v.overdue_after_days; "day"; "days")),
+       + (legend_parts($v) | map(paint(.[0]; .[1]) + .[2]) | join(" | "))),
 
       # 2. projects
       section("PROJECTS"),
@@ -609,14 +809,7 @@ printf '%s' "$MODEL" | jq -r --argjson c "$CODES" --argjson width "$WIDTH" --arg
       (if ($m.mates | length) == 0 then empty
        else
          section("SECOND MATES"),
-         ($m.mates[]
-          | "  " + paint(.tone; .id + " (" + (if .remote then "remote, " + (.host // "host unknown") else "local" end) + "): " + .phrase)
-            + (if .merged then ""
-               else " - " + plural(.counts.working; "worker"; "workers") + ", "
-                    + plural(.counts.decisions; "open decision"; "open decisions") + ", "
-                    + (.counts.queued | tostring) + " queued"
-                    + (if .omitted > 0 then " (" + (.omitted | tostring) + " not shown)" else "" end)
-                    + "; detail lives in that home" + (if .home != null then ": " + .home else "" end) end))
+         ($m.mates[] | "  " + paint(.tone; mate_head(.)) + mate_tail(.))
        end),
 
       # 3. decisions
@@ -625,26 +818,14 @@ printf '%s' "$MODEL" | jq -r --argjson c "$CODES" --argjson width "$WIDTH" --arg
        else
          ($m.decisions | to_entries[]
           | .key as $k | .value as $d
-          | ("  " + paint(if $d.overdue then "red" elif $d.deferred then "dim" else "yellow" end;
-                  (($k + 1) | tostring) + ". [" + tag($d) + "] " + ($d.title | cut($width - 34)))
-             + paint(if $d.overdue then "red" else "dim" end; " ("
-                 + (if $d.waiting_seconds == null then "age unknown"
-                    elif $d.age_in_days and $d.waiting_days == 0 then "waiting under a day"
-                    else "waiting " + age($d.waiting_seconds) end)
-                 + (if $d.overdue then ", OVERDUE" else "" end)
-                 + (if $d.hold_bucket == "dated" then ", deferred until " + ($d.hold_until // "later")
-                    elif $d.hold_bucket == "blocked" then ", until other work finishes"
-                    else "" end) + ")")),
-            (($d.hold_reason // "") as $why
-             | (if $full == 1 then $why else first_sentence($why) end) as $shown
+          | ("  " + paint(decision_tone($d); (($k + 1) | tostring) + ". [" + tag($d) + "] " + ($d.title | cut($width - 34)))
+             + paint(if $d.overdue then "red" else "dim" end; " (" + waited($d) + ")")),
+            (shown_reason($d; $full) as $shown
              | (if $shown != "" then ($shown | wrap($width - 7; "     ")) else empty end),
-               ([($d.pr_url // empty), ($why | scan("https?://[^ )]+/pull/[0-9]+"))]
-                | unique[] | . as $u | select(($shown | contains($u)) | not) | "     PR: " + $u)))
+               (extra_prs($d; $shown)[] | "     PR: " + .)))
        end),
-      ($m.mates[] | select(.omitted_holds > 0)
-       | paint("yellow"; "  Up to " + (.omitted_holds | tostring) + " more held or queued items wait in the home of second mate "
-                         + .id + " and are not listed here.")),
-      (if $full == 0 and any($m.decisions[]; (.hold_reason // "") as $w | first_sentence($w) != ($w | sub("\\s+$"; "")))
+      ($m.mates[] | select(.omitted_holds > 0) | paint("yellow"; "  " + omitted_holds_text(.))),
+      (if $full == 0 and any_shortened($m)
        then paint("dim"; "  Shortened to the first sentence; run with --full for the whole reasons.") else empty end),
 
       # 4. workers
@@ -655,27 +836,14 @@ printf '%s' "$MODEL" | jq -r --argjson c "$CODES" --argjson width "$WIDTH" --arg
          ($m.workers[]
           | ("  " + paint(.tone; (.project | cut(16) | pad(16)) + "  " + (.doing | cut(40) | pad(40)))
              + "  " + (dur(.running_seconds) | lpad(6))
-             + "  " + (if .measured then mem(.rss_kb) else "unknown" end | lpad(9))
-             + "  " + (if .measured then ((.cpu_percent | round | tostring) + "%") else "-" end | lpad(5))
-             + "  " + ((.model // .harness // "-") + (if .effort != null then " (" + .effort + ")" else "" end))),
+             + "  " + (worker_mem(.) | lpad(9))
+             + "  " + (worker_cpu(.) | lpad(5))
+             + "  " + worker_model(.)),
             paint("dim"; "    " + ((.title + "  (" + .id + ")") | cut($width - 4))))
        end),
-      ("  " + bold("Total") + ": " + plural($m.totals.workers; "worker"; "workers")
-       + (if $m.totals.workers > 0 then
-            ", " + mem($m.totals.rss_kb) + " memory, " + (($m.totals.cpu_percent | round | tostring) + "% CPU")
-            + (if $m.totals.measured < $m.totals.workers then
-                 " (" + (($m.totals.workers - $m.totals.measured) | tostring) + " not measured)" else "" end)
-          else "" end)),
-      ("  Machine: "
-       + paint($m.machine.mem_tone;
-           if $m.machine.mem_available_kb == null then "memory unknown"
-           else gib($m.machine.mem_available_kb) + " of " + gib($m.machine.mem_total_kb) + " memory available"
-                + (if $m.machine.mem_tone == "red" then " (LOW)" elif $m.machine.mem_tone == "yellow" then " (getting low)" else "" end) end)
-       + ", "
-       + paint($m.machine.load_tone;
-           if $m.machine.load1 == null then "load unknown"
-           else "load " + ($m.machine.load1 | tostring) + " on " + (($m.machine.cores // "?") | tostring) + " cores"
-                + (if $m.machine.load_tone == "red" then " (OVERLOADED)" elif $m.machine.load_tone == "yellow" then " (busy)" else "" end) end)),
+      ("  " + bold("Total") + ": " + totals_text($m.totals)),
+      ("  Machine: " + paint($m.machine.mem_tone; machine_mem($m.machine)) + ", "
+       + paint($m.machine.load_tone; machine_load($m.machine))),
 
       # 5. parked and finished
       section("PARKED (stopped on purpose)"),
@@ -688,8 +856,7 @@ printf '%s' "$MODEL" | jq -r --argjson c "$CODES" --argjson width "$WIDTH" --arg
       section("RECENTLY FINISHED"),
       (if ($m.finished | length) == 0 then "  Nothing has finished recently."
        else ($m.finished[]
-             | "  " + paint("green"; "[" + .project + "] " + (.title | cut($width - 50)))
-               + " - " + .verb + (if .date != null then " " + .date else "" end)
+             | "  " + paint("green"; "[" + .project + "] " + (.title | cut($width - 50))) + finished_tail(.)
                + (if .pr_url != null then " - " + .pr_url elif .report then " - report written" else "" end))
        end)
     ]
