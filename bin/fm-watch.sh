@@ -158,6 +158,15 @@ mkdir -p "$STATE"
 # watcher reads only its presence (afk_record_present below).
 # shellcheck source=bin/fm-afk-contract.sh
 . "$SCRIPT_DIR/fm-afk-contract.sh"
+# Usage-limit screen detection and the fallback-model chain/record: see
+# usage_limit_fallback_check below for the one call site that acts on them.
+# shellcheck source=bin/fm-usage-limit-lib.sh
+. "$SCRIPT_DIR/fm-usage-limit-lib.sh"
+# shellcheck source=bin/fm-fallback-lib.sh
+. "$SCRIPT_DIR/fm-fallback-lib.sh"
+# FM_CONTROL_BIN lets tests stub the dismiss-and-relaunch calls below, the same
+# override pattern fm-classify-lib.sh uses for FM_CREW_STATE_BIN.
+FM_CONTROL_BIN="${FM_CONTROL_BIN:-$SCRIPT_DIR/fm-control.sh}"
 
 WATCH_LOCK="$STATE/.watch.lock"
 WATCH_PATH="$SCRIPT_DIR/fm-watch.sh"
@@ -362,6 +371,15 @@ window_harness() {
   meta=$(fm_backend_meta_for_window "$w" "$STATE" 2>/dev/null || true)
   [ -n "$meta" ] || return 0
   grep '^harness=' "$meta" | cut -d= -f2- || true
+}
+
+window_model() {
+  local w=$1 meta model
+  meta=$(fm_backend_meta_for_window "$w" "$STATE" 2>/dev/null || true)
+  [ -n "$meta" ] || return 0
+  model=$(grep '^model=' "$meta" | cut -d= -f2- || true)
+  [ "$model" != default ] || model=
+  printf '%s\n' "$model"
 }
 
 window_label() {
@@ -937,6 +955,55 @@ clear_write_tracking() {  # <window-key>
 # reverted rather than corrected a fourth time, so the probe is back to its
 # unconditional form. The distinction is real and still worth recording; acting on
 # it here is what kept failing.
+# A worker stopped on a provider usage-limit screen (bin/fm-usage-limit-lib.sh)
+# is a distinct reason from an ordinary wedge: no amount of waiting clears it,
+# and the correct response - dismiss the menu and relaunch on a configured
+# fallback model - is known immediately, so this check runs before any of the
+# generic stale/wedge bookkeeping above touches the window. A positive
+# detection with a configured fallback (config/model-fallback.json via
+# bin/fm-fallback-lib.sh) is handled completely here: dismiss, relaunch
+# through the existing fm-control.sh relaunch path (AGENTS.md section 7 - no
+# new lifecycle mechanism), record the global per-harness/model fallback
+# record so a later new spawn resolves the same fallback while it is active,
+# and leave a self-announced status line so the captain-facing summary can
+# say what happened. Returns 1 (not handled) whenever detection is negative,
+# no fallback is configured for that harness/model, or the dismiss/relaunch
+# itself fails - in every one of those cases the window falls straight through
+# to the ordinary stale/wedge classification below exactly as it did before
+# this check existed, so a failed automatic recovery still escalates as today.
+usage_limit_fallback_check() {  # <window> <task> <tail40>
+  local w=$1 task=$2 tail40=$3 harness model fallback reset_epoch note rc
+  [ -n "$task" ] || return 1
+  harness=$(window_harness "$w")
+  [ -n "$harness" ] || return 1
+  fm_usage_limit_detect "$harness" "$tail40" || return 1
+  model=$(window_model "$w")
+  [ -n "$model" ] || return 1
+  fallback=$(fm_fallback_config_next "$harness" "$model") || return 1
+  [ -n "$fallback" ] || return 1
+  reset_epoch=$(fm_usage_limit_reset_epoch "$harness" "$tail40" 2>/dev/null || true)
+  note="automatic fallback: $model hit a usage limit, relaunching on $fallback"
+  if ! "$FM_CONTROL_BIN" "$task" interrupt >/dev/null 2>&1; then
+    triage_log "usage-limit fallback: could not dismiss $model's limit menu for $task, falling through to ordinary stale handling: $w"
+    return 1
+  fi
+  if ! "$FM_CONTROL_BIN" "$task" relaunch --model "$fallback" --note "$note" >/dev/null 2>&1; then
+    triage_log "usage-limit fallback: relaunch to $fallback failed for $task, falling through to ordinary stale handling: $w"
+    return 1
+  fi
+  fm_fallback_record_write "$STATE" "$harness" "$model" "$fallback" "$reset_epoch"
+  if [ -n "$reset_epoch" ]; then
+    note="working: automatically switched from $model to $fallback after hitting a usage limit (resets $(date -u -d "@$reset_epoch" '+%Y-%m-%dT%H:%MZ' 2>/dev/null || echo "$reset_epoch"))"
+  else
+    note="working: automatically switched from $model to $fallback after hitting a usage limit"
+  fi
+  fm_wake_status_append_self_announced "$STATE" "$STATE/$task.status" "$note"
+  rc=$?
+  [ "$rc" -ne 2 ] || triage_log "usage-limit fallback: switched $task from $model to $fallback but could not record the status line: $w"
+  triage_log "usage-limit fallback: $task switched $model -> $fallback: $w"
+  return 0
+}
+
 wedge_timer_check() {  # <window> <since-file> <triage-label> <escalation-count-file> <task>
   local win=$1 since_file=$2 label=$3 escalation_file=$4 task=$5 since age n reason
   since=$(cat "$since_file" 2>/dev/null || true)
@@ -2242,6 +2309,9 @@ EOF
       continue
     fi
     tail40=$(fm_backend_capture "$(window_backend "$w")" "$w" 40 "$(window_label "$w")" 2>/dev/null) || continue
+    if usage_limit_fallback_check "$w" "$task" "$tail40"; then
+      continue
+    fi
     h=$(printf '%s' "$tail40" | hash_pane)
     hf="$STATE/.hash-$key"
     cf="$STATE/.count-$key"
