@@ -25,7 +25,8 @@ make_home() {  # <name>
 }
 
 # A fake tmux whose live inventory is the home's live-windows file
-# ("<window-name> <pane-pid>" per line). Absent windows fail like real tmux.
+# ("<window-name> <pane-pid> [pane-command]" per line; the command defaults to
+# claude). Absent windows fail like real tmux.
 make_fakebin() {  # <home>
   local fb
   fb=$(fm_fakebin "$1")
@@ -45,6 +46,7 @@ for arg in "$@"; do
 done
 window=${target#*:}
 pid=$(awk -v w="$window" '$1 == w { print $2; exit }' "$live")
+cmd=$(awk -v w="$window" '$1 == w { print ($3 == "" ? "claude" : $3); exit }' "$live")
 case "${1:-}" in
   list-windows)
     awk '{ print $1 }' "$live"
@@ -56,7 +58,7 @@ case "${1:-}" in
   display-message)
     [ -n "$pid" ] || { echo "can't find window: $window" >&2; exit 1; }
     case "$*" in
-      *pane_current_command*) printf 'claude\n' ;;
+      *pane_current_command*) printf '%s\n' "$cmd" ;;
       *pane_tty*) printf '/dev/fm-sitrep-none\n' ;;
       *) printf '%%1\n' ;;
     esac
@@ -429,6 +431,13 @@ EOF
   assert_contains "$out" "waiting 5 hours" "a recent second-mate hold must show its age in hours"
   assert_contains "$out" "(ops/work-task)" "a merged worker must be listed under its second mate"
   assert_contains "$out" "Total: 3 workers" "the worker total must include second-mate workers"
+  printf 'fm-ops 700 bash\n' > "$home/live-windows"
+  out=$(run_sitrep "$home" "$fb" --json) || fail "sitrep --json must succeed"
+  printf '%s' "$out" | jq -e '
+    ([.mates[] | {id, merged, tone}] == [{id: "ops", merged: true, tone: "red"}])
+      and .verdict.mates_attention == 1 and .verdict.tone == "red"
+      and ([.workers[].id] | sort) == ["ops/stuck-task", "ops/work-task"] and .verdict.workers == 2
+  ' >/dev/null || fail "a second mate whose pane holds only a shell must be flagged and not listed as running: $(printf '%s' "$out" | jq -c '{verdict, mates, workers: [.workers[].id]}')"
   : > "$home/live-windows"
   out=$(run_sitrep "$home" "$fb" --json) || fail "sitrep --json must succeed"
   printf '%s' "$out" | jq -e '

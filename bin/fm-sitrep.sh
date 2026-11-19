@@ -178,7 +178,8 @@ while IFS=$'\t' read -r id backend target; do
 "
 done < <(printf '%s' "$SNAPSHOT" | jq -r '
   .tasks[]
-  | select(.remote == null and .endpoint.exists == true and .current_state.source != "stood-down"
+  | select(.remote == null and .endpoint.exists == true and .endpoint.agent_alive != "dead"
+           and .current_state.source != "stood-down"
            and (.endpoint.target // "") != "")
   | [.id, .backend, .endpoint.target] | @tsv')
 
@@ -407,7 +408,8 @@ MODEL=$(printf '%s' "$SNAPSHOT" | jq \
                  end)} ]
      | sort_by((.tone | rank), (.name | lc))) as $projects
   | ([ $items[] | select(.held) ] | sort_by(.hold_epoch // 9e18)) as $decisions
-  | ([ $tasks[] | select(.remote == null and .endpoint.exists == true and .current_state.source != "stood-down") | . as $t
+  | ([ $tasks[] | select(.remote == null and .endpoint.exists == true and .endpoint.agent_alive != "dead"
+                         and .current_state.source != "stood-down") | . as $t
        | ($trees[$t.id] // null) as $tree
        | ([$pairs[] | select(.t != null and .t.id == $t.id) | .r] | first) as $r
        | {id: $t.id, mate: null,
@@ -445,7 +447,8 @@ MODEL=$(printf '%s' "$SNAPSHOT" | jq \
        | any($mates[]; .id == $r.id) as $merged
        | ($r.current.state // "unknown") as $st
        | any($tasks[]; .id == $r.id and .kind == "secondmate" and .remote == null
-                       and .endpoint.exists == false and .current_state.source != "stood-down") as $stopped
+                       and (.endpoint.exists == false or .endpoint.agent_alive == "dead")
+                       and .current_state.source != "stood-down") as $stopped
        | {id: $r.id, remote: ($r.remote == true), host: ($r.host // null), home: ($r.home // null),
           merged: $merged, state: $st,
           tone: (if $stopped then "red" elif $merged then "dim" elif $st == "unknown" then "red" elif $st == "captain_decision" then "yellow"
