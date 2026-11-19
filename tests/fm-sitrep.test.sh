@@ -631,6 +631,102 @@ test_usage() {
   pass "usage and unknown flags behave"
 }
 
+# A light structural check: every non-void element closes in order.
+html_balanced() {  # <file>
+  command -v python3 >/dev/null 2>&1 || return 0
+  python3 -I - "$1" <<'PY'
+import sys
+from html.parser import HTMLParser
+VOID = {"meta", "br", "hr", "img", "input", "link"}
+class P(HTMLParser):
+    def __init__(self):
+        super().__init__(); self.stack = []; self.bad = None
+    def handle_starttag(self, tag, attrs):
+        if tag not in VOID: self.stack.append(tag)
+    def handle_endtag(self, tag):
+        if not self.stack or self.stack.pop() != tag: self.bad = self.bad or tag
+p = P(); p.feed(open(sys.argv[1]).read()); p.close()
+sys.exit(1 if p.bad or p.stack else 0)
+PY
+}
+
+test_html_report() {
+  local out page rc=0 urls bad
+  fixture
+  mkdir -p "$TMP_ROOT/html-tmp"
+  page=$(TMPDIR="$TMP_ROOT/html-tmp" run_sitrep "$FIX_HOME" "$FIX_BIN" --html) || fail "sitrep --html must succeed"
+  case "$page" in "$TMP_ROOT/html-tmp/"*/sitrep.html) ;; *) fail "--html must print the page path under TMPDIR, got: $page" ;; esac
+  [ -s "$page" ] || fail "--html must write the page"
+  head -n 1 "$page" | grep -qi '^<!doctype html>' || fail "the page must start with a doctype"
+  html_balanced "$page" || fail "the page's elements must be balanced"
+  out=$(cat "$page")
+  assert_contains "$out" "SITREP NEEDS ATTENTION" "the page must carry the verdict"
+  assert_contains "$out" "2 decisions wait on you (1 overdue)" "the page must carry the verdict counts"
+  assert_contains "$out" '<span class="w red">BLOCKED</span><b class="red">gamma</b>' "gamma must read BLOCKED"
+  assert_contains "$out" '<span class="w yellow">WAITING</span><b class="yellow">alpha</b>' "alpha must read WAITING"
+  assert_contains "$out" '<span class="w yellow">WAITING</span><b class="yellow">delta</b>' "delta must read WAITING"
+  assert_contains "$out" '<span class="w green">MOVING</span><b class="green">epsilon</b>' "epsilon must read MOVING"
+  assert_contains "$out" '<span class="w dim">IDLE</span><b class="dim">beta</b>' "beta must read IDLE"
+  assert_contains "$out" 'pick the delta storage format</span> <span class="red">(waiting 6 days, OVERDUE)' "an overdue decision must be marked"
+  assert_contains "$out" "name the alpha release" "every decision must be listed"
+  assert_contains "$out" "deferred until 2026-12-01" "a deferred decision must say until when"
+  assert_contains "$out" '<a href="https://github.com/example/delta/pull/4">' "a decision's PR must be a full link"
+  assert_contains "$out" "(run-task)" "every running worker must be listed"
+  assert_contains "$out" "(herdr-task)" "every running worker must be listed"
+  assert_contains "$out" "(stuck-task)" "every running worker must be listed"
+  assert_contains "$out" "memory 6 MiB" "workers must show their memory"
+  assert_contains "$out" "waiting for the upstream release" "parked work must show why"
+  assert_contains "$out" "prefers-color-scheme:dark" "the page must follow a dark preference"
+  assert_contains "$out" 'name="viewport"' "the page must size itself to a phone screen"
+  assert_not_contains "$out" $'\033[' "the page must carry no terminal colour codes"
+  for bad in 'src=' '<link' '@import' 'url(' '<script'; do
+    assert_not_contains "$out" "$bad" "the page must load nothing external ($bad)"
+  done
+  urls=$(grep -o 'https\?://[^"<> ]*' "$page" | sort -u | tr '\n' ' ')
+  [ "$urls" = "https://github.com/example/alpha/pull/7 https://github.com/example/delta/pull/4 " ] \
+    || fail "the only URLs on the page must be the report's own PR links, got: $urls"
+  "$SITREP" --json --html >/dev/null 2>&1 || rc=$?
+  expect_code 2 "$rc" "--json combined with --html"
+  rc=0
+  TMPDIR="$TMP_ROOT/html-tmp" run_sitrep "$FIX_HOME" "$FIX_BIN" --html "$TMP_ROOT/chosen.html" >/dev/null 2>&1 || rc=$?
+  expect_code 2 "$rc" "--html followed by a path"
+  [ ! -e "$TMP_ROOT/chosen.html" ] || fail "--html must not write to a caller-chosen path"
+  pass "--html writes a self-contained page with the verdict, every project, decisions and workers"
+}
+
+test_html_private_path_and_escaping() {
+  local home fb out dir
+  home=$(make_home html-empty)
+  fb=$(make_fakebin "$home")
+  machine_files "$home" 16000000 12000000 0.20
+  mkdir -p "$home/tmp"
+  out=$(TMPDIR="$home/tmp" run_sitrep "$home" "$fb" --html) || fail "sitrep --html must succeed on an empty home"
+  case "$out" in "$home/tmp/"*/sitrep.html) ;; *) fail "the page must go to a new directory under TMPDIR, got: $out" ;; esac
+  dir=$(dirname "$out")
+  [ "$(find "$dir" -maxdepth 0 -perm 700 | wc -l)" -eq 1 ] || fail "the page's directory must be private"
+  html_balanced "$out" || fail "the empty page's elements must be balanced"
+  out=$(cat "$out")
+  assert_contains "$out" "SITREP QUIET" "an empty home must read quiet"
+  assert_contains "$out" "No projects are registered and nothing is open." "empty projects must say so"
+  assert_contains "$out" "Nothing is waiting on your decision." "empty decisions must say so"
+  assert_contains "$out" "No workers are running." "empty workers must say so"
+  assert_contains "$out" "Nothing has finished recently." "empty finished list must say so"
+  cat > "$home/data/backlog.md" <<'MD'
+## In flight
+
+## Queued
+- [ ] tag-call - keep <b>bold</b> & "quotes" (repo: alpha) (kind: captain) (since 2026-07-24) (hold: Is <script>x</script> safe?) (hold-kind: captain)
+  Captain hold set: 2026-07-24T00:00:00Z
+
+## Done
+MD
+  out=$(TMPDIR="$home/tmp" run_sitrep "$home" "$fb" --html) || fail "sitrep --html must succeed"
+  out=$(cat "$out")
+  assert_contains "$out" "keep &lt;b&gt;bold&lt;/b&gt; &amp; &quot;quotes&quot;" "titles must be escaped"
+  assert_not_contains "$out" "<script" "reasons must be escaped"
+  pass "--html writes to a private temp file, renders empty states, and escapes text"
+}
+
 test_project_classification
 test_decisions_listing
 test_human_report
@@ -642,4 +738,6 @@ test_memory_over_process_tree
 test_machine_pressure
 test_colour_controls
 test_empty_home
+test_html_report
+test_html_private_path_and_escaping
 test_usage
