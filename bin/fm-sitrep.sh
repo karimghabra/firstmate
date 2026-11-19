@@ -328,6 +328,7 @@ MODEL=$(printf '%s' "$SNAPSHOT" | jq \
           hold_bucket: $bucket, hold_reason: ($r.hold_reason // null),
           hold_until: ($r.hold_until // null),
           hold_epoch: (epoch_of($r.hold_set // null) // epoch_of($r.since // null)),
+          age_in_days: false,
           pr_url: (($r.pr_url // null) // $pr),
           state: ($r.state // "in_flight"),
           worker_state: $st} ]) as $items_main
@@ -335,28 +336,40 @@ MODEL=$(printf '%s' "$SNAPSHOT" | jq \
        | ([$m.active_children[]? | {id: ($m.id + "/" + .id), project: (.repo // $m.id),
              title: (.id), tone: "green", phrase: "working on it (via second mate " + $m.id + ")",
              running: true, parked: false, held: false, hold_bucket: null, hold_reason: null,
-             hold_until: null, hold_epoch: null, pr_url: null, state: "in_flight", worker_state: "working"}]
-          + [([$m.queued[]? | select(.hold_kind == "captain" and .hold_bucket != null)
-                | {id, summary: .title, reason: .hold_reason, hold_until, hold_bucket, hold_age_days}]
-               + [$m.decisions_open[]? | select(.verb == "captain-hold")]
+             hold_until: null, hold_epoch: null, age_in_days: false, pr_url: null,
+             state: "in_flight", worker_state: "working"}]
+          + [([$m.queued[]?
+                | . + {summary: .title, reason: .hold_reason,
+                       held: (.hold_kind == "captain" and .hold_bucket != null)}]
+               + [$m.decisions_open[]? | select(.verb == "captain-hold") | . + {held: true}]
                | unique_by(.id))[]
-             | (.hold_bucket // "live") as $bucket
-             | {id: ($m.id + "/" + .id), project: $m.id, title: (.summary // .id),
-                tone: (if $bucket == "dated" or $bucket == "blocked" then "dim" else "yellow" end),
+             | .held as $held
+             | (if $held then (.hold_bucket // "live") else null end) as $bucket
+             | (.repo // $m.id) as $proj
+             | {id: ($m.id + "/" + .id), project: $proj,
+                title: ((.summary // .id) | strip_prefix($proj)),
+                tone: (if $held and $bucket != "dated" and $bucket != "blocked" then "yellow" else "dim" end),
                 phrase: ((if $bucket == "dated" then "deferred until " + (.hold_until // "a later date")
                           elif $bucket == "blocked" then "held until other work finishes"
-                          else "waiting on your decision" end) + " (via second mate " + $m.id + ")"),
-                running: false, parked: false, held: true, hold_bucket: $bucket,
-                hold_reason: (.reason // null), hold_until: (.hold_until // null),
-                hold_epoch: (if .hold_age_days != null then ($now - (.hold_age_days * 86400)) else null end),
+                          elif $held then "waiting on your decision"
+                          elif (.unresolved_blocker_ids // []) | length > 0 then "queued behind other work"
+                          else "queued" end) + " (via second mate " + $m.id + ")"),
+                running: false, parked: false, held: $held, hold_bucket: $bucket,
+                hold_reason: (if $held then .reason else null end),
+                hold_until: (if $held then .hold_until else null end),
+                hold_epoch: (if $held and .hold_age_days != null then ($now - (.hold_age_days * 86400)) else null end),
+                age_in_days: true,
                 pr_url: null, state: "queued", worker_state: null}])[] ]) as $items_mates
   | ($items_main + $items_mates
      | map((.held and (.hold_bucket == "dated" or .hold_bucket == "blocked")) as $deferred
            | (if .held and .hold_epoch != null then ($now - .hold_epoch) else null end) as $age
+           | (if $age == null then null else (($age / 86400) | floor) end) as $days
            | . + {waiting_seconds: $age,
-                  waiting_days: (if $age == null then null else (($age / 86400) | floor) end),
+                  waiting_days: $days,
                   deferred: $deferred,
-                  overdue: (.held and ($deferred | not) and $age != null and $age > ($overdue_days * 86400))})) as $items
+                  overdue: (.held and ($deferred | not) and $age != null
+                            and (if .age_in_days then $days >= $overdue_days
+                                 else $age > ($overdue_days * 86400) end))})) as $items
   | (($registered + [$items[].project])
      | reduce .[] as $p ([]; if any(.[]; lc == ($p | lc)) then . else . + [$p] end)) as $project_names
   | ([ $project_names[] as $p
@@ -542,7 +555,9 @@ printf '%s' "$MODEL" | jq -r --argjson c "$CODES" --argjson width "$WIDTH" --arg
           | ("  " + paint(if $d.overdue then "red" elif $d.deferred then "dim" else "yellow" end;
                   (($k + 1) | tostring) + ". [" + $d.project + "] " + ($d.title | cut($width - 34)))
              + paint(if $d.overdue then "red" else "dim" end; " ("
-                 + (if $d.waiting_seconds == null then "age unknown" else "waiting " + age($d.waiting_seconds) end)
+                 + (if $d.waiting_seconds == null then "age unknown"
+                    elif $d.age_in_days and $d.waiting_days == 0 then "waiting under a day"
+                    else "waiting " + age($d.waiting_seconds) end)
                  + (if $d.overdue then ", OVERDUE" else "" end)
                  + (if $d.hold_bucket == "dated" then ", deferred until " + ($d.hold_until // "later")
                     elif $d.hold_bucket == "blocked" then ", until other work finishes"

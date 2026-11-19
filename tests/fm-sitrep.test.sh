@@ -357,12 +357,17 @@ test_second_mate_holds() {
 ## In flight
 
 ## Queued
-- [ ] aged-call - choose the ops region (repo: sample) (kind: captain) (since 2026-07-05) (hold: Choose the ops region.) (hold-kind: captain)
+- [ ] aged-call - choose the ops region (repo: limbus) (kind: captain) (since 2026-07-05) (hold: Choose the ops region.) (hold-kind: captain)
   Captain hold set: 2026-07-05T00:00:00Z
 - [ ] fresh-call - name the ops dashboard (repo: sample) (kind: captain) (since 2026-07-24) (hold: Name the ops dashboard.) (hold-kind: captain)
   Captain hold set: 2026-07-24T00:00:00Z
 - [ ] dated-call - revisit the ops budget (repo: sample) (kind: captain) (since 2026-07-01) (hold: Revisit the ops budget.) (hold-kind: captain) (hold-until: 2026-12-01)
   Captain hold set: 2026-07-01T00:00:00Z
+- [ ] edge-call - approve the ops rota (repo: sample) (kind: captain) (since 2026-07-21) (hold: Approve the ops rota.) (hold-kind: captain)
+  Captain hold set: 2026-07-21T01:00:00Z
+- [ ] recent-call - confirm the ops pager (repo: sample) (kind: captain) (since 2026-07-24) (hold: Confirm the ops pager.) (hold-kind: captain)
+  Captain hold set: 2026-07-24T19:00:00Z
+- [ ] later-work - draft the shoulder protocol (repo: e-shoulder) (kind: ship)
 
 ## Done
 EOF
@@ -371,7 +376,7 @@ EOF
     "$ROOT/bin/fm-home-summary-refresh.sh" >/dev/null 2>&1 || fail "second-mate summary refresh must succeed"
   out=$(run_sitrep "$home" "$fb" --json) || fail "sitrep --json must succeed"
   printf '%s' "$out" | jq -e '
-    [.decisions[].id] == ["ops/dated-call", "ops/aged-call", "ops/fresh-call"]
+    [.decisions[].id] == ["ops/dated-call", "ops/aged-call", "ops/edge-call", "ops/fresh-call", "ops/recent-call"]
   ' >/dev/null || fail "every second-mate hold must be listed once, oldest first: $(printf '%s' "$out" | jq -c '[.decisions[].id]')"
   printf '%s' "$out" | jq -e '
     (.decisions[] | select(.id == "ops/aged-call")) as $a | $a.waiting_days == 20 and $a.overdue == true
@@ -382,11 +387,24 @@ EOF
   printf '%s' "$out" | jq -e '
     (.decisions[] | select(.id == "ops/dated-call")) as $d | $d.deferred == true and $d.overdue == false
   ' >/dev/null || fail "a deferred second-mate hold must be listed but not overdue"
-  printf '%s' "$out" | jq -e '.verdict.decisions == 2 and .verdict.overdue_decisions == 1' >/dev/null \
-    || fail "verdict must count the aged second-mate hold as overdue: $(printf '%s' "$out" | jq -c .verdict)"
+  printf '%s' "$out" | jq -e '
+    (.decisions[] | select(.id == "ops/edge-call")) as $e | $e.waiting_days == 3 and $e.overdue == true
+  ' >/dev/null || fail "a second-mate hold waiting 3 days 23 hours is past the 3-day limit and must be overdue: $(printf '%s' "$out" | jq -c '.decisions')"
+  printf '%s' "$out" | jq -e '.verdict.decisions == 4 and .verdict.overdue_decisions == 2' >/dev/null \
+    || fail "verdict must count both overdue second-mate holds: $(printf '%s' "$out" | jq -c .verdict)"
+  printf '%s' "$out" | jq -e '
+    (.projects | map({key: .name, value: .}) | from_entries) as $p
+    | $p.limbus.registered == false and $p.limbus.status == "WAITING" and $p.limbus.held == 1 and $p.limbus.overdue == 1
+      and $p["e-shoulder"].status == "PAUSED" and $p["e-shoulder"].queued == 1 and $p["e-shoulder"].held == 0
+      and $p.sample.held == 4
+      and ($p | has("ops") | not)
+  ' >/dev/null || fail "second-mate held and queued items must be filed under their own repo: $(printf '%s' "$out" | jq -c '[.projects[] | {name, status, held, queued, overdue}]')"
   out=$(run_sitrep "$home" "$fb")
   assert_contains "$out" "waiting 20 days, OVERDUE" "an aged second-mate hold must be called out with its age"
-  pass "second-mate holds of every age are listed, and aged ones are overdue"
+  assert_contains "$out" "waiting 3 days, OVERDUE" "a second-mate hold past the limit must be called out"
+  assert_contains "$out" "waiting under a day" "a second-mate hold set hours ago must not claim hour precision"
+  assert_not_contains "$out" "under an hour" "a 5-hour-old second-mate hold must not read as under an hour"
+  pass "second-mate holds show day-level ages, flag overdue ones, and sit under their own repo"
 }
 
 test_memory_over_process_tree() {
