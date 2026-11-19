@@ -317,6 +317,78 @@ test_decision_text_length() {
   pass "decision reasons show their first sentence, and --full shows them whole"
 }
 
+test_abbreviations_do_not_end_a_sentence() {
+  local home fb out
+  home=$(make_home abbreviations)
+  fb=$(make_fakebin "$home")
+  machine_files "$home" 16000000 12000000 1.50
+  cat > "$home/data/backlog.md" <<'EOF'
+## In flight
+
+## Queued
+- [ ] store-call - pick the cache store (repo: alpha) (kind: captain) (since 2026-07-24) (hold: Pick a store, e.g. JSON or SQLite, for the cache. The benchmark notes compare them.) (hold-kind: captain)
+  Captain hold set: 2026-07-24T00:00:00Z
+- [ ] scope-call - settle the export scope (repo: alpha) (kind: captain) (since 2026-07-24) (hold: Export only the summary, i.e. no raw rows? Raw rows would triple the size.) (hold-kind: captain)
+  Captain hold set: 2026-07-24T06:00:00Z
+
+## Done
+EOF
+  out=$(run_sitrep "$home" "$fb")
+  assert_contains "$out" "Pick a store, e.g. JSON or SQLite, for the cache." "e.g. must not end the first sentence"
+  assert_contains "$out" "Export only the summary, i.e. no raw rows?" "i.e. must not end the first sentence"
+  assert_not_contains "$out" "benchmark notes" "the sentence after the first must still be left out"
+  assert_not_contains "$out" "triple the size" "the sentence after the first must still be left out"
+  pass "an abbreviation such as e.g. or i.e. does not end a decision's first sentence"
+}
+
+test_second_mate_holds() {
+  local home mate fb out
+  home=$(make_home mate-parent)
+  mate=$TMP_ROOT/mate-parent-ops-home
+  fb=$(make_fakebin "$home")
+  machine_files "$home" 16000000 12000000 1.50
+  mkdir -p "$mate/state" "$mate/data" "$mate/config" "$mate/projects" "$mate/bin"
+  printf '# Firstmate fixture\n' > "$mate/AGENTS.md"
+  printf 'ops\n' > "$mate/.fm-secondmate-home"
+  printf -- '- ops - fixture domain (home: %s; scope: fixture; projects: sample; added 2026-07-01)\n' \
+    "$mate" > "$home/data/secondmates.md"
+  fm_write_secondmate_meta "$home/state/ops.meta" "$mate" "firstmate:fm-ops" sample
+  cat > "$mate/data/backlog.md" <<'EOF'
+## In flight
+
+## Queued
+- [ ] aged-call - choose the ops region (repo: sample) (kind: captain) (since 2026-07-05) (hold: Choose the ops region.) (hold-kind: captain)
+  Captain hold set: 2026-07-05T00:00:00Z
+- [ ] fresh-call - name the ops dashboard (repo: sample) (kind: captain) (since 2026-07-24) (hold: Name the ops dashboard.) (hold-kind: captain)
+  Captain hold set: 2026-07-24T00:00:00Z
+- [ ] dated-call - revisit the ops budget (repo: sample) (kind: captain) (since 2026-07-01) (hold: Revisit the ops budget.) (hold-kind: captain) (hold-until: 2026-12-01)
+  Captain hold set: 2026-07-01T00:00:00Z
+
+## Done
+EOF
+  PATH="$fb:$PATH" FM_ROOT_OVERRIDE="$ROOT" FM_HOME="$mate" \
+    FM_SNAPSHOT_NOW="$NOW_ISO" FM_SNAPSHOT_NOW_EPOCH="$NOW_EPOCH" \
+    "$ROOT/bin/fm-home-summary-refresh.sh" >/dev/null 2>&1 || fail "second-mate summary refresh must succeed"
+  out=$(run_sitrep "$home" "$fb" --json) || fail "sitrep --json must succeed"
+  printf '%s' "$out" | jq -e '
+    [.decisions[].id] == ["ops/dated-call", "ops/aged-call", "ops/fresh-call"]
+  ' >/dev/null || fail "every second-mate hold must be listed once, oldest first: $(printf '%s' "$out" | jq -c '[.decisions[].id]')"
+  printf '%s' "$out" | jq -e '
+    (.decisions[] | select(.id == "ops/aged-call")) as $a | $a.waiting_days == 20 and $a.overdue == true
+  ' >/dev/null || fail "a 20-day second-mate hold must show its age and be overdue: $(printf '%s' "$out" | jq -c '.decisions')"
+  printf '%s' "$out" | jq -e '
+    (.decisions[] | select(.id == "ops/fresh-call")) as $f | $f.waiting_days == 1 and $f.overdue == false
+  ' >/dev/null || fail "a one-day second-mate hold must not be overdue"
+  printf '%s' "$out" | jq -e '
+    (.decisions[] | select(.id == "ops/dated-call")) as $d | $d.deferred == true and $d.overdue == false
+  ' >/dev/null || fail "a deferred second-mate hold must be listed but not overdue"
+  printf '%s' "$out" | jq -e '.verdict.decisions == 2 and .verdict.overdue_decisions == 1' >/dev/null \
+    || fail "verdict must count the aged second-mate hold as overdue: $(printf '%s' "$out" | jq -c .verdict)"
+  out=$(run_sitrep "$home" "$fb")
+  assert_contains "$out" "waiting 20 days, OVERDUE" "an aged second-mate hold must be called out with its age"
+  pass "second-mate holds of every age are listed, and aged ones are overdue"
+}
+
 test_memory_over_process_tree() {
   local out
   fixture
@@ -426,6 +498,9 @@ test_usage() {
   "$SITREP" --help | grep -q 'usage: fm-sitrep.sh' || fail "--help must print usage"
   "$SITREP" --bogus >/dev/null 2>&1 || rc=$?
   expect_code 2 "$rc" "an unknown flag"
+  rc=0
+  "$SITREP" --colour >/dev/null 2>&1 || rc=$?
+  expect_code 2 "$rc" "an undocumented flag spelling"
   pass "usage and unknown flags behave"
 }
 
@@ -433,6 +508,8 @@ test_project_classification
 test_decisions_listing
 test_human_report
 test_decision_text_length
+test_abbreviations_do_not_end_a_sentence
+test_second_mate_holds
 test_memory_over_process_tree
 test_machine_pressure
 test_colour_controls

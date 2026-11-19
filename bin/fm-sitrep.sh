@@ -101,8 +101,8 @@ while [ "$#" -gt 0 ]; do
   case "$1" in
     --json) JSON=1 ;;
     --full) FULL=1 ;;
-    --no-color|--no-colour) COLOR=never ;;
-    --color|--colour) COLOR=always ;;
+    --no-color) COLOR=never ;;
+    --color) COLOR=always ;;
     -h|--help) usage; exit 0 ;;
     *) echo "fm-sitrep: unknown argument: $1" >&2; usage >&2; exit 2 ;;
   esac
@@ -336,10 +336,17 @@ MODEL=$(printf '%s' "$SNAPSHOT" | jq \
              title: (.id), tone: "green", phrase: "working on it (via second mate " + $m.id + ")",
              running: true, parked: false, held: false, hold_bucket: null, hold_reason: null,
              hold_until: null, hold_epoch: null, pr_url: null, state: "in_flight", worker_state: "working"}]
-          + [$m.decisions_open[]? | select(.verb == "captain-hold")
+          + [([$m.queued[]? | select(.hold_kind == "captain" and .hold_bucket != null)
+                | {id, summary: .title, reason: .hold_reason, hold_until, hold_bucket, hold_age_days}]
+               + [$m.decisions_open[]? | select(.verb == "captain-hold")]
+               | unique_by(.id))[]
+             | (.hold_bucket // "live") as $bucket
              | {id: ($m.id + "/" + .id), project: $m.id, title: (.summary // .id),
-                tone: "yellow", phrase: "waiting on your decision (via second mate " + $m.id + ")",
-                running: false, parked: false, held: true, hold_bucket: (.hold_bucket // "live"),
+                tone: (if $bucket == "dated" or $bucket == "blocked" then "dim" else "yellow" end),
+                phrase: ((if $bucket == "dated" then "deferred until " + (.hold_until // "a later date")
+                          elif $bucket == "blocked" then "held until other work finishes"
+                          else "waiting on your decision" end) + " (via second mate " + $m.id + ")"),
+                running: false, parked: false, held: true, hold_bucket: $bucket,
                 hold_reason: (.reason // null), hold_until: (.hold_until // null),
                 hold_epoch: (if .hold_age_days != null then ($now - (.hold_age_days * 86400)) else null end),
                 pr_url: null, state: "queued", worker_state: null}])[] ]) as $items_mates
@@ -486,7 +493,7 @@ printf '%s' "$MODEL" | jq -r --argjson c "$CODES" --argjson width "$WIDTH" --arg
   # a space or the end); the whole text when no sentence end is found.
   def first_sentence($s):
     ($s | sub("\\s+$"; "")) as $t
-    | ($t | capture("^(?<f>.*?[.?!])(\\s|$)") // {f: $t}).f;
+    | ($t | capture("^(?<f>.*?(?<!\\.[A-Za-z])[.?!])(\\s|$)") // {f: $t}).f;
   def age($s): if $s < 3600 then "under an hour"
                elif $s < 86400 then plural((($s / 3600) | floor); "hour"; "hours")
                else plural((($s / 86400) | floor); "day"; "days") end;
