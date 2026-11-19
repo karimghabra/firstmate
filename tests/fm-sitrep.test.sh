@@ -407,6 +407,84 @@ EOF
   pass "second-mate holds show day-level ages, flag overdue ones, and sit under their own repo"
 }
 
+make_mate_home() {  # <parent-home> <mate-id>
+  local parent=$1 id=$2 mate
+  mate=$TMP_ROOT/$(basename "$parent")-$id-home
+  mkdir -p "$mate/state" "$mate/data" "$mate/config" "$mate/projects" "$mate/bin"
+  printf '# Firstmate fixture\n' > "$mate/AGENTS.md"
+  printf '%s\n' "$id" > "$mate/.fm-secondmate-home"
+  : > "$mate/live-windows"
+  printf -- '- %s - fixture domain (home: %s; scope: fixture; projects: sample; added 2026-07-01)\n' \
+    "$id" "$mate" >> "$parent/data/secondmates.md"
+  fm_write_secondmate_meta "$parent/state/$id.meta" "$mate" "firstmate:fm-$id" sample
+  printf '%s\n' "$mate"
+}
+
+mate_worker() {  # <mate-home> <task-id>
+  mkdir -p "$1/projects/$2-wt"
+  fm_write_meta "$1/state/$2.meta" \
+    "window=firstmate:fm-$2" \
+    "worktree=$1/projects/$2-wt" \
+    "project=$1/projects/sample" \
+    "harness=claude" \
+    "kind=ship" \
+    "mode=direct-PR" \
+    "yolo=off"
+  printf 'fm-%s %s\n' "$2" "$3" >> "$1/live-windows"
+}
+
+# A second mate whose summary was published four days before the report runs,
+# with one worker of each kind and a hold set one day before the summary. A
+# second registered mate has no readable summary at all.
+test_second_mate_workers_and_stale_summary() {
+  local home mate fb out summary_epoch
+  home=$(make_home mate-workers)
+  fb=$(make_fakebin "$home")
+  machine_files "$home" 16000000 12000000 1.50
+  mate=$(make_mate_home "$home" ops)
+  make_mate_home "$home" ghost >/dev/null
+  cat > "$mate/data/backlog.md" <<'EOF'
+## In flight
+- [ ] work-task - build the limbus importer (repo: limbus) (kind: ship) (since 2026-07-20)
+- [ ] stuck-task - calibrate the scanner (repo: sample) (kind: ship) (since 2026-07-20)
+- [ ] ask-task - choose the export layout (repo: sample) (kind: ship) (since 2026-07-20)
+
+## Queued
+- [ ] stale-call - pick the archive host (repo: e-shoulder) (kind: captain) (since 2026-07-20) (hold: Pick the archive host.) (hold-kind: captain)
+  Captain hold set: 2026-07-20T00:00:00Z
+
+## Done
+EOF
+  mate_worker "$mate" work-task 100
+  record_busy "$mate/state" work-task
+  mate_worker "$mate" stuck-task 300
+  record_idle "$mate/state" stuck-task
+  printf 'blocked: the scanner key is missing\n' > "$mate/state/stuck-task.status"
+  mate_worker "$mate" ask-task 500
+  record_idle "$mate/state" ask-task
+  printf 'needs-decision [key=layout]: choose wide or tall export\n' > "$mate/state/ask-task.status"
+  summary_epoch=$((NOW_EPOCH - 4 * 86400))
+  PATH="$fb:$PATH" FM_ROOT_OVERRIDE="$ROOT" FM_HOME="$mate" \
+    FM_SNAPSHOT_NOW=2026-07-21T00:00:00Z FM_SNAPSHOT_NOW_EPOCH="$summary_epoch" \
+    "$ROOT/bin/fm-home-summary-refresh.sh" >/dev/null 2>&1 || fail "second-mate summary refresh must succeed"
+  out=$(run_sitrep "$home" "$fb" --json) || fail "sitrep --json must succeed"
+  printf '%s' "$out" | jq -e '
+    (.decisions[] | select(.id == "ops/stale-call")) as $d
+    | $d.project == "e-shoulder" and $d.waiting_days == 5 and $d.overdue == true
+  ' >/dev/null || fail "a hold one day old in a four-day-old summary has waited five days and is overdue: $(printf '%s' "$out" | jq -c '.decisions')"
+  printf '%s' "$out" | jq -e '
+    (.projects | map({key: .name, value: .}) | from_entries) as $p
+    | $p.limbus.status == "MOVING" and $p.limbus.running == 1
+      and $p.ops.status == "BLOCKED" and ($p.ops.next | contains("stuck"))
+      and $p.ghost.status == "BLOCKED" and $p.ghost.running == 0 and ($p.ghost.next | contains("could not be read"))
+  ' >/dev/null || fail "second-mate workers must set their project status like main-home workers: $(printf '%s' "$out" | jq -c '[.projects[] | {name, status, running, next}]')"
+  printf '%s' "$out" | jq -e '
+    .verdict.word == "NEEDS ATTENTION" and .verdict.blocked_projects == 2
+      and .verdict.reviews == 1 and .verdict.overdue_decisions == 1
+  ' >/dev/null || fail "verdict must count the blocked mate worker, the unreadable mate, the mate worker asking a question and the overdue hold: $(printf '%s' "$out" | jq -c .verdict)"
+  pass "second-mate workers follow the main-home status rules and stale summaries still age their holds"
+}
+
 test_memory_over_process_tree() {
   local out
   fixture
@@ -528,6 +606,7 @@ test_human_report
 test_decision_text_length
 test_abbreviations_do_not_end_a_sentence
 test_second_mate_holds
+test_second_mate_workers_and_stale_summary
 test_memory_over_process_tree
 test_machine_pressure
 test_colour_controls

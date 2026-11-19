@@ -277,6 +277,49 @@ MODEL=$(printf '%s' "$SNAPSHOT" | jq \
   def stood_down_reason($t):
     ($t.current_state.detail // "")
     | (capture("^stopped by intent since (?<since>[0-9]{4}-[0-9]{2}-[0-9]{2}( [0-9:]+Z)?): (?<reason>.*)$") // {since: null, reason: .});
+  def item($r; $t; $orphan):
+    ($t != null and $t.current_state.source == "stood-down") as $stood
+    | ($t != null and $t.remote == null and $t.endpoint.exists == true and ($stood | not)) as $live
+    | (($r.hold_kind // null) == "captain") as $held
+    | ($r.hold_bucket // null) as $bucket
+    | ($t.current_state.state // null) as $st
+    | (if $t == null then null else $t.pr.url end) as $pr
+    | project_of($t; $r) as $proj
+    | (if $orphan and ($r.state // "") == "in_flight" then
+         {tone: "red", phrase: "recorded as under way, but no worker is attached"}
+       elif $t != null and $st == "failed" then {tone: "red", phrase: "failed"}
+       elif $t != null and ($st == "blocked" or $t.hints.blocked_event == true) then
+         {tone: "red", phrase: "stuck and asking for help"}
+       elif $t != null and ($stood | not) and $t.remote == null and $t.endpoint.exists == false and $st != "done" then
+         {tone: "red", phrase: "worker stopped responding"}
+       elif $t != null and ($stood | not) and $st == "unknown" and $t.remote == null then
+         {tone: "red", phrase: "worker state could not be read"}
+       elif $held and ($bucket == "live" or $bucket == "aged") then
+         {tone: "yellow", phrase: "your decision"}
+       elif $held and $bucket == "dated" then
+         {tone: "dim", phrase: ("deferred until " + ($r.hold_until // "a later date"))}
+       elif $held and $bucket == "blocked" then
+         {tone: "dim", phrase: "held until other work finishes"}
+       elif $t != null and $st == "done" and $pr != null then
+         {tone: "yellow", phrase: "ready for your review"}
+       elif $t != null and ($st == "parked" or $t.hints.pending_decision == true) then
+         {tone: "yellow", phrase: "paused at a review question"}
+       elif $stood then {tone: "dim", phrase: "parked on purpose"}
+       elif $t != null then {tone: "green", phrase: crew_phrase($t)}
+       elif ($r.unresolved_blocker_ids // []) | length > 0 then
+         {tone: "dim", phrase: "queued behind other work"}
+       else {tone: "dim", phrase: "queued"} end) as $c
+    | {id: ($r.id // $t.id), project: $proj,
+       title: ((($r.title // null) // $t.id) | strip_prefix($proj)),
+       tone: $c.tone, phrase: $c.phrase,
+       running: $live, parked: $stood, held: $held,
+       hold_bucket: $bucket, hold_reason: ($r.hold_reason // null),
+       hold_until: ($r.hold_until // null),
+       hold_epoch: ($r.hold_epoch // epoch_of($r.hold_set // null) // epoch_of($r.since // null)),
+       age_in_days: ($r.age_in_days // false),
+       pr_url: (($r.pr_url // null) // $pr),
+       state: ($r.state // "in_flight"),
+       worker_state: $st};
 
   (.tasks // []) as $tasks
   | ([.backlog.records[]? | select(.structured and (.state == "in_flight" or .state == "queued"))]) as $open
@@ -290,76 +333,46 @@ MODEL=$(printf '%s' "$SNAPSHOT" | jq \
          | select(.current_state.state != "done" or .pr.url != null)
          | {r: (.backlog // null), t: $t} ]) as $pairs
   | ([ $pairs[] | .r as $r | .t as $t
-       | ($t != null and $t.current_state.source == "stood-down") as $stood
-       | ($t != null and $t.remote == null and $t.endpoint.exists == true and ($stood | not)) as $live
-       | (($r.hold_kind // null) == "captain") as $held
-       | ($r.hold_bucket // null) as $bucket
-       | ($t.current_state.state // null) as $st
-       | (if $t == null then null else $t.pr.url end) as $pr
-       | project_of($t; $r) as $proj
-       | (if $t == null and ($r.state // "") == "in_flight" and ($orphans | index($r.id)) != null then
-            {tone: "red", phrase: "recorded as under way, but no worker is attached"}
-          elif $t != null and $st == "failed" then {tone: "red", phrase: "failed"}
-          elif $t != null and ($st == "blocked" or $t.hints.blocked_event == true) then
-            {tone: "red", phrase: "stuck and asking for help"}
-          elif $t != null and ($stood | not) and $t.remote == null and $t.endpoint.exists == false and $st != "done" then
-            {tone: "red", phrase: "worker stopped responding"}
-          elif $t != null and ($stood | not) and $st == "unknown" and $t.remote == null then
-            {tone: "red", phrase: "worker state could not be read"}
-          elif $held and ($bucket == "live" or $bucket == "aged") then
-            {tone: "yellow", phrase: "your decision"}
-          elif $held and $bucket == "dated" then
-            {tone: "dim", phrase: ("deferred until " + ($r.hold_until // "a later date"))}
-          elif $held and $bucket == "blocked" then
-            {tone: "dim", phrase: "held until other work finishes"}
-          elif $t != null and $st == "done" and $pr != null then
-            {tone: "yellow", phrase: "ready for your review"}
-          elif $t != null and ($st == "parked" or $t.hints.pending_decision == true) then
-            {tone: "yellow", phrase: "paused at a review question"}
-          elif $stood then {tone: "dim", phrase: "parked on purpose"}
-          elif $t != null then {tone: "green", phrase: crew_phrase($t)}
-          elif ($r.unresolved_blocker_ids // []) | length > 0 then
-            {tone: "dim", phrase: "queued behind other work"}
-          else {tone: "dim", phrase: "queued"} end) as $c
-       | {id: ($r.id // $t.id), project: $proj,
-          title: ((($r.title // null) // $t.id) | strip_prefix($proj)),
-          tone: $c.tone, phrase: $c.phrase,
-          running: $live, parked: $stood, held: $held,
-          hold_bucket: $bucket, hold_reason: ($r.hold_reason // null),
-          hold_until: ($r.hold_until // null),
-          hold_epoch: (epoch_of($r.hold_set // null) // epoch_of($r.since // null)),
-          age_in_days: false,
-          pr_url: (($r.pr_url // null) // $pr),
-          state: ($r.state // "in_flight"),
-          worker_state: $st} ]) as $items_main
+       | item($r; $t; ($t == null and ($orphans | index($r.id)) != null)) ]) as $items_main
   | ([ (.secondmate_current.records // [])[] as $m
-       | ([$m.active_children[]? | {id: ($m.id + "/" + .id), project: (.repo // $m.id),
-             title: (.id), tone: "green", phrase: "working on it (via second mate " + $m.id + ")",
-             running: true, parked: false, held: false, hold_bucket: null, hold_reason: null,
-             hold_until: null, hold_epoch: null, age_in_days: false, pr_url: null,
-             state: "in_flight", worker_state: "working"}]
-          + [([$m.queued[]?
-                | . + {summary: .title, reason: .hold_reason,
-                       held: (.hold_kind == "captain" and .hold_bucket != null)}]
-               + [$m.decisions_open[]? | select(.verb == "captain-hold") | . + {held: true}]
-               | unique_by(.id))[]
-             | .held as $held
-             | (if $held then (.hold_bucket // "live") else null end) as $bucket
-             | (.repo // $m.id) as $proj
-             | {id: ($m.id + "/" + .id), project: $proj,
-                title: ((.summary // .id) | strip_prefix($proj)),
-                tone: (if $held and $bucket != "dated" and $bucket != "blocked" then "yellow" else "dim" end),
-                phrase: ((if $bucket == "dated" then "deferred until " + (.hold_until // "a later date")
-                          elif $bucket == "blocked" then "held until other work finishes"
-                          elif $held then "waiting on your decision"
-                          elif (.unresolved_blocker_ids // []) | length > 0 then "queued behind other work"
-                          else "queued" end) + " (via second mate " + $m.id + ")"),
-                running: false, parked: false, held: $held, hold_bucket: $bucket,
-                hold_reason: (if $held then .reason else null end),
-                hold_until: (if $held then .hold_until else null end),
-                hold_epoch: (if $held and .hold_age_days != null then ($now - (.hold_age_days * 86400)) else null end),
-                age_in_days: true,
-                pr_url: null, state: "queued", worker_state: null}])[] ]) as $items_mates
+       | (" (via second mate " + $m.id + ")") as $via
+       | ($m.freshness.age_seconds // 0) as $stale
+       | ([$m.decisions_open[]? | select(.verb != "captain-hold")]) as $asks
+       | ([$m.endpoints[]?.id, $m.active_children[]?.id, $asks[].id] | unique) as $child_ids
+       | ([$m.queued[]?]
+          + [$m.decisions_open[]? | select(.verb == "captain-hold")
+             | {id, title: .summary, hold_kind: "captain", hold_bucket: (.hold_bucket // "live"),
+                hold_reason: .reason, hold_until, hold_age_days}]
+          | unique_by(.id)) as $recs
+       | (([$recs[] | {id, q: .}]
+           + [$child_ids[] as $c | select(any($recs[]; .id == $c) | not) | {id: $c, q: null}])[]
+          | .id as $id | .q as $q
+          | ([$m.endpoints[]? | select(.id == $id)] | first) as $e
+          | ([$m.active_children[]? | select(.id == $id)] | first) as $a
+          | ([$m.holds[]? | select(.id == $id and .source == "child-state")] | first) as $h
+          | select($q != null or $e.state != "done")
+          | (if ($child_ids | index($id)) != null then
+               {id: $id, remote: null,
+                endpoint: ($e.endpoint // {exists: (if $a != null then true else null end)}),
+                current_state: {state: ($e.state // $a.state // null), source: ($e.source // $a.source // null),
+                                detail: ($a.doing // "")},
+                hints: {blocked_event: any($asks[]; .id == $id and .verb == "blocked"),
+                        pending_decision: any($asks[]; .id == $id and .verb == "needs-decision")},
+                pr: {url: null}}
+             else null end) as $t
+          | (($q // {id: $id})
+             + {title: ($q.title // $h.title // null),
+                repo: ($q.repo // $a.repo // $m.id),
+                state: (if $t != null then "in_flight" else "queued" end),
+                hold_epoch: (if $q.hold_age_days != null then ($now - ($stale + $q.hold_age_days * 86400)) else null end),
+                age_in_days: true}) as $r
+          | item($r; $t; false)),
+         (select($m.current.state == "unknown")
+          | item({id: "state", repo: $m.id, title: ($m.current.reason // "second mate state"), state: "in_flight"};
+                 {id: "state", remote: null, endpoint: {exists: null}, current_state: {state: "unknown"},
+                  hints: {}, pr: {url: null}}; false)
+          | .phrase = "second mate state could not be read")
+       | . + {id: ($m.id + "/" + .id), phrase: (.phrase + $via)} ]) as $items_mates
   | ($items_main + $items_mates
      | map((.held and (.hold_bucket == "dated" or .hold_bucket == "blocked")) as $deferred
            | (if .held and .hold_epoch != null then ($now - .hold_epoch) else null end) as $age
