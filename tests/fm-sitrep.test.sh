@@ -369,13 +369,15 @@ mate_worker() {  # <mate-home> <task-id> <pane-pid>
 
 # A local second mate with a working worker (process tree 100 -> 101 -> 102 in
 # the fake process table), a blocked worker, a six-day-old hold and a
-# five-hour-old hold. The main home itself has no work.
+# five-hour-old hold. The main home itself has no work; the mate's own session
+# runs in a live pane there (pid 700, absent from the fake process table).
 test_local_second_mate_is_merged() {
   local home mate fb out
   home=$(make_home mate-local)
   fb=$(make_fakebin "$home")
   machine_files "$home" 16000000 12000000 1.50
   mate=$(make_mate_home "$home" ops)
+  printf 'fm-ops 700\n' >> "$home/live-windows"
   printf '# Projects\n\n- sample [direct-PR] - the mate project (added 2026-07-01)\n- spare [local-only] - nothing open (added 2026-07-01)\n' \
     > "$mate/data/projects.md"
   cat > "$mate/data/backlog.md" <<'EOF'
@@ -412,19 +414,31 @@ EOF
   ' >/dev/null || fail "a local second mate's holds must be listed with their real ages: $(printf '%s' "$out" | jq -c '.decisions')"
   printf '%s' "$out" | jq -e '
     ([.workers[] | {id, mate, measured, rss_kb}] | sort_by(.id))
-    == [{id: "ops/stuck-task", mate: "ops", measured: false, rss_kb: null},
+    == [{id: "ops", mate: null, measured: false, rss_kb: null},
+        {id: "ops/stuck-task", mate: "ops", measured: false, rss_kb: null},
         {id: "ops/work-task", mate: "ops", measured: true, rss_kb: 6000}]
-    and .totals.workers == 2 and .totals.rss_kb == 6000 and .verdict.workers == 2
+    and .totals.workers == 3 and .totals.rss_kb == 6000 and .verdict.workers == 3
   ' >/dev/null || fail "a local second mate's workers must be listed with their memory: $(printf '%s' "$out" | jq -c '{workers, totals}')"
   printf '%s' "$out" | jq -e '
     .verdict.word == "NEEDS ATTENTION" and .verdict.decisions == 2 and .verdict.overdue_decisions == 1
-      and ([.mates[] | {id, merged}] == [{id: "ops", merged: true}])
+      and ([.mates[] | {id, merged, tone}] == [{id: "ops", merged: true, tone: "dim"}])
+      and .verdict.mates_attention == 0
   ' >/dev/null || fail "verdict and mate list wrong: $(printf '%s' "$out" | jq -c '{verdict, mates}')"
   out=$(run_sitrep "$home" "$fb")
   assert_contains "$out" "[e-shoulder via ops] pick the archive host (waiting 6 days, OVERDUE)" "a merged decision must name its second mate and age"
   assert_contains "$out" "waiting 5 hours" "a recent second-mate hold must show its age in hours"
   assert_contains "$out" "(ops/work-task)" "a merged worker must be listed under its second mate"
-  assert_contains "$out" "Total: 2 workers" "the worker total must include second-mate workers"
+  assert_contains "$out" "Total: 3 workers" "the worker total must include second-mate workers"
+  : > "$home/live-windows"
+  out=$(run_sitrep "$home" "$fb" --json) || fail "sitrep --json must succeed"
+  printf '%s' "$out" | jq -e '
+    ([.mates[] | {id, merged, tone}] == [{id: "ops", merged: true, tone: "red"}])
+      and .verdict.mates_attention == 1 and .verdict.tone == "red"
+      and ([.decisions[].id] == ["ops/old-call", "ops/new-call"])
+  ' >/dev/null || fail "a second mate whose own session is gone must be flagged while its work stays listed: $(printf '%s' "$out" | jq -c '{verdict, mates}')"
+  out=$(run_sitrep "$home" "$fb")
+  assert_contains "$out" "ops (local): its own session stopped responding" "a stopped second mate must be called out"
+  assert_contains "$out" "1 second mate needs a look" "the verdict line must count the stopped second mate"
   pass "a local second mate's projects, decisions and workers are merged into the report"
 }
 

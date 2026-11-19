@@ -69,9 +69,6 @@
 #   FM_SITREP_CORES        online core count override
 #   FM_SITREP_NOW_EPOCH    clock override for ages and run times
 #   FM_SITREP_WIDTH        line width override (default: terminal width, else 100)
-#   FM_SITREP_FINISHED     how many recently finished items to show (default 5)
-#   FM_SITREP_OVERDUE_DAYS days a held item may wait before it shows as overdue
-#                          (default 3)
 #   FM_SITREP_NESTED       set by this script when it reports on a second-mate
 #                          home, so that run does not descend into further homes
 set -u
@@ -127,10 +124,6 @@ fi
 
 NOW_EPOCH=${FM_SITREP_NOW_EPOCH:-$(date +%s)}
 case "$NOW_EPOCH" in ''|*[!0-9]*) NOW_EPOCH=$(date +%s) ;; esac
-FINISHED_N=${FM_SITREP_FINISHED:-5}
-OVERDUE_DAYS=${FM_SITREP_OVERDUE_DAYS:-3}
-case "$OVERDUE_DAYS" in ''|*[!0-9]*) OVERDUE_DAYS=3 ;; esac
-case "$FINISHED_N" in ''|*[!0-9]*) FINISHED_N=5 ;; esac
 WIDTH=${FM_SITREP_WIDTH:-}
 if [ -z "$WIDTH" ] && [ -t 1 ]; then
   WIDTH=$(tput cols 2>/dev/null || true)
@@ -267,8 +260,8 @@ MODEL=$(printf '%s' "$SNAPSHOT" | jq \
   --argjson trees "$TREES_JSON" \
   --argjson mates "$MATE_MODELS" \
   --argjson now "$NOW_EPOCH" \
-  --argjson finished_n "$FINISHED_N" \
-  --argjson overdue_days "$OVERDUE_DAYS" \
+  --argjson finished_n 5 \
+  --argjson overdue_days 3 \
   --arg mem_total "$MEM_TOTAL_KB" \
   --arg mem_avail "$MEM_AVAIL_KB" \
   --arg load1 "$LOAD1" \
@@ -451,11 +444,14 @@ MODEL=$(printf '%s' "$SNAPSHOT" | jq \
   | ([ (.secondmate_current.records // [])[] as $r
        | any($mates[]; .id == $r.id) as $merged
        | ($r.current.state // "unknown") as $st
+       | any($tasks[]; .id == $r.id and .kind == "secondmate" and .remote == null
+                       and .endpoint.exists == false and .current_state.source != "stood-down") as $stopped
        | {id: $r.id, remote: ($r.remote == true), host: ($r.host // null), home: ($r.home // null),
           merged: $merged, state: $st,
-          tone: (if $merged then "dim" elif $st == "unknown" then "red" elif $st == "captain_decision" then "yellow"
+          tone: (if $stopped then "red" elif $merged then "dim" elif $st == "unknown" then "red" elif $st == "captain_decision" then "yellow"
                  elif $st == "active_child_work" then "green" else "dim" end),
-          phrase: (if $merged then "included in this report"
+          phrase: ((if $stopped then "its own session stopped responding; " else "" end)
+                   + if $merged then "included in this report"
                    elif $st == "unknown" then "state could not be read" + (if $r.current.reason != null then ": " + $r.current.reason else "" end)
                    elif $st == "captain_decision" then "waiting on your decision"
                    elif $st == "active_child_work" then "working"
