@@ -431,7 +431,8 @@ EOF
 # A remote second mate is known only through its published summary, served
 # here by a fake ssh. Its summary was published two days before the report and
 # says: waiting on the captain, 1 worker, 5 queued of which 3 are beyond the
-# summary's cap, and two captain holds that were then 2 days and 0 days old.
+# summary's cap, 35 finished items beyond its cap (which hide nothing that is
+# open), and two captain holds that were then 2 days and 0 days old.
 test_remote_second_mate_gets_one_row() {
   local home fb out remote_home
   home=$(make_home mate-remote)
@@ -459,8 +460,8 @@ test_remote_second_mate_gets_one_row() {
       {id:"far-a",title:"Far call A",blocked_by:null,blocked_by_ids:[],unresolved_blocker_ids:[],blocked_reason:null,hold_reason:"choose",hold_kind:"captain",hold_until:null,hold_bucket:"live",hold_age_days:2,captain_actionable:true,repo:"sample",kind:"captain"},
       {id:"far-b",title:"Far call B",blocked_by:null,blocked_by_ids:[],unresolved_blocker_ids:[],blocked_reason:null,hold_reason:"choose",hold_kind:"captain",hold_until:null,hold_bucket:"live",hold_age_days:0,captain_actionable:true,repo:"sample",kind:"captain"}
     ],landed:[],endpoints:[],
-    counts:{active_children:1,decisions_open:2,holds:0,queued:5,landed:0,endpoints:1},
-    omitted:[{surface:"queued",count:3}]
+    counts:{active_children:1,decisions_open:2,holds:0,queued:5,landed:35,endpoints:1},
+    omitted:[{surface:"queued",count:3},{surface:"landed",count:35}]
   }' > "$remote_home/state/home-summary.json"
   printf '#!/usr/bin/env bash\ncat "%s/state/home-summary.json"\n' "$remote_home" > "$fb/fake-ssh"
   chmod +x "$fb/fake-ssh"

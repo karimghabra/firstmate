@@ -463,7 +463,8 @@ MODEL=$(printf '%s' "$SNAPSHOT" | jq \
                    else "nothing open" end),
           counts: {working: ($r.counts.active_children // 0), decisions: ($r.counts.decisions_open // 0),
                    queued: ($r.counts.queued // 0)},
-          omitted: ([$r.omitted[]?.count] | add // 0),
+          omitted: ([$r.omitted[]? | select(.surface | IN("active_children", "decisions_open", "queued")) | .count]
+                    | add // 0),
           omitted_holds: (if $merged then 0
                           else ([$r.omitted[]? | select(.surface == "queued" or .surface == "decisions_open") | .count] | max // 0) end)} ]
      + [ $mates[] | .id as $mid | .model.mates[] | . + {id: ($mid + "/" + .id)} ]) as $mate_rows
