@@ -341,72 +341,6 @@ EOF
   pass "an abbreviation such as e.g. or i.e. does not end a decision's first sentence"
 }
 
-test_second_mate_holds() {
-  local home mate fb out
-  home=$(make_home mate-parent)
-  mate=$TMP_ROOT/mate-parent-ops-home
-  fb=$(make_fakebin "$home")
-  machine_files "$home" 16000000 12000000 1.50
-  mkdir -p "$mate/state" "$mate/data" "$mate/config" "$mate/projects" "$mate/bin"
-  printf '# Firstmate fixture\n' > "$mate/AGENTS.md"
-  printf 'ops\n' > "$mate/.fm-secondmate-home"
-  printf -- '- ops - fixture domain (home: %s; scope: fixture; projects: sample; added 2026-07-01)\n' \
-    "$mate" > "$home/data/secondmates.md"
-  fm_write_secondmate_meta "$home/state/ops.meta" "$mate" "firstmate:fm-ops" sample
-  cat > "$mate/data/backlog.md" <<'EOF'
-## In flight
-
-## Queued
-- [ ] aged-call - choose the ops region (repo: limbus) (kind: captain) (since 2026-07-05) (hold: Choose the ops region.) (hold-kind: captain)
-  Captain hold set: 2026-07-05T00:00:00Z
-- [ ] fresh-call - name the ops dashboard (repo: sample) (kind: captain) (since 2026-07-24) (hold: Name the ops dashboard.) (hold-kind: captain)
-  Captain hold set: 2026-07-24T00:00:00Z
-- [ ] dated-call - revisit the ops budget (repo: sample) (kind: captain) (since 2026-07-01) (hold: Revisit the ops budget.) (hold-kind: captain) (hold-until: 2026-12-01)
-  Captain hold set: 2026-07-01T00:00:00Z
-- [ ] edge-call - approve the ops rota (repo: sample) (kind: captain) (since 2026-07-21) (hold: Approve the ops rota.) (hold-kind: captain)
-  Captain hold set: 2026-07-21T01:00:00Z
-- [ ] recent-call - confirm the ops pager (repo: sample) (kind: captain) (since 2026-07-24) (hold: Confirm the ops pager.) (hold-kind: captain)
-  Captain hold set: 2026-07-24T19:00:00Z
-- [ ] later-work - draft the shoulder protocol (repo: e-shoulder) (kind: ship)
-
-## Done
-EOF
-  PATH="$fb:$PATH" FM_ROOT_OVERRIDE="$ROOT" FM_HOME="$mate" \
-    FM_SNAPSHOT_NOW="$NOW_ISO" FM_SNAPSHOT_NOW_EPOCH="$NOW_EPOCH" \
-    "$ROOT/bin/fm-home-summary-refresh.sh" >/dev/null 2>&1 || fail "second-mate summary refresh must succeed"
-  out=$(run_sitrep "$home" "$fb" --json) || fail "sitrep --json must succeed"
-  printf '%s' "$out" | jq -e '
-    [.decisions[].id] == ["ops/dated-call", "ops/aged-call", "ops/edge-call", "ops/fresh-call", "ops/recent-call"]
-  ' >/dev/null || fail "every second-mate hold must be listed once, oldest first: $(printf '%s' "$out" | jq -c '[.decisions[].id]')"
-  printf '%s' "$out" | jq -e '
-    (.decisions[] | select(.id == "ops/aged-call")) as $a | $a.waiting_days == 20 and $a.overdue == true
-  ' >/dev/null || fail "a 20-day second-mate hold must show its age and be overdue: $(printf '%s' "$out" | jq -c '.decisions')"
-  printf '%s' "$out" | jq -e '
-    (.decisions[] | select(.id == "ops/fresh-call")) as $f | $f.waiting_days == 1 and $f.overdue == false
-  ' >/dev/null || fail "a one-day second-mate hold must not be overdue"
-  printf '%s' "$out" | jq -e '
-    (.decisions[] | select(.id == "ops/dated-call")) as $d | $d.deferred == true and $d.overdue == false
-  ' >/dev/null || fail "a deferred second-mate hold must be listed but not overdue"
-  printf '%s' "$out" | jq -e '
-    (.decisions[] | select(.id == "ops/edge-call")) as $e | $e.waiting_days == 3 and $e.overdue == true
-  ' >/dev/null || fail "a second-mate hold waiting 3 days 23 hours is past the 3-day limit and must be overdue: $(printf '%s' "$out" | jq -c '.decisions')"
-  printf '%s' "$out" | jq -e '.verdict.decisions == 4 and .verdict.overdue_decisions == 2' >/dev/null \
-    || fail "verdict must count both overdue second-mate holds: $(printf '%s' "$out" | jq -c .verdict)"
-  printf '%s' "$out" | jq -e '
-    (.projects | map({key: .name, value: .}) | from_entries) as $p
-    | $p.limbus.registered == false and $p.limbus.status == "WAITING" and $p.limbus.held == 1 and $p.limbus.overdue == 1
-      and $p["e-shoulder"].status == "PAUSED" and $p["e-shoulder"].queued == 1 and $p["e-shoulder"].held == 0
-      and $p.sample.held == 4
-      and ($p | has("ops") | not)
-  ' >/dev/null || fail "second-mate held and queued items must be filed under their own repo: $(printf '%s' "$out" | jq -c '[.projects[] | {name, status, held, queued, overdue}]')"
-  out=$(run_sitrep "$home" "$fb")
-  assert_contains "$out" "waiting 20 days, OVERDUE" "an aged second-mate hold must be called out with its age"
-  assert_contains "$out" "waiting 3 days, OVERDUE" "a second-mate hold past the limit must be called out"
-  assert_contains "$out" "waiting under a day" "a second-mate hold set hours ago must not claim hour precision"
-  assert_not_contains "$out" "under an hour" "a 5-hour-old second-mate hold must not read as under an hour"
-  pass "second-mate holds show day-level ages, flag overdue ones, and sit under their own repo"
-}
-
 make_mate_home() {  # <parent-home> <mate-id>
   local parent=$1 id=$2 mate
   mate=$TMP_ROOT/$(basename "$parent")-$id-home
@@ -420,7 +354,7 @@ make_mate_home() {  # <parent-home> <mate-id>
   printf '%s\n' "$mate"
 }
 
-mate_worker() {  # <mate-home> <task-id>
+mate_worker() {  # <mate-home> <task-id> <pane-pid>
   mkdir -p "$1/projects/$2-wt"
   fm_write_meta "$1/state/$2.meta" \
     "window=firstmate:fm-$2" \
@@ -433,25 +367,27 @@ mate_worker() {  # <mate-home> <task-id>
   printf 'fm-%s %s\n' "$2" "$3" >> "$1/live-windows"
 }
 
-# A second mate whose summary was published four days before the report runs,
-# with one worker of each kind and a hold set one day before the summary. A
-# second registered mate has no readable summary at all.
-test_second_mate_workers_and_stale_summary() {
-  local home mate fb out summary_epoch
-  home=$(make_home mate-workers)
+# A local second mate with a working worker (process tree 100 -> 101 -> 102 in
+# the fake process table), a blocked worker, a six-day-old hold and a
+# five-hour-old hold. The main home itself has no work.
+test_local_second_mate_is_merged() {
+  local home mate fb out
+  home=$(make_home mate-local)
   fb=$(make_fakebin "$home")
   machine_files "$home" 16000000 12000000 1.50
   mate=$(make_mate_home "$home" ops)
-  make_mate_home "$home" ghost >/dev/null
+  printf '# Projects\n\n- sample [direct-PR] - the mate project (added 2026-07-01)\n- spare [local-only] - nothing open (added 2026-07-01)\n' \
+    > "$mate/data/projects.md"
   cat > "$mate/data/backlog.md" <<'EOF'
 ## In flight
 - [ ] work-task - build the limbus importer (repo: limbus) (kind: ship) (since 2026-07-20)
 - [ ] stuck-task - calibrate the scanner (repo: sample) (kind: ship) (since 2026-07-20)
-- [ ] ask-task - choose the export layout (repo: sample) (kind: ship) (since 2026-07-20)
 
 ## Queued
-- [ ] stale-call - pick the archive host (repo: e-shoulder) (kind: captain) (since 2026-07-20) (hold: Pick the archive host.) (hold-kind: captain)
-  Captain hold set: 2026-07-20T00:00:00Z
+- [ ] old-call - pick the archive host (repo: e-shoulder) (kind: captain) (since 2026-07-19) (hold: Pick the archive host.) (hold-kind: captain)
+  Captain hold set: 2026-07-19T00:00:00Z
+- [ ] new-call - confirm the pager (repo: sample) (kind: captain) (since 2026-07-24) (hold: Confirm the pager.) (hold-kind: captain)
+  Captain hold set: 2026-07-24T19:00:00Z
 
 ## Done
 EOF
@@ -460,29 +396,91 @@ EOF
   mate_worker "$mate" stuck-task 300
   record_idle "$mate/state" stuck-task
   printf 'blocked: the scanner key is missing\n' > "$mate/state/stuck-task.status"
-  mate_worker "$mate" ask-task 500
-  record_idle "$mate/state" ask-task
-  printf 'needs-decision [key=layout]: choose wide or tall export\n' > "$mate/state/ask-task.status"
-  summary_epoch=$((NOW_EPOCH - 4 * 86400))
-  PATH="$fb:$PATH" FM_ROOT_OVERRIDE="$ROOT" FM_HOME="$mate" \
-    FM_SNAPSHOT_NOW=2026-07-21T00:00:00Z FM_SNAPSHOT_NOW_EPOCH="$summary_epoch" \
-    "$ROOT/bin/fm-home-summary-refresh.sh" >/dev/null 2>&1 || fail "second-mate summary refresh must succeed"
   out=$(run_sitrep "$home" "$fb" --json) || fail "sitrep --json must succeed"
-  printf '%s' "$out" | jq -e '
-    (.decisions[] | select(.id == "ops/stale-call")) as $d
-    | $d.project == "e-shoulder" and $d.waiting_days == 5 and $d.overdue == true
-  ' >/dev/null || fail "a hold one day old in a four-day-old summary has waited five days and is overdue: $(printf '%s' "$out" | jq -c '.decisions')"
   printf '%s' "$out" | jq -e '
     (.projects | map({key: .name, value: .}) | from_entries) as $p
     | $p.limbus.status == "MOVING" and $p.limbus.running == 1
-      and $p.ops.status == "BLOCKED" and ($p.ops.next | contains("stuck"))
-      and $p.ghost.status == "BLOCKED" and $p.ghost.running == 0 and ($p.ghost.next | contains("could not be read"))
-  ' >/dev/null || fail "second-mate workers must set their project status like main-home workers: $(printf '%s' "$out" | jq -c '[.projects[] | {name, status, running, next}]')"
+      and $p.sample.status == "BLOCKED" and $p.sample.registered == true and ($p.sample.next | contains("stuck"))
+      and $p["e-shoulder"].status == "WAITING" and $p["e-shoulder"].held == 1 and $p["e-shoulder"].overdue == 1
+      and $p.spare.status == "IDLE"
+      and ($p | has("ops") | not)
+  ' >/dev/null || fail "a local second mate's items must be filed under their own repos: $(printf '%s' "$out" | jq -c '[.projects[] | {name, status, running, held, overdue}]')"
   printf '%s' "$out" | jq -e '
-    .verdict.word == "NEEDS ATTENTION" and .verdict.blocked_projects == 2
-      and .verdict.reviews == 1 and .verdict.overdue_decisions == 1
-  ' >/dev/null || fail "verdict must count the blocked mate worker, the unreadable mate, the mate worker asking a question and the overdue hold: $(printf '%s' "$out" | jq -c .verdict)"
-  pass "second-mate workers follow the main-home status rules and stale summaries still age their holds"
+    [.decisions[] | {id, mate, waiting_days, overdue}]
+    == [{id: "ops/old-call", mate: "ops", waiting_days: 6, overdue: true},
+        {id: "ops/new-call", mate: "ops", waiting_days: 0, overdue: false}]
+  ' >/dev/null || fail "a local second mate's holds must be listed with their real ages: $(printf '%s' "$out" | jq -c '.decisions')"
+  printf '%s' "$out" | jq -e '
+    ([.workers[] | {id, mate, measured, rss_kb}] | sort_by(.id))
+    == [{id: "ops/stuck-task", mate: "ops", measured: false, rss_kb: null},
+        {id: "ops/work-task", mate: "ops", measured: true, rss_kb: 6000}]
+    and .totals.workers == 2 and .totals.rss_kb == 6000 and .verdict.workers == 2
+  ' >/dev/null || fail "a local second mate's workers must be listed with their memory: $(printf '%s' "$out" | jq -c '{workers, totals}')"
+  printf '%s' "$out" | jq -e '
+    .verdict.word == "NEEDS ATTENTION" and .verdict.decisions == 2 and .verdict.overdue_decisions == 1
+      and ([.mates[] | {id, merged}] == [{id: "ops", merged: true}])
+  ' >/dev/null || fail "verdict and mate list wrong: $(printf '%s' "$out" | jq -c '{verdict, mates}')"
+  out=$(run_sitrep "$home" "$fb")
+  assert_contains "$out" "[e-shoulder via ops] pick the archive host (waiting 6 days, OVERDUE)" "a merged decision must name its second mate and age"
+  assert_contains "$out" "waiting 5 hours" "a recent second-mate hold must show its age in hours"
+  assert_contains "$out" "(ops/work-task)" "a merged worker must be listed under its second mate"
+  assert_contains "$out" "Total: 2 workers" "the worker total must include second-mate workers"
+  pass "a local second mate's projects, decisions and workers are merged into the report"
+}
+
+# A remote second mate is known only through its published summary, served
+# here by a fake ssh. Its summary says: waiting on the captain, 1 worker,
+# 2 open decisions, 5 queued of which 3 are beyond the summary's cap.
+test_remote_second_mate_gets_one_row() {
+  local home fb out remote_home
+  home=$(make_home mate-remote)
+  fb=$(make_fakebin "$home")
+  machine_files "$home" 16000000 12000000 1.50
+  remote_home=$TMP_ROOT/mate-remote-far-home
+  mkdir -p "$remote_home/state"
+  remote_home=$(cd "$remote_home" && pwd -P)
+  printf -- '- far - remote fixture (host: host-1; root: /remote/root; home: %s; scope: fixture; projects: sample; added 2026-07-01)\n' \
+    "$remote_home" > "$home/data/secondmates.md"
+  fm_write_meta "$home/state/far.meta" \
+    "kind=secondmate" "mode=secondmate" "harness=pi" \
+    "remote_host=host-1" "remote_root=/remote/root" "home=$remote_home"
+  jq -n --arg home "$remote_home" --arg now "$NOW_ISO" --argjson epoch "$NOW_EPOCH" '{
+    schema:"fm-secondmate-home-summary.v1",
+    hold_classifier_schema:"fm-captain-hold-buckets.v1",
+    generated:$now,generated_epoch:$epoch,home:$home,
+    valid:true,reason:null,invalidity:{kind:null,ids:[]},state:"captain_decision",
+    active_children:[{id:"far-work",kind:"ship",state:"working",repo:"sample",source:"busy",doing:""}],
+    decisions_open:[
+      {id:"far-a",key:"far-a",verb:"captain-hold",summary:"Far call A",reason:"choose",hold_until:null,hold_bucket:"live",hold_age_days:1,source:"backlog"},
+      {id:"far-b",key:"far-b",verb:"captain-hold",summary:"Far call B",reason:"choose",hold_until:null,hold_bucket:"live",hold_age_days:1,source:"backlog"}
+    ],holds:[],
+    queued:[
+      {id:"far-a",title:"Far call A",blocked_by:null,blocked_by_ids:[],unresolved_blocker_ids:[],blocked_reason:null,hold_reason:"choose",hold_kind:"captain",hold_until:null,hold_bucket:"live",hold_age_days:1,captain_actionable:true,repo:"sample",kind:"captain"},
+      {id:"far-b",title:"Far call B",blocked_by:null,blocked_by_ids:[],unresolved_blocker_ids:[],blocked_reason:null,hold_reason:"choose",hold_kind:"captain",hold_until:null,hold_bucket:"live",hold_age_days:1,captain_actionable:true,repo:"sample",kind:"captain"}
+    ],landed:[],endpoints:[],
+    counts:{active_children:1,decisions_open:2,holds:0,queued:5,landed:0,endpoints:1},
+    omitted:[{surface:"queued",count:3}]
+  }' > "$remote_home/state/home-summary.json"
+  printf '#!/usr/bin/env bash\ncat "%s/state/home-summary.json"\n' "$remote_home" > "$fb/fake-ssh"
+  chmod +x "$fb/fake-ssh"
+  out=$(FM_SSH_BIN="$fb/fake-ssh" FM_SNAPSHOT_CACHE_DIR="$home/state/summary-cache" FM_SNAPSHOT_BUDGET=15 \
+    run_sitrep "$home" "$fb" --json) || fail "sitrep --json must succeed"
+  printf '%s' "$out" | jq -e '
+    (.mates | length) == 1 and .mates[0].id == "far" and .mates[0].remote == true and .mates[0].merged == false
+      and .mates[0].host == "host-1" and .mates[0].state == "captain_decision"
+      and .mates[0].counts == {working: 1, decisions: 2, queued: 5} and .mates[0].omitted == 3
+  ' >/dev/null || fail "a remote second mate must get one summary row: $(printf '%s' "$out" | jq -c '.mates')"
+  printf '%s' "$out" | jq -e '
+    (.decisions | length) == 0 and (.workers | length) == 0
+      and .verdict.word == "WAITING ON YOU" and .verdict.mates_attention == 1
+  ' >/dev/null || fail "a remote second mate must not be merged, but must raise the verdict: $(printf '%s' "$out" | jq -c '{verdict, decisions}')"
+  out=$(FM_SSH_BIN="$fb/fake-ssh" FM_SNAPSHOT_CACHE_DIR="$home/state/summary-cache" FM_SNAPSHOT_BUDGET=15 \
+    run_sitrep "$home" "$fb")
+  assert_contains "$out" "far (remote, host-1): waiting on your decision - 1 worker, 2 open decisions, 5 queued (3 not shown)" \
+    "the remote row must carry state, counts and the omitted count"
+  assert_contains "$out" "detail lives in that home" "the remote row must say where the detail is"
+  assert_contains "$out" "1 second mate needs a look" "the verdict line must mention the remote second mate"
+  pass "a remote second mate gets one summary row with state, counts and omitted count"
 }
 
 test_memory_over_process_tree() {
@@ -605,8 +603,8 @@ test_decisions_listing
 test_human_report
 test_decision_text_length
 test_abbreviations_do_not_end_a_sentence
-test_second_mate_holds
-test_second_mate_workers_and_stale_summary
+test_local_second_mate_is_merged
+test_remote_second_mate_gets_one_row
 test_memory_over_process_tree
 test_machine_pressure
 test_colour_controls

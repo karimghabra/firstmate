@@ -11,6 +11,12 @@
 # the snapshot it renders is bounded and its only side effect is the snapshot's
 # own observational remote-summary cache refresh.
 #
+# Second mates: every valid local second-mate home is reported by running this
+# script against that home, and its items, decisions, workers (with memory) and
+# parked work are merged in, labelled with the mate. A remote second mate, or a
+# local one that cannot be read, gets one row in a SECOND MATES section with its
+# published state and counts; its detail lives in that home.
+#
 # Sections, in order:
 #   1. one-line verdict for the whole fleet;
 #   2. projects at a glance - one row per registered project (data/projects.md,
@@ -65,6 +71,8 @@
 #   FM_SITREP_FINISHED     how many recently finished items to show (default 5)
 #   FM_SITREP_OVERDUE_DAYS days a held item may wait before it shows as overdue
 #                          (default 3)
+#   FM_SITREP_NESTED       set by this script when it reports on a second-mate
+#                          home, so that run does not descend into further homes
 set -u
 
 SCRIPT_DIR="$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)"
@@ -133,6 +141,27 @@ SNAPSHOT=$("$SCRIPT_DIR/fm-fleet-snapshot.sh" --json) || {
   echo "fm-sitrep: the fleet snapshot could not be read" >&2
   exit 1
 }
+
+# Each valid local second-mate home is reported by running this same script
+# against it; its items, workers and parked work are merged into this report.
+# A nested run does not descend again: it lists its own second mates as rows.
+# shellcheck source=bin/fm-ff-lib.sh
+. "$SCRIPT_DIR/fm-ff-lib.sh"
+MATE_MODELS='[]'
+if [ -z "${FM_SITREP_NESTED:-}" ]; then
+  while IFS=$'\t' read -r mate_id mate_home; do
+    [ -n "$mate_id" ] || continue
+    validate_secondmate_home "$mate_id" "$mate_home" 2>/dev/null || continue
+    mate_model=$(env -u FM_DATA_OVERRIDE -u FM_STATE_OVERRIDE -u FM_CONFIG_OVERRIDE -u FM_PROJECTS_OVERRIDE \
+      FM_HOME="$VALIDATED_HOME" FM_ROOT_OVERRIDE="$FM_ROOT" FM_SITREP_NESTED=1 \
+      "$SCRIPT_DIR/fm-sitrep.sh" --json 2>/dev/null) || continue
+    MATE_MODELS=$(jq -n --argjson all "$MATE_MODELS" --arg id "$mate_id" --argjson model "$mate_model" \
+      '$all + [{id: $id, model: $model}]') || { echo "fm-sitrep: could not read second mate $mate_id" >&2; exit 1; }
+  done < <(printf '%s' "$SNAPSHOT" | jq -r '
+    .secondmate_current.records[]?
+    | select(.remote != true and (.home // "") != "")
+    | [.id, .home] | @tsv')
+fi
 
 # Registered project names, in registry order.
 registered_projects_json() {
@@ -235,6 +264,7 @@ case "$CORES" in ''|*[!0-9]*|0) CORES="" ;; esac
 MODEL=$(printf '%s' "$SNAPSHOT" | jq \
   --argjson registered "$REGISTERED" \
   --argjson trees "$TREES_JSON" \
+  --argjson mates "$MATE_MODELS" \
   --argjson now "$NOW_EPOCH" \
   --argjson finished_n "$FINISHED_N" \
   --argjson overdue_days "$OVERDUE_DAYS" \
@@ -315,8 +345,7 @@ MODEL=$(printf '%s' "$SNAPSHOT" | jq \
        running: $live, parked: $stood, held: $held,
        hold_bucket: $bucket, hold_reason: ($r.hold_reason // null),
        hold_until: ($r.hold_until // null),
-       hold_epoch: ($r.hold_epoch // epoch_of($r.hold_set // null) // epoch_of($r.since // null)),
-       age_in_days: ($r.age_in_days // false),
+       hold_epoch: (epoch_of($r.hold_set // null) // epoch_of($r.since // null)),
        pr_url: (($r.pr_url // null) // $pr),
        state: ($r.state // "in_flight"),
        worker_state: $st};
@@ -334,55 +363,18 @@ MODEL=$(printf '%s' "$SNAPSHOT" | jq \
          | {r: (.backlog // null), t: $t} ]) as $pairs
   | ([ $pairs[] | .r as $r | .t as $t
        | item($r; $t; ($t == null and ($orphans | index($r.id)) != null)) ]) as $items_main
-  | ([ (.secondmate_current.records // [])[] as $m
-       | (" (via second mate " + $m.id + ")") as $via
-       | ($m.freshness.age_seconds // 0) as $stale
-       | ([$m.decisions_open[]? | select(.verb != "captain-hold")]) as $asks
-       | ([$m.endpoints[]?.id, $m.active_children[]?.id, $asks[].id] | unique) as $child_ids
-       | ([$m.queued[]?]
-          + [$m.decisions_open[]? | select(.verb == "captain-hold")
-             | {id, title: .summary, hold_kind: "captain", hold_bucket: (.hold_bucket // "live"),
-                hold_reason: .reason, hold_until, hold_age_days}]
-          | unique_by(.id)) as $recs
-       | (([$recs[] | {id, q: .}]
-           + [$child_ids[] as $c | select(any($recs[]; .id == $c) | not) | {id: $c, q: null}])[]
-          | .id as $id | .q as $q
-          | ([$m.endpoints[]? | select(.id == $id)] | first) as $e
-          | ([$m.active_children[]? | select(.id == $id)] | first) as $a
-          | ([$m.holds[]? | select(.id == $id and .source == "child-state")] | first) as $h
-          | select($q != null or $e.state != "done")
-          | (if ($child_ids | index($id)) != null then
-               {id: $id, remote: null,
-                endpoint: ($e.endpoint // {exists: (if $a != null then true else null end)}),
-                current_state: {state: ($e.state // $a.state // null), source: ($e.source // $a.source // null),
-                                detail: ($a.doing // "")},
-                hints: {blocked_event: any($asks[]; .id == $id and .verb == "blocked"),
-                        pending_decision: any($asks[]; .id == $id and .verb == "needs-decision")},
-                pr: {url: null}}
-             else null end) as $t
-          | (($q // {id: $id})
-             + {title: ($q.title // $h.title // null),
-                repo: ($q.repo // $a.repo // $m.id),
-                state: (if $t != null then "in_flight" else "queued" end),
-                hold_epoch: (if $q.hold_age_days != null then ($now - ($stale + $q.hold_age_days * 86400)) else null end),
-                age_in_days: true}) as $r
-          | item($r; $t; false)),
-         (select($m.current.state == "unknown")
-          | item({id: "state", repo: $m.id, title: ($m.current.reason // "second mate state"), state: "in_flight"};
-                 {id: "state", remote: null, endpoint: {exists: null}, current_state: {state: "unknown"},
-                  hints: {}, pr: {url: null}}; false)
-          | .phrase = "second mate state could not be read")
-       | . + {id: ($m.id + "/" + .id), phrase: (.phrase + $via)} ]) as $items_mates
-  | ($items_main + $items_mates
-     | map((.held and (.hold_bucket == "dated" or .hold_bucket == "blocked")) as $deferred
-           | (if .held and .hold_epoch != null then ($now - .hold_epoch) else null end) as $age
-           | (if $age == null then null else (($age / 86400) | floor) end) as $days
-           | . + {waiting_seconds: $age,
-                  waiting_days: $days,
-                  deferred: $deferred,
-                  overdue: (.held and ($deferred | not) and $age != null
-                            and (if .age_in_days then $days >= $overdue_days
-                                 else $age > ($overdue_days * 86400) end))})) as $items
+  | ([ $mates[] | .id as $mid | .model.items[]
+       | . + {id: ($mid + "/" + .id), mate: $mid, phrase: (.phrase + " (via second mate " + $mid + ")")} ]) as $items_mates
+  | (($items_main
+      | map((.held and (.hold_bucket == "dated" or .hold_bucket == "blocked")) as $deferred
+            | (if .held and .hold_epoch != null then ($now - .hold_epoch) else null end) as $age
+            | . + {mate: null,
+                   waiting_seconds: $age,
+                   waiting_days: (if $age == null then null else (($age / 86400) | floor) end),
+                   deferred: $deferred,
+                   overdue: (.held and ($deferred | not) and $age != null and $age > ($overdue_days * 86400))}))
+     + $items_mates) as $items
+  | ($registered + [$mates[].model.projects[] | select(.registered) | .name]) as $registered
   | (($registered + [$items[].project])
      | reduce .[] as $p ([]; if any(.[]; lc == ($p | lc)) then . else . + [$p] end)) as $project_names
   | ([ $project_names[] as $p
@@ -409,7 +401,7 @@ MODEL=$(printf '%s' "$SNAPSHOT" | jq \
   | ([ $tasks[] | select(.remote == null and .endpoint.exists == true and .current_state.source != "stood-down") | . as $t
        | ($trees[$t.id] // null) as $tree
        | ([$pairs[] | select(.t != null and .t.id == $t.id) | .r] | first) as $r
-       | {id: $t.id,
+       | {id: $t.id, mate: null,
           project: (if $t.kind == "secondmate" then "second mate" else project_of($t; $r) end),
           title: (($r.title // $t.id) | strip_prefix(project_of($t; $r))),
           doing: crew_phrase($t),
@@ -423,6 +415,7 @@ MODEL=$(printf '%s' "$SNAPSHOT" | jq \
           processes: ($tree.processes // 0),
           rss_kb: (if $tree != null and $tree.processes > 0 then $tree.rss_kb else null end),
           cpu_percent: (if $tree != null and $tree.processes > 0 then $tree.cpu_percent else null end)} ]
+     + [ $mates[] | .id as $mid | .model.workers[] | . + {id: ($mid + "/" + .id), mate: $mid} ]
      | sort_by(.project | lc)) as $workers
   | (num($mem_total)) as $mt | (num($mem_avail)) as $ma | (num($load1)) as $l1 | (num($cores)) as $nc
   | (if $mt == null or $ma == null then "dim"
@@ -433,11 +426,31 @@ MODEL=$(printf '%s' "$SNAPSHOT" | jq \
      elif $l1 > $nc then "red"
      elif $l1 > ($nc * 0.75) then "yellow"
      else "green" end) as $load_tone
-  | ([ $items[] | select(.parked) ] as $pk
-     | [ $pk[] | . as $i | ([$tasks[] | select(.id == $i.id)] | first) as $t
-         | stood_down_reason($t) as $why
-         | {id, project, title, reason: ($why.reason | sub("^stopped on purpose(: |$)"; "")),
-            since: $why.since, held, pr_url} ]) as $parked
+  | ([ $items[] | select(.parked and .mate == null) | . as $i
+       | ([$tasks[] | select(.id == $i.id)] | first) as $t
+       | stood_down_reason($t) as $why
+       | {id, mate, project, title, reason: ($why.reason | sub("^stopped on purpose(: |$)"; "")),
+          since: $why.since, held, pr_url} ]
+     + [ $mates[] | .id as $mid | .model.parked[] | . + {id: ($mid + "/" + .id), mate: $mid} ]) as $parked
+  | ([ (.secondmate_current.records // [])[] as $r
+       | any($mates[]; .id == $r.id) as $merged
+       | ($r.current.state // "unknown") as $st
+       | {id: $r.id, remote: ($r.remote == true), host: ($r.host // null), home: ($r.home // null),
+          merged: $merged, state: $st,
+          tone: (if $merged then "dim" elif $st == "unknown" then "red" elif $st == "captain_decision" then "yellow"
+                 elif $st == "active_child_work" then "green" else "dim" end),
+          phrase: (if $merged then "included in this report"
+                   elif $st == "unknown" then "state could not be read" + (if $r.current.reason != null then ": " + $r.current.reason else "" end)
+                   elif $st == "captain_decision" then "waiting on your decision"
+                   elif $st == "active_child_work" then "working"
+                   elif $st == "externally_held" then "held on outside work"
+                   else "nothing open" end),
+          counts: {working: ($r.counts.active_children // 0), decisions: ($r.counts.decisions_open // 0),
+                   queued: ($r.counts.queued // 0)},
+          omitted: ([$r.omitted[]?.count] | add // 0)} ]
+     + [ $mates[] | .id as $mid | .model.mates[] | . + {id: ($mid + "/" + .id)} ]) as $mate_rows
+  | ([$mate_rows[] | select(.tone == "red")] | length) as $n_mate_red
+  | ([$mate_rows[] | select(.tone == "yellow")] | length) as $n_mate_yellow
   | ([ .backlog.records[]? | select(.structured and .state == "done") ]
      | to_entries
      | sort_by([-((epoch_of(.value.completion.date) // 0)), .key])
@@ -453,18 +466,21 @@ MODEL=$(printf '%s' "$SNAPSHOT" | jq \
   | {schema: "fm-sitrep.v1",
      generated: (.generated // null),
      verdict: {
-       tone: (if $n_red > 0 or $mem_tone == "red" then "red"
-              elif $n_dec > 0 or $n_review > 0 or $mem_tone == "yellow" or $load_tone != "green" and $load_tone != "dim" then "yellow"
+       tone: (if $n_red > 0 or $n_mate_red > 0 or $mem_tone == "red" then "red"
+              elif $n_dec > 0 or $n_review > 0 or $n_mate_yellow > 0 or $mem_tone == "yellow" or $load_tone != "green" and $load_tone != "dim" then "yellow"
               elif $n_green > 0 then "green" else "dim" end),
-       word: (if $n_red > 0 then "NEEDS ATTENTION"
-              elif $n_dec > 0 or $n_review > 0 then "WAITING ON YOU"
+       word: (if $n_red > 0 or $n_mate_red > 0 then "NEEDS ATTENTION"
+              elif $n_dec > 0 or $n_review > 0 or $n_mate_yellow > 0 then "WAITING ON YOU"
               elif $n_green > 0 then "ALL MOVING" else "QUIET" end),
        blocked_projects: $n_red, decisions: $n_dec, overdue_decisions: $n_overdue,
        overdue_after_days: $overdue_days, reviews: $n_review,
+       mates_attention: ($n_mate_red + $n_mate_yellow),
        workers: ($workers | length), moving_items: $n_green,
        machine_pressure: (if $mem_tone == "red" or $load_tone == "red" then "high"
                           elif $mem_tone == "yellow" or $load_tone == "yellow" then "elevated" else "normal" end)},
      projects: $projects,
+     mates: $mate_rows,
+     items: $items,
      decisions: $decisions,
      workers: $workers,
      totals: {workers: ($workers | length),
@@ -517,6 +533,7 @@ printf '%s' "$MODEL" | jq -r --argjson c "$CODES" --argjson width "$WIDTH" --arg
   def section($t): "\n" + bold($t);
   # The text up to and including the first sentence end (., ? or ! followed by
   # a space or the end); the whole text when no sentence end is found.
+  def tag($i): $i.project + (if $i.mate != null then " via " + $i.mate else "" end);
   def first_sentence($s):
     ($s | sub("\\s+$"; "")) as $t
     | ($t | capture("^(?<f>.*?(?<!\\.[A-Za-z])[.?!])(\\s|$)") // {f: $t}).f;
@@ -535,6 +552,7 @@ printf '%s' "$MODEL" | jq -r --argjson c "$CODES" --argjson width "$WIDTH" --arg
                + (if $v.overdue_decisions > 0 then " (" + ($v.overdue_decisions | tostring) + " overdue)" else "" end)
              else empty end),
             (if $v.reviews > 0 then plural($v.reviews; "item ready for review"; "items ready for review") else empty end),
+            (if $v.mates_attention > 0 then plural($v.mates_attention; "second mate needs a look"; "second mates need a look") else empty end),
             plural($v.workers; "worker running"; "workers running"),
             (if $v.machine_pressure != "normal" then "machine load " + $v.machine_pressure else empty end)
           ] | join(", "))),
@@ -559,6 +577,19 @@ printf '%s' "$MODEL" | jq -r --argjson c "$CODES" --argjson width "$WIDTH" --arg
                         | if startswith("OVERDUE") then paint("red"; .) else . end))
        end),
 
+      (if ($m.mates | length) == 0 then empty
+       else
+         section("SECOND MATES"),
+         ($m.mates[]
+          | "  " + paint(.tone; .id + " (" + (if .remote then "remote, " + (.host // "host unknown") else "local" end) + "): " + .phrase)
+            + (if .merged then ""
+               else " - " + plural(.counts.working; "worker"; "workers") + ", "
+                    + plural(.counts.decisions; "open decision"; "open decisions") + ", "
+                    + (.counts.queued | tostring) + " queued"
+                    + (if .omitted > 0 then " (" + (.omitted | tostring) + " not shown)" else "" end)
+                    + "; detail lives in that home" + (if .home != null then ": " + .home else "" end) end))
+       end),
+
       # 3. decisions
       section("DECISIONS NEEDED") + (if ($m.decisions | length) > 0 then " (oldest first)" else "" end),
       (if ($m.decisions | length) == 0 then "  " + paint("green"; "Nothing is waiting on your decision.")
@@ -566,10 +597,9 @@ printf '%s' "$MODEL" | jq -r --argjson c "$CODES" --argjson width "$WIDTH" --arg
          ($m.decisions | to_entries[]
           | .key as $k | .value as $d
           | ("  " + paint(if $d.overdue then "red" elif $d.deferred then "dim" else "yellow" end;
-                  (($k + 1) | tostring) + ". [" + $d.project + "] " + ($d.title | cut($width - 34)))
+                  (($k + 1) | tostring) + ". [" + tag($d) + "] " + ($d.title | cut($width - 34)))
              + paint(if $d.overdue then "red" else "dim" end; " ("
                  + (if $d.waiting_seconds == null then "age unknown"
-                    elif $d.age_in_days and $d.waiting_days == 0 then "waiting under a day"
                     else "waiting " + age($d.waiting_seconds) end)
                  + (if $d.overdue then ", OVERDUE" else "" end)
                  + (if $d.hold_bucket == "dated" then ", deferred until " + ($d.hold_until // "later")
@@ -618,7 +648,7 @@ printf '%s' "$MODEL" | jq -r --argjson c "$CODES" --argjson width "$WIDTH" --arg
       section("PARKED (stopped on purpose)"),
       (if ($m.parked | length) == 0 then "  Nothing is parked."
        else ($m.parked[]
-             | ("  " + paint("dim"; "[" + .project + "] " + (.title | cut($width - 34)))
+             | ("  " + paint("dim"; "[" + tag(.) + "] " + (.title | cut($width - 34)))
                 + (if .since != null then paint("dim"; " (since " + (.since | split(" ")[0]) + ")") else "" end)),
                (if (.reason // "") != "" then "    " + (.reason | cut($width - 4)) else empty end))
        end),
