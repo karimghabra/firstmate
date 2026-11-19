@@ -19,6 +19,7 @@ Only `/bearings lavish` builds the interactive fleet board beside that digest, t
 A digest/build invocation is operationally read-only apart from observational remote-ledger cache refreshes, durable per-target reconcile-notify requests when the captured state needs them, plus the explicit per-mode artifacts: the dated report in file mode, and in lavish mode the board file plus the answer binding and source registration that `bin/fm-bearings-board.sh build` records through their own owners.
 During that invocation it never tears down a task, merges a PR, dispatches new work, steers a worker, answers a decision, cleans up work, or mutates backlog or task state.
 Board answers are acted on later under the normal authority rules; this skill's board-wake section explicitly owns the guarded routing at that time.
+For the colour-coded at-a-glance view with per-worker memory use, `/sitrep` owns the answer; Bearings stays the narrative catch-up.
 
 ## Invocation modes
 

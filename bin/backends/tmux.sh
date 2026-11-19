@@ -154,6 +154,19 @@ fm_backend_tmux_current_command() {  # <target>
   tmux display-message -p -t "$1" '#{pane_current_command}' 2>/dev/null
 }
 
+# fm_backend_tmux_endpoint_pid: the process id at the root of <target>'s pane
+# (tmux's pane_pid, the process tmux started in the pane), or failure when the
+# target is not an existing pane. Uses list-panes rather than display-message
+# because display-message answers an absent target from the client's active
+# window, while list-panes fails on a target that does not exist. A window
+# target with several panes reports its first pane.
+fm_backend_tmux_endpoint_pid() {  # <target>
+  local pid
+  pid=$(tmux list-panes -t "$1" -F '#{pane_pid}' 2>/dev/null | head -n 1) || return 1
+  case "$pid" in ''|*[!0-9]*) return 1 ;; esac
+  printf '%s\n' "$pid"
+}
+
 # fm_backend_tmux_classify_process_name: the single owner of the process-name
 # vocabulary shared by every liveness signal below - `agent` for a verified
 # harness, `shell` for an idle login/interactive shell, `other` for anything

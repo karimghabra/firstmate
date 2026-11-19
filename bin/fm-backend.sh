@@ -875,6 +875,22 @@ fm_backend_target_exists() {  # <backend> <target> [expected-label]
   esac
 }
 
+# fm_backend_endpoint_pid: the process id at the root of the recorded TARGET
+# endpoint's process tree on BACKEND, for read-only resource accounting such as
+# bin/fm-sitrep.sh's per-worker memory figure. Prints one pid, or fails when
+# the endpoint is gone or the backend has no verified way to name its process
+# (zellij, orca, cmux), so callers report the figure as not measured instead of
+# guessing. Never starts a server or session.
+fm_backend_endpoint_pid() {  # <backend> <target>
+  local backend=$1 target=$2
+  fm_backend_source "$backend" || return 1
+  case "$backend" in
+    tmux) fm_backend_tmux_endpoint_pid "$target" ;;
+    herdr) fm_backend_herdr_endpoint_pid "$target" ;;
+    *) return 1 ;;
+  esac
+}
+
 # fm_backend_agent_state: the single recovery-grade agent/endpoint state
 # contract. It is deliberately richer than fm_backend_target_exists's cheap
 # pane-presence read and prints exactly one of:
