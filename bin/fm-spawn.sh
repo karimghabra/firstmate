@@ -436,6 +436,8 @@ fm_backlog_directory_present "$STATE" "state directory" || {
 . "$SCRIPT_DIR/fm-classify-lib.sh"
 # shellcheck source=bin/fm-stand-down-lib.sh
 . "$SCRIPT_DIR/fm-stand-down-lib.sh"
+# shellcheck source=bin/fm-fallback-lib.sh
+. "$SCRIPT_DIR/fm-fallback-lib.sh"
 # shellcheck source=bin/fm-trace-context-lib.sh
 . "$SCRIPT_DIR/fm-trace-context-lib.sh"
 # shellcheck source=bin/fm-remote-readiness-lib.sh
@@ -512,6 +514,21 @@ done
 [ "$MODE_SET" -eq 0 ] || [ -n "$MODE" ] || { echo "error: --mode requires a non-empty value" >&2; exit 1; }
 [ "$YOLO_SET" -eq 0 ] || [ -n "$YOLO" ] || { echo "error: --yolo requires a non-empty value" >&2; exit 1; }
 [ "$TRACEPARENT_SET" -eq 0 ] || [ -n "$TRACEPARENT_ARG" ] || { echo "error: --traceparent requires a non-empty value" >&2; exit 1; }
+# Model-fallback expiry (AGENTS.md section 7 "usage limit"; bin/fm-fallback-lib.sh):
+# a new spawn that explicitly requests both a harness and a model - exactly the
+# shape every dispatch-profile-driven spawn already uses per AGENTS.md section 4
+# - resolves onto that harness/model's active fallback (config/model-fallback.json)
+# while a usage limit recorded for it has not yet reset, and resumes the
+# original model on its own once that reset time has passed. A spawn that never
+# names an explicit model (a bare secondmate respawn, for instance) is
+# unaffected and keeps resolving its own default exactly as before.
+if [ "$HARNESS_SET" -eq 1 ] && [ "$MODEL_SET" -eq 1 ]; then
+  FALLBACK_MODEL=$(fm_fallback_resolve_spawn_model "$STATE" "$HARNESS_ARG" "$MODEL" 2>/dev/null) || FALLBACK_MODEL=$MODEL
+  if [ -n "$FALLBACK_MODEL" ] && [ "$FALLBACK_MODEL" != "$MODEL" ]; then
+    echo "note: $HARNESS_ARG/$MODEL has an active usage-limit fallback; spawning on $FALLBACK_MODEL instead" >&2
+    MODEL=$FALLBACK_MODEL
+  fi
+fi
 # A parent-delivered carrier replaces this home's own resolution, so it is
 # refused unless it is a secondmate spawn carrying a strictly valid W3C value.
 # Nothing else may reach the pane's TRACEPARENT export.

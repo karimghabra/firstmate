@@ -447,6 +447,47 @@ Malformed JSON, an empty or malformed rule/default array, an unverified harness,
 While the file remains present, no crewmate or scout spawn may proceed without an explicit resolved harness; malformed configuration must be reported and corrected rather than selected around.
 Secondmate homes inherit this file from the primary, so a secondmate's own crewmates apply the same dispatch profile behavior.
 
+## Model fallback on a usage limit (config/model-fallback.json)
+
+`config/model-fallback.json` is an optional local, gitignored file naming an ordered fallback chain for each harness/model pair, consulted automatically when a worker stops on that provider's own usage-limit screen rather than an ordinary wedge.
+This section is the single owner of the file's schema; [`bin/fm-usage-limit-lib.sh`](../bin/fm-usage-limit-lib.sh) owns recognizing the screen itself and parsing its reset time, and [`bin/fm-fallback-lib.sh`](../bin/fm-fallback-lib.sh) owns reading this file and the durable active-fallback record.
+
+```json
+{
+  "<harness>": {
+    "<model>": ["<next model to try>", "<model after that, optional>"]
+  }
+}
+```
+
+```json
+{
+  "claude": {
+    "claude-fable-5-2": ["claude-opus-5-5"]
+  }
+}
+```
+
+See [`docs/examples/model-fallback.json`](examples/model-fallback.json) for a starting point to copy into local `config/model-fallback.json`.
+Every key and value is a bare harness or model token, exactly as it would be passed to `fm-spawn.sh --harness`/`--model`; `jq` reads the file, so it must be valid JSON, and a missing `jq` or malformed file is treated as no fallback configured rather than a fatal error.
+
+**Detection and relaunch.**
+[`bin/fm-watch.sh`](../bin/fm-watch.sh) recognizes a provider's usage-limit screen from the pane - Claude Code's limit banner and menu first, structured so another harness's own screen can be added as its own `fm_usage_limit_detect_<harness>` detector without touching any other harness - before it would otherwise classify that pane as an ordinary stale pane or wedge.
+On a positive detection with a configured next model for that harness/model pair, the watcher dismisses the menu and relaunches the worker on the fallback model in its same worktree, through the existing `bin/fm-control.sh <id> relaunch` path (AGENTS.md section 7 - this is not a new lifecycle mechanism).
+The switch is never silent: the relaunch's own durable checkpoint (`state/<id>.control-relaunch`) and the task's `state/<id>.meta` record the new model, and the watcher appends one self-announced `working:` status line naming the switch and, where the screen named one, the reset time - so the captain-facing summary for that task can say what happened.
+Detection with no configured fallback for that harness/model, or a dismiss or relaunch that itself fails, changes nothing: the pane falls straight through to the ordinary stale/wedge classification, exactly as it would without this feature, so a worker whose limit cannot be worked around still escalates the same way it always has.
+A worker already running is never interrupted by expiry; only a later new spawn is affected, below.
+
+**Expiry.**
+A successful automatic switch also writes a home-wide (not per-task) record, `state/.usage-limit-<harness>-<sanitized-model>`, naming the fallback model and the reset time the screen reported.
+`bin/fm-spawn.sh` consults that record for every later spawn that explicitly resolves both an adapter and a model to the same original harness/model pair - the shape every crew-dispatch-profile-driven spawn already uses per AGENTS.md section 4 - and spawns it on the recorded fallback instead while the record's reset time has not yet passed.
+Once that time passes, the record is dropped and the next such spawn resolves the original model again with no further action needed.
+A screen that named no reset time never expires on its own; clear `state/.usage-limit-<harness>-<sanitized-model>` by hand once the limit is known to have cleared.
+
+**The no-mistakes review agent.**
+The no-mistakes pipeline's own review agent runs outside this watcher's supervision, so the automatic dismiss-and-relaunch above never reaches it, and firstmate never edits `~/.no-mistakes/config.yaml` on its own.
+`fm_usage_limit_nm_hint` in `bin/fm-usage-limit-lib.sh` takes a failed run's reported failure text and, when it names the same usage-limit screen, prints the exact `agent_config` line to recommend; firstmate relays that line to the captain rather than applying it.
+
 ## Toolchain
 
 On session start the first mate detects what its required toolchain is missing or too old and lists each problem with either an exact install command or manual instructions.
